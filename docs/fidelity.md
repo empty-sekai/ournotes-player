@@ -68,6 +68,58 @@ These are not in the game; they are kept apart from the reproduced code and docu
   `src/live/sound.js`).
 - The HDR format of the camera target depends on a player setting of the game; RGBA16F is used.
 
+## Live2D models
+
+The model viewer ([live2d.md](live2d.md)) runs one character the way the game's story screen does. Its code follows
+the game's Live2D layer (`Live2DAnimation.Live2DCharacter`, `Live2DCharacterController`) and the game's build of
+Cubism SDK for Unity (`CubismParameterStore`, `CubismFadeController`, `CubismExpressionController`,
+`CubismAutoEyeBlinkInput`, `CubismHarmonicMotionController`, `CubismPhysicsController`, `CubismRenderController`,
+`CubismMaskController`, `CubismModel`), with Live2D Cubism Core (loaded by the page) evaluating the moc3. The drawing
+uses the game's own shaders "Live2D Cubism/Lit-URP-ADV-optimize" and "Live2D Cubism/Mask" from the data, with the
+material values of the prefab and the property values the Cubism renderer sets.
+
+Reproduced: the loader's initialisation and warmup and the story's `In`; the update order of one frame (the
+controller's Update, the Animator, the update controller's chain in execution order, the model update at the end of
+PreLateUpdate) and the resulting display latency of two model updates; motion fades (recursive, from the parameter
+store's snapshot), the replay of the default motion, expression blending, the game's eye blink phases and intervals,
+the breath motion, physics with its fixed-rate steps and interpolation, the double-buffered meshes, sorting, vertex
+colours, the mask groups, tiles and mask texture. Arithmetic is float32 in source order, as for the chart player.
+
+Fixed settings:
+
+| Setting | Value |
+|---|---|
+| Frame rate | 30 frames per second of game time (the story screen's target frame rate). |
+| Physics, breath | On (the game enables physics from its Middle quality level and the breath motion from High); either can be switched off. |
+| Lighting | Off: `_LightingEnabled` 0, as the game draws characters without Unity lighting (quality levels up to Middle) and for an `unlit` In. |
+| Eye blink randomness | A seeded stream (`seed`); the game draws the intervals from Unity's global random stream, so they differ between runs in the game too. |
+
+Viewer choices (not the game's):
+
+- **View.** The model's canvas (moc3 canvas info) is fitted into the drawing buffer and centred by an orthographic
+  camera at (centre, −10) looking along +z (near 0.3, far 1000), on a transparent background. The story's stage,
+  character slots, cameras, field compositing, blur and post-processing are not drawn.
+- **Neutral scene values** for the Lit shader, which the story's stage would provide: no main light
+  (`_MainLightPosition` (0, 0, 1, 0), `_MainLightColor` 0), the ambient probe of a flat white environment
+  (`unity_SH*`: SH(N) = 1), no additional lights, and the multiply texture of the game's call without a stage
+  (`Texture2D.whiteTexture`, intensity 0.3, UV (1, 1, 0, 0), amplitude 0, frequency 0.5). With lighting off the
+  first three do not change a pixel, and the white multiply texture leaves the colour as it is.
+- **Returning to the default motion.** The game plays the next motion when the story asks for one; the viewer sets the
+  controller's next motion (`NextMotionName`) to the default motion, with its own fade-in time, whenever it plays
+  another motion without `loop` (`LoopMotion` replays it instead).
+- **Requests** (motions, expressions, switches) run at the next frame's Update, where the game runs story commands.
+- **Pause** stops the frame loop; **any size**: the canvas fit follows the drawing buffer.
+- **Mip levels.** A mipmapped model texture is drawn with its level 0 from the data and the other levels generated
+  from it by WebGL (`generateMipmap`), not with the game's stored levels.
+
+Not reproduced:
+
+- Lip sync and motion sync from voice (the managed lip sync policy and Live2D's MotionSync Core); the mouth follows
+  `CubismMouthController.MouthOpening` as it does without lip sync.
+- The story's look and angle commands, the eye blink stop override, rim light, brightness, motion speed and the
+  character's own pause; pose parts, dense clip curves and legacy expression blending (models that use them fail to
+  load with an error naming the feature).
+
 ## Engine behaviour
 
 Every `ENGINE:` note in `src/`, by file. `npm test` checks that this list matches the sources
@@ -113,6 +165,35 @@ Every `ENGINE:` note in `src/`, by file. `npm test` checks that this list matche
 - DataUtility.GetMinSize is native; taken as border.x + border.z (Unity's definition for bordered sprites).
 - CanvasRenderer applies the inherited CanvasGroup alpha natively; here a float multiply of Color32 alpha / 255.
 - unity_GUIZTestMode is set by Unity's native canvas render path (values as above).
+
+**`src/live2d/character.js`**
+
+- Mesh.RecalculateBounds is native; centre = (max + min) * 0.5, extents = (max - min) * 0.5 in float32.
+- a clip playable created in Update is first sampled after one advance (at t = deltaTime x speed).
+
+**`src/live2d/drawing.js`**
+
+- the values bound for a mesh's missing NORMAL / TANGENT channels are native; (0, 0, 1, 0) / (1, 0, 0, 1) here.
+- the mask RenderTexture's filter and wrap modes are never set (engine defaults); bilinear and clamped here.
+- _ProjectionParams while a command buffer draws into a render texture is set natively; x = 1 here.
+
+**`src/live2d/math.js`**
+
+- AnimationCurve.Evaluate is native; Unity's documented Hermite form, float32 in source order.
+
+**`src/live2d/motion.js`**
+
+- Mecanim samples streamed clips natively; this is the cubic form of the stored keys, float32 in source order.
+- the Animator leaves a binding without a transform at its path unbound.
+- what the Animator samples past a clip playable's duration is native; wrapped around the length here.
+
+**`src/live2d/physics.js`**
+
+- Mathf.Sin / Cos / Atan2 / Sqrt use the device's libm; here double precision rounded to float32 (within one float ulp).
+
+**`src/live2d/session.js`**
+
+- the renderer sort is native; sorting order first, equal distances keep the submission (Core index) order.
 
 **`src/live/background.js`**
 

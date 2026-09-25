@@ -61,6 +61,10 @@ iframe：[examples/iframe.html](examples/iframe.html) 是一个只含一个播�
 - 嵌入方式与数据托管：[docs/embedding.md](docs/embedding.md)
 - 数据格式：[docs/data-format.md](docs/data-format.md)
 
+## Live2D 模型
+
+同一个包还包含 Live2D 模型查看器 `ournotes-player/live2d`（自定义元素 `<ournotes-live2d>`）：按游戏剧情画面的方式显示一个角色（待机动作、自动眨眼、呼吸、物理），并可播放动作、切换表情，绘制使用数据中游戏自身的 Live2D 着色器。它需要 Live2D Cubism Core for Web（Live2D 的 `live2dcubismcore.min.js`，适用 Live2D Inc. 的许可），由页面自行加载；本仓库、npm 包与打包文件均不包含它。见 [docs/live2d.md](docs/live2d.md)。
+
 ## 浏览器支持
 
 需要 WebGL2 与 WebAudio（自定义元素另需 Custom Elements 与 ResizeObserver），并能用 `decodeAudioData` 解码 FLAC 与 AAC（MP4）。目前在 Chromium 内核浏览器中测试。

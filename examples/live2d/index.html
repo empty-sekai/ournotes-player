@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Live2D models</title>
+<!-- Model index of a site: lists the site's models.json and shows the chosen model with its motions and expressions.
+       index.html?model=<id>     opens that model (models/<id>.json)
+     The site root is this page's parent directory unless ?site=<URL> names another one. Live2D Cubism Core is loaded
+     from Live2D's distribution unless ?core=<URL> names another copy. -->
+<style>
+  html, body { margin: 0; height: 100%; }
+  body { display: flex; flex-direction: column; background: #16171b; color: #ddd; font: 14px/1.4 system-ui, sans-serif; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 12px; border-bottom: 1px solid #2c2d33; }
+  header h1 { margin: 0; font-size: 15px; font-weight: 600; }
+  main { flex: 1; display: flex; min-height: 0; }
+  .stage { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 8px;
+           background: radial-gradient(circle at 50% 40%, #3a3d48, #1d1e23 70%); }
+  ournotes-live2d { height: 100%; max-width: 100%; aspect-ratio: 2 / 3; }
+  aside { width: 280px; padding: 12px; box-sizing: border-box; overflow: auto; border-left: 1px solid #2c2d33;
+          display: flex; flex-direction: column; gap: 10px; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #aaa; }
+  label.check { flex-direction: row; align-items: center; gap: 6px; color: #ddd; font-size: 13px; }
+  select, button { font: inherit; color: #eee; background: #25262c; border: 1px solid #3a3b42; border-radius: 6px;
+                   padding: 5px 8px; }
+  select { width: 100%; }
+  header select { width: auto; max-width: 100%; }
+  button { cursor: pointer; }
+  .row { display: flex; gap: 6px; }
+  .row select { flex: 1; min-width: 0; }
+  .status, .msg { font-size: 12px; color: #999; white-space: pre-wrap; }
+  .msg:empty { display: none; }
+  @media (max-width: 700px) {
+    main { flex-direction: column; }
+    .stage { flex: none; height: 60vh; }
+    aside { width: auto; border-left: 0; border-top: 1px solid #2c2d33; }
+  }
+</style>
+<script type="module" src="live2d.js"></script>
+</head>
+<body>
+<header>
+  <h1>Live2D models</h1>
+  <select id="model" aria-label="Model"></select>
+  <span class="msg" id="msg"></span>
+</header>
+<main>
+  <div class="stage"><ournotes-live2d id="viewer"></ournotes-live2d></div>
+  <aside>
+    <label>Motion
+      <span class="row"><select id="motion"></select><button id="replay" type="button" title="Play again">Play</button></span>
+    </label>
+    <label>Expression <select id="expression"></select></label>
+    <label class="check"><input type="checkbox" id="loop"> Loop the motion</label>
+    <label class="check"><input type="checkbox" id="physics" checked> Physics</label>
+    <label class="check"><input type="checkbox" id="breath" checked> Breath</label>
+    <div class="row"><button id="pause" type="button">Pause</button></div>
+    <div class="status" id="status"></div>
+  </aside>
+</main>
+</body>
+</html>

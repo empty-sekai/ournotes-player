@@ -74,6 +74,14 @@ iframe: [examples/iframe.html](examples/iframe.html) is a page holding one playe
 - Embedding and hosting the data: [docs/embedding.md](docs/embedding.md)
 - Data format: [docs/data-format.md](docs/data-format.md)
 
+## Live2D models
+
+The package also holds a Live2D model viewer, `ournotes-player/live2d` (custom element `<ournotes-live2d>`): it shows
+one character the way the game's story screen runs it (idle motion, auto eye blink, breath, physics), plays its motions
+and sets its expressions, drawing with the game's own Live2D shaders from the data. It needs Live2D Cubism Core for Web
+(Live2D's `live2dcubismcore.min.js`, under Live2D Inc.'s license), which the page loads itself; this repository, the
+npm package and the bundles do not include it. See [docs/live2d.md](docs/live2d.md).
+
 ## Browser support
 
 WebGL2 and WebAudio (the custom element also needs Custom Elements and ResizeObserver), and `decodeAudioData` support

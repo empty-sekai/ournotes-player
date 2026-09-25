@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/empty-sekai/ournotes-player/main/schema/models.schema.json",
+  "title": "Model index (models.json)",
+  "description": "The Live2D models a site offers, for listings; the model viewer does not read it. See docs/data-format.md.",
+  "type": "object",
+  "required": ["format", "models"],
+  "properties": {
+    "format": { "const": 2 },
+    "models": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "manifest"],
+        "properties": {
+          "id": { "$ref": "#/$defs/id" },
+          "manifest": { "type": "string", "pattern": "^models/[a-z0-9_]+\\.json$" },
+          "key": { "type": "string" },
+          "group": { "type": "string" },
+          "label": { "type": "string" },
+          "bytes": { "type": "integer", "minimum": 0 },
+          "files": { "type": "integer", "minimum": 1 },
+          "textures": { "type": "integer", "minimum": 0 },
+          "canvas": { "$ref": "#/$defs/canvas" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+    "canvas": {
+      "type": "object",
+      "properties": {
+        "pixelsPerUnit": { "type": "number" },
+        "originX": { "type": "number" },
+        "originY": { "type": "number" },
+        "width": { "type": "number" },
+        "height": { "type": "number" },
+        "mocVersion": { "type": "integer" }
+      }
+    }
+  }
+}

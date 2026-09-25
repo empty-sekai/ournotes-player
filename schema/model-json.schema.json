@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/empty-sekai/ournotes-player/main/schema/model-json.schema.json",
+  "title": "Model index file (model.json)",
+  "description": "The logical file model.json of a Live2D model: the paths of its moc3, prefab and shader index, and the Cubism mask materials. See docs/data-format.md.",
+  "type": "object",
+  "required": ["format", "moc3", "prefab", "shaders", "resources"],
+  "properties": {
+    "format": { "const": 1 },
+    "name": { "type": "string" },
+    "key": { "type": "string" },
+    "moc3": { "type": "string", "pattern": "\\.moc3$" },
+    "prefab": { "type": "string", "pattern": "\\.json$" },
+    "textures": { "type": "array", "items": { "type": "string", "pattern": "\\.png$" } },
+    "shaders": { "type": "string", "pattern": "(^|/)shaders\\.json$" },
+    "resources": {
+      "type": "object",
+      "required": ["cubismMask", "cubismMaskCulling"],
+      "properties": {
+        "cubismMask": { "$ref": "#/$defs/maskMaterial" },
+        "cubismMaskCulling": { "$ref": "#/$defs/maskMaterial" }
+      }
+    }
+  },
+  "$defs": {
+    "maskMaterial": {
+      "type": "object",
+      "required": ["shader", "floats"],
+      "properties": {
+        "material": { "type": "string" },
+        "shader": {
+          "type": "object",
+          "required": ["shader"],
+          "properties": { "shader": { "const": "Live2D Cubism/Mask" } }
+        },
+        "keywords": { "type": "array", "items": { "type": "string" } },
+        "floats": { "type": "object", "required": ["_Cull"], "properties": { "_Cull": { "enum": [0, 1, 2] } } },
+        "colors": { "type": "object" }
+      }
+    }
+  }
+}

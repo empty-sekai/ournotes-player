@@ -33,6 +33,14 @@
       "types": "./types/element.d.ts",
       "default": "./src/element.js"
     },
+    "./live2d": {
+      "types": "./types/live2d.d.ts",
+      "default": "./src/live2d/index.js"
+    },
+    "./live2d/element": {
+      "types": "./types/live2d.d.ts",
+      "default": "./src/live2d/define.js"
+    },
     "./dist/*": "./dist/*",
     "./schema/*": "./schema/*",
     "./package.json": "./package.json"
@@ -40,7 +48,10 @@
   "sideEffects": [
     "./src/element.js",
     "./dist/ournotes-player.element*.js",
-    "./dist/ournotes-player.global*.js"
+    "./dist/ournotes-player.global*.js",
+    "./src/live2d/define.js",
+    "./dist/ournotes-player.live2d.element*.js",
+    "./dist/ournotes-player.live2d.global*.js"
   ],
   "files": [
     "dist/",
@@ -51,6 +62,7 @@
     "scripts/read-set.mjs",
     "scripts/validate-data.mjs",
     "examples/chart-list/",
+    "examples/live2d/",
     "LICENSE",
     "LICENSE-EXCEPTION"
   ],

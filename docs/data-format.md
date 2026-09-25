@@ -25,6 +25,7 @@ Contents:
 [Note assets](#note-assets-livenotesnotesjson) ·
 [Shaders](#shaders) ·
 [Textures](#textures) ·
+[Live2D models](#live2d-models) ·
 [Conventions](#conventions) ·
 [Validation](#validation)
 
@@ -412,6 +413,121 @@ texture pixels from the bottom left, `border` as (left, bottom, right, top).
 - Row order: a PNG stores its top row first, Unity textures start at the bottom row (v = 0). The PNG holds the image
   upright, and the player flips it while decoding, so the PNG's last row is texture row 0.
 
+## Live2D models
+
+The model viewer ([live2d.md](live2d.md)) reads one Live2D model at a time from the same kind of site: one manifest
+per model next to the chart manifests, sharing `assets/`.
+
+```
+<site>/
+  models.json              model index (for listings; the viewer does not read it)
+  models/<id>.json         model manifest, one per model
+  assets/<sha256>.<ext>    file contents, shared with the charts
+```
+
+`<id>` is the model's name, `[a-z0-9_]+` (e.g. `adv_live2d_rana_003_casual_spring_01`). The viewer resolves the asset
+paths of a manifest against `models/..`, the site root, as for charts.
+
+### models.json
+
+([schema](../schema/models.schema.json))
+
+```json
+{ "format": 2, "models": [ { "id": "adv_live2d_rana_003_casual_spring_01",
+                             "manifest": "models/adv_live2d_rana_003_casual_spring_01.json",
+                             "key": "Character/Live2D/003_adv/…", "group": "003_adv", "bytes": 10655335,
+                             "files": 12, "textures": 2, "canvas": { "pixelsPerUnit": 6000, "…": "…" } } ] }
+```
+
+| Key | Meaning |
+|---|---|
+| `format` | `2`, the version of this layout. |
+| `models[].id`, `manifest` | The model and the path of its manifest, relative to the site root. |
+| `models[].key` | The game's asset key of the model prefab. |
+| `models[].group`, `label` | Optional: a group for listings (the directory of the key) and a display text. |
+| `models[].bytes`, `files` | Optional: the sum of `size` over the manifest's `files`, and their count. |
+| `models[].textures`, `canvas` | Optional: atlas page count, and the moc3 canvas (as the prefab's `canvas`). |
+
+### Model manifest
+
+`models/<id>.json` ([schema](../schema/model.schema.json)):
+`{ "format": 2, "id": "…", "key": "…", "model": { … }, "files": { … } }`. `files` maps logical paths to file entries
+exactly as in a [chart manifest](#file-entries) (whole files or split JSON objects, with the same checks). The viewer
+reads `files`; `id`, `key` and `model` (facts about the model: group, canvas, texture count, …) are handed to the page
+(`ModelPlayer.info`) as they are.
+
+The logical files, all read when the model loads:
+
+| Logical file | Content |
+|---|---|
+| `model.json` | Index (below). |
+| `<name>.moc3` | The Cubism moc3 (`CubismMoc` bytes). |
+| `<name>.prefab.json` | The model prefab (below). |
+| `textures/<page>-<hash>.png` | The atlas pages the drawables use, as named by their texture descriptors (relative to the prefab's directory). |
+| `shaders/shaders.json`, `shaders/…` | The two Live2D shaders, in the layout of the chart's [shader directories](#shaders). |
+
+A manifest lists exactly these files: every texture a drawable uses, and only the shader variants below.
+
+### model.json
+
+([schema](../schema/model-json.schema.json))
+
+```json
+{ "format": 1, "name": "adv_live2d_rana_003_casual_spring_01", "key": "Character/Live2D/003_adv/…",
+  "moc3": "adv_live2d_rana_003_casual_spring_01.moc3", "prefab": "adv_live2d_rana_003_casual_spring_01.prefab.json",
+  "textures": ["textures/texture_00-abf131f7.png", "textures/texture_01-259653a7.png"],
+  "shaders": "shaders/shaders.json",
+  "resources": { "cubismMask": { "material": "Mask", "shader": { "shader": "Live2D Cubism/Mask" }, "floats": { "_Cull": 0 }, "…": "…" },
+                 "cubismMaskCulling": { "material": "MaskCulling", "shader": { "shader": "Live2D Cubism/Mask" }, "floats": { "_Cull": 1 }, "…": "…" } } }
+```
+
+| Key | Read | Meaning |
+|---|---|---|
+| `format` | yes | `1`, the version of this file; the viewer refuses other values. |
+| `moc3`, `prefab` | yes | Paths of the moc3 and the prefab. |
+| `shaders` | yes | Path of the shader index, a file named `shaders.json`; the paths inside it are relative to its directory. |
+| `resources.cubismMask`, `resources.cubismMaskCulling` | yes | The Cubism mask materials (`Live2D/Cubism/Materials/Mask` and `MaskCulling` of the game's resources), inline materials as in [node lists](#node-lists); their shader is "Live2D Cubism/Mask". The viewer reads `shader`, `floats` and `colors`. |
+| `name`, `key`, `textures` | no | The model's name, the asset key, the atlas pages. |
+
+### The model prefab
+
+The model prefab as a [node list](#node-lists) `{ key, nodes, canvas }`: the model root, its `Parameters/<id>`,
+`Parts/<id>` and `Drawables/<id>` nodes and the rest of the hierarchy, with every component. Unity's references and
+inline assets follow the conventions of the scene files; the clips, the fade motion list and the expressions are
+inline. The viewer reads:
+
+| Where | Component | Fields |
+|---|---|---|
+| root | `Live2DCharacter` | `DefaultMotionName`, `DefaultExpressionName`, `BasePosition`, `BaseScale`, `_motionList` (the clips), `_expressionList` (expression names, in `ExpressionsList` order) |
+| root | `CubismFadeController` | `CubismFadeMotionList`: `MotionInstanceIds`, `CubismFadeMotionObjects` (`MotionName`, `FadeInTime`, `FadeOutTime`, `MotionLength`, `ParameterIds`, `ParameterCurves[].m_Curve`, `ParameterFadeInTimes`, `ParameterFadeOutTimes`) |
+| root | `CubismExpressionController` | `UseLegacyBlendCalculation` (must be 0), `CurrentExpressionIndex`, `CurrentFadeInTime`, `ExpressionsList.CubismExpressionObjects` (`name`, `FadeInTime`, `FadeOutTime`, `Parameters[]`: `Id`, `Value`, `Blend`) |
+| root | `CubismAutoEyeBlinkInput`, `CubismEyeBlinkController` | `Mean`, `MaximumDeviation`, `Timescale`; `BlendMode` (must be 2), `EyeOpening` |
+| root | `CubismMouthController` | `BlendMode` (must be 0), `MouthOpening` |
+| root | `CubismHarmonicMotionController` | `BlendMode` (must be 1), `ChannelTimescales` |
+| root | `CubismPhysicsController` | Optional (a model without it has no physics). `_rig`: `Fps`, `Gravity`, `Wind`, `SubRigs[]` (`Input`, `Output`, `Particles`, `Normalization`) |
+| root | `CubismRenderController` | `_sortingOrder`, `Opacity` |
+| `Parameters/<id>` | `CubismEyeBlinkParameter`, `CubismHarmonicMotionParameter` | the parameters the eye blink and the breath drive (`Channel`, `Direction` (must be 2), `NormalizedOrigin`, `NormalizedRange`, `Duration`) |
+| `Drawables/<id>` | `CubismDrawable` | `_unmanagedIndex`: the Core drawable index (the node's name is the Core drawable id) |
+| `Drawables/<id>` | `CubismRenderer` | `_mainTexture` (a [texture descriptor](#texture-descriptors), relative to the prefab's directory; unlike chart textures it may be mipmapped: the PNG is level 0 and the viewer generates the other `mipCount - 1` levels), `_color`, `_localSortingOrder` |
+| `Drawables/<id>` | `MeshRenderer` | `m_Materials`: one material of "Live2D Cubism/Lit-URP-ADV-optimize" (`keywords`, `floats`, `colors`) |
+
+A clip of `_motionList` is a [Mecanim clip](#note-assets-livenotesnotesjson) (`clip` is its name) with streamed and
+constant curves only (no dense curves, `startTime` and `cycleOffset` 0), every binding a `CubismParameter` `Value` at
+`Parameters/<id>`, and an `InstanceId` animation event whose `intParameter` names its entry of the fade motion list.
+Models with `CubismPosePart` components, other blend modes or more than 36 mask groups are not supported; loading them
+fails with an error that names the feature. The prefab's `canvas` is not read (the viewer reads the canvas from the
+moc3).
+
+### Model shaders
+
+`shaders/shaders.json` lists "Live2D Cubism/Lit-URP-ADV-optimize" and, for a model with masked drawables,
+"Live2D Cubism/Mask", with only the GLES3 variants the viewer runs (subshader 0, pass 0):
+
+- "Live2D Cubism/Lit-URP-ADV-optimize": for each distinct keyword set of the drawables' materials (restricted to the
+  keywords its variants use), the variant with exactly that set. The viewer does not enable `_ADDITIONAL_LIGHTS` or
+  `_ADDITIONAL_LIGHTS_VERTEX`, so the variants with those keywords are not read.
+- "Live2D Cubism/Mask": its variant without keywords, when some drawable is masked (a material with `CUBISM_MASK_ON`).
+
 ## Conventions
 
 - **Unity names.** Serialized fields keep their Unity names: engine fields with `m_` (`m_Enabled`, `m_Materials`),
@@ -431,10 +547,11 @@ texture pixels from the bottom left, `border` as (left, bottom, right, top).
 ## Validation
 
 ```
-node scripts/validate-data.mjs <site dir> [chart id ...]
+node scripts/validate-data.mjs <site dir> [chart id | model id ...]
 ```
 
-Validates `charts.json` and every chart (or only the given ids) and prints the failures and a summary. Per chart:
+Validates `charts.json` and every chart, and `models.json` and every model (or only the given ids), and prints the
+failures and a summary. Per chart:
 
 - the manifest (schema, agreement with `charts.json`);
 - every asset: present, byte size, SHA-256 equal to its name, extension matching the logical file; split JSON files
@@ -448,6 +565,12 @@ Validates `charts.json` and every chart (or only the given ids) and prints the f
   program with `#version 300 es`;
 - textures: the lane skin, background, jacket and film grain PNGs are present, and every PNG a descriptor refers to
   has the described size and `mipCount` 1.
+
+Per model: the manifest (schema, agreement with `models.json`), every asset as for charts, `model.json`, the moc3
+header, the prefab (the components and fields above, clip and fade references, one Lit material and a texture
+descriptor per drawable), the drawables' PNGs (present, described size, `mipCount` at most a full chain), the shader
+index and programs,
+and that the manifest lists exactly the files the viewer reads.
 
 It needs Node.js 20 or later and no dependencies. The opt-in data tests (`OURNOTES_DATA=<site dir> npm run test:data`)
 go further and run charts through the player in Node (see [CONTRIBUTING.md](../CONTRIBUTING.md)).

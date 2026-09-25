@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 // Validates a chart site against docs/data-format.md and the schemas in schema/.
 //
-//   node scripts/validate-data.mjs <site dir> [chart id ...]
+//   node scripts/validate-data.mjs <site dir> [chart id | model id ...]
 //
 // Checks, per chart: the manifest (schema, agreement with charts.json), every asset (present, byte size, SHA-256
 // matching its name), the rebuilt text of split JSON files, live.json, the score, audio/live-audio.json (schema, sound
 // id references, waveform files and their FLAC / MP4 headers), livescene/scene.json and livenotes/notes.json (the
 // structures the player reads, animation references, node order), both shader directories (index, parsed shader data,
 // GLSL ES 3.00 stage blocks) and the texture descriptors (PNG present where required, size as described).
-// Prints the failures and a summary; exits 1 when a chart fails. No dependencies.
+// Live2D models (models.json, models/<id>.json): the manifest (schema, agreement with models.json), every asset,
+// model.json, the moc3 header, the prefab (the components the model viewer reads, clip and fade references, drawable
+// materials and textures), the shader index and programs, and that the manifest lists exactly the files the viewer
+// reads.
+// Prints the failures and a summary; exits 1 when a chart or a model fails. No dependencies.
 
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -20,7 +24,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const schema = (name) => compile(JSON.parse(fs.readFileSync(path.join(here, "..", "schema", `${name}.schema.json`), "utf8")));
 const S = {
   charts: schema("charts"), manifest: schema("manifest"), live: schema("live"), audio: schema("live-audio"),
-  score: schema("score"),
+  score: schema("score"), models: schema("models"), model: schema("model"), modelJson: schema("model-json"),
 };
 
 const TEXT_FILE = /\.(json|glsl)$/;
@@ -408,10 +412,120 @@ function walk(v, fn, skip = []) {
   }
 }
 
+// ------------------------------------------------------------------------------------------------ one Live2D model
+const LIT_SHADER = "Live2D Cubism/Lit-URP-ADV-optimize", MASK_SHADER = "Live2D Cubism/Mask";
+const ROOT_COMPONENTS = ["Live2DCharacter", "CubismFadeController", "CubismExpressionController", "CubismRenderController",
+  "CubismAutoEyeBlinkInput", "CubismEyeBlinkController", "CubismMouthController", "CubismHarmonicMotionController"];
+const dirOf = (p) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
+const inDir = (dir, p) => (dir ? `${dir}/${p}` : p);
+
+// the prefab as the model viewer reads it: {errs, textures (descriptors), keywordSets, masked}
+function modelPrefab(pf) {
+  const errs = [];
+  if (!isObj(pf)) return { errs: ["not an object"] };
+  nodeList(pf, "prefab", errs);
+  if (errs.length) return { errs };
+  const root = pf.nodes[0], comp = (cls) => root.components.filter((c) => c.class === cls);
+  for (const cls of ROOT_COMPONENTS) if (comp(cls).length !== 1) errs.push(`root ${root.path}: ${comp(cls).length} ${cls}`);
+  if (comp("CubismPhysicsController").length > 1) errs.push(`root ${root.path}: more than one CubismPhysicsController`);
+  if (errs.length) return { errs };
+  const ch = comp("Live2DCharacter")[0], fl = comp("CubismFadeController")[0].CubismFadeMotionList;
+  const clips = Array.isArray(ch._motionList) ? ch._motionList : [];
+  if (!clips.length) errs.push("Live2DCharacter._motionList is empty");
+  const fadeIds = new Set(isObj(fl) && Array.isArray(fl.MotionInstanceIds) ? fl.MotionInstanceIds : []);
+  for (const c of clips) {
+    const ev = (c.events || []).filter((e) => e.functionName === "InstanceId");
+    if (!ev.length || !fadeIds.has(ev[ev.length - 1].intParameter)) errs.push(`clip ${c.clip}: no fade motion for its InstanceId`);
+  }
+  if (!clips.some((c) => c.clip === ch.DefaultMotionName)) errs.push(`default motion ${ch.DefaultMotionName} is not a clip`);
+  const ex = comp("CubismExpressionController")[0];
+  const exprs = isObj(ex.ExpressionsList) && Array.isArray(ex.ExpressionsList.CubismExpressionObjects)
+    ? ex.ExpressionsList.CubismExpressionObjects.map((e) => String(e.name).replace(/\.exp3$/, "")) : [];
+  if (ex.UseLegacyBlendCalculation) errs.push("legacy expression blend is not supported");
+  if (ch.DefaultExpressionName && !exprs.includes(ch.DefaultExpressionName)) errs.push(`default expression ${ch.DefaultExpressionName} is not in ExpressionsList`);
+  const textures = [], kw = new Map();
+  let drawables = 0, masked = false;
+  for (const n of pf.nodes) {
+    if (!n.components.some((c) => c.class === "CubismDrawable")) continue;
+    drawables++;
+    const r = n.components.find((c) => c.class === "CubismRenderer"), mr = n.components.find((c) => c.type === "MeshRenderer");
+    if (!r || !isDescriptor(r._mainTexture)) { errs.push(`${n.path}: CubismRenderer._mainTexture is not a texture descriptor`); continue; }
+    textures.push(desc(r._mainTexture));
+    const mats = mr && Array.isArray(mr.m_Materials) ? mr.m_Materials : [];
+    if (mats.length !== 1 || !isObj(mats[0].shader) || mats[0].shader.shader !== LIT_SHADER) {
+      errs.push(`${n.path}: needs one material of ${LIT_SHADER}`); continue;
+    }
+    const k = Array.isArray(mats[0].keywords) ? [...mats[0].keywords].sort() : [];
+    kw.set(k.join(" "), k);
+    if (k.includes("CUBISM_MASK_ON")) masked = true;
+  }
+  if (!drawables) errs.push("no CubismDrawable nodes");
+  if (pf.nodes.some((n) => n.components.some((c) => c.class === "CubismPosePart"))) errs.push("pose parts are not supported");
+  return { errs, textures: dedupe(textures), keywordSets: [...kw.values()], masked };
+}
+
+class Model extends Chart {
+  run(entry) {
+    const m = this.man;
+    for (const e of S.model(m)) this.err("manifest", e);
+    if (!isObj(m.files)) return this.errs;
+    if (entry) {
+      if (entry.id !== m.id) this.err("models.json", `id ${entry.id}, manifest id ${m.id}`);
+      const total = Object.values(this.files).reduce((n, f) => n + (f.size || 0), 0);
+      if (has(entry, "bytes") && entry.bytes !== total) this.err("models.json", `bytes ${entry.bytes}, manifest files total ${total}`);
+      if (has(entry, "files") && entry.files !== Object.keys(this.files).length) this.err("models.json", `files ${entry.files}, manifest ${Object.keys(this.files).length}`);
+    }
+    this.checkAssets();
+    if (this.errs.length) return this.errs;
+    const idx = this.json("modeljson", "model.json", (v) => ({ errs: S.modelJson(v), v: S.modelJson(v).length ? null : v })).v;
+    if (!idx) return this.errs;
+    for (const k of ["moc3", "prefab", "shaders"]) if (!this.has(idx[k])) this.err("model.json", `${k}: ${idx[k]} not in the manifest`);
+    if (this.errs.length) return this.errs;
+    const moc = this.site.bytes(this.files[idx.moc3].asset);
+    if (moc.length < 8 || moc.toString("latin1", 0, 4) !== "MOC3") this.err(idx.moc3, "not a moc3 file");
+    const pf = this.json("prefab", idx.prefab, modelPrefab);
+    if (!pf || pf.errs.length) return this.errs;
+    const read = new Set(["model.json", idx.moc3, idx.prefab]);
+    const dir = dirOf(idx.prefab);
+    for (const d of pf.textures) {
+      const p = inDir(dir, d.texture);
+      read.add(p);
+      if (!this.has(p)) { this.err(p, "texture of a drawable not in the manifest"); continue; }
+      const asset = this.files[p].asset;
+      const info = this.site.once("png", asset, () => { try { return pngInfo(this.site.bytes(asset)); } catch (e) { return { error: e.message }; } });
+      if (info.error) this.err(p, info.error);
+      else if (info.width !== d.width || info.height !== d.height) this.err(p, `PNG is ${info.width}x${info.height}, descriptor says ${d.width}x${d.height}`);
+      const full = Math.floor(Math.log2(Math.max(d.width, d.height))) + 1;
+      if (!(Number.isInteger(d.mipCount) && d.mipCount >= 1 && d.mipCount <= full)) this.err(p, `mipCount ${d.mipCount} (1 to ${full})`);
+    }
+    const sdir = dirOf(idx.shaders), before = this.errs.length;
+    this.checkShaders(sdir);
+    if (this.errs.length > before) return this.errs;
+    read.add(idx.shaders);
+    const list = JSON.parse(this.text(idx.shaders));
+    const need = [[LIT_SHADER, pf.keywordSets], ...(pf.masked ? [[MASK_SHADER, [[]]]] : [])];
+    for (const [name, sets] of need) {
+      const rec = list.find((r) => r.name === name);
+      if (!rec) { this.err(idx.shaders, `${name} not in the index`); continue; }
+      read.add(inDir(sdir, rec.parsed));
+      const vs = rec.variants.filter((v) => v.subShader === 0 && v.pass === 0);
+      const known = new Set(vs.flatMap((v) => v.keywords));
+      for (const set of sets) {
+        const want = set.filter((k) => known.has(k)).sort().join(" ");
+        const v = vs.find((x) => [...x.keywords].sort().join(" ") === want);
+        if (!v) this.err(idx.shaders, `${name}: no variant for [${want}]`);
+        else read.add(inDir(sdir, v.file));
+      }
+    }
+    for (const p of Object.keys(this.files)) if (!read.has(p)) this.err(p, "listed but not read by the model viewer");
+    return this.errs;
+  }
+}
+
 // ------------------------------------------------------------------------------------------------ main
 function main(argv) {
   const [dir, ...only] = argv;
-  if (!dir) { console.error("usage: node scripts/validate-data.mjs <site dir> [chart id ...]"); return 2; }
+  if (!dir) { console.error("usage: node scripts/validate-data.mjs <site dir> [chart id | model id ...]"); return 2; }
   const site = new Site(dir);
   const out = [];
   let entries;
@@ -423,14 +537,28 @@ function main(argv) {
     const ids = new Set();
     for (const e of index.charts) { if (ids.has(e.id)) out.push(`charts.json: id ${e.id} twice`); ids.add(e.id); }
     entries = index.charts.map((e) => ({ id: e.id, manifest: e.manifest, entry: e }));
-  } else {
+  } else if (fs.existsSync(site.file("charts"))) {
     entries = fs.readdirSync(site.file("charts")).filter((f) => f.endsWith(".json")).sort()
       .map((f) => ({ id: f.slice(0, -5), manifest: `charts/${f}`, entry: null }));
+  } else entries = [];
+  let models = [];
+  const modelsPath = site.file("models.json");
+  if (fs.existsSync(modelsPath)) {
+    const index = JSON.parse(fs.readFileSync(modelsPath, "utf8"));
+    const errs = S.models(index);
+    if (errs.length) { console.log("FAIL models.json"); for (const e of errs) console.log(`  ${e}`); return 1; }
+    const ids = new Set();
+    for (const e of index.models) { if (ids.has(e.id)) out.push(`models.json: id ${e.id} twice`); ids.add(e.id); }
+    models = index.models.map((e) => ({ id: e.id, manifest: e.manifest, entry: e }));
+  } else if (fs.existsSync(site.file("models"))) {
+    models = fs.readdirSync(site.file("models")).filter((f) => f.endsWith(".json")).sort()
+      .map((f) => ({ id: f.slice(0, -5), manifest: `models/${f}`, entry: null }));
   }
   if (only.length) {
     const want = new Set(only);
     entries = entries.filter((e) => want.has(e.id));
-    for (const id of want) if (!entries.some((e) => e.id === id)) { console.error(`chart ${id} not found`); return 2; }
+    models = models.filter((e) => want.has(e.id));
+    for (const id of want) if (!entries.some((e) => e.id === id) && !models.some((e) => e.id === id)) { console.error(`chart or model ${id} not found`); return 2; }
   }
   let ok = 0;
   for (const { id, manifest, entry } of entries) {
@@ -445,9 +573,23 @@ function main(argv) {
       if (errs.length > 30) console.log(`  ... ${errs.length - 30} more`);
     } else ok++;
   }
+  let okModels = 0;
+  for (const { id, manifest, entry } of models) {
+    let errs;
+    try {
+      const man = JSON.parse(fs.readFileSync(site.file(manifest), "utf8"));
+      errs = new Model(site, id, man).run(entry);
+    } catch (e) { errs = [`${manifest}: ${e.message}`]; }
+    if (errs.length) {
+      console.log(`FAIL ${id}`);
+      for (const e of errs.slice(0, 30)) console.log(`  ${e}`);
+      if (errs.length > 30) console.log(`  ... ${errs.length - 30} more`);
+    } else okModels++;
+  }
   for (const e of out) console.log(e);
-  console.log(`${ok}/${entries.length} charts valid`);
-  return ok === entries.length && !out.length ? 0 : 1;
+  if (entries.length || !models.length) console.log(`${ok}/${entries.length} charts valid`);
+  if (models.length) console.log(`${okModels}/${models.length} models valid`);
+  return ok === entries.length && okModels === models.length && !out.length ? 0 : 1;
 }
 
 process.exitCode = main(process.argv.slice(2));

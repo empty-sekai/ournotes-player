@@ -4,6 +4,10 @@
 //   ournotes-player.element.js / .min.js           ESM of src/element.js (the API; defines <ournotes-player>)
 //   ournotes-player.global.js / .min.js            IIFE of src/element.js: defines <ournotes-player> and exposes the
 //                                                  API as the global `OurnotesPlayer`
+//   ournotes-player.live2d.js / .min.js            ESM of src/live2d/index.js (the Live2D model viewer's API)
+//   ournotes-player.live2d.element.js / .min.js    ESM of src/live2d/define.js (the same; defines <ournotes-live2d>)
+//   ournotes-player.live2d.global.js / .min.js     IIFE of src/live2d/define.js: defines <ournotes-live2d> and exposes
+//                                                  the API as the global `OurnotesLive2D`
 // The output depends only on the sources, the package version and the esbuild version (no timestamps, no absolute
 // paths), so two builds of the same tree are byte-identical. Any esbuild warning fails the build.
 //   node scripts/build.mjs [--check]     --check: build twice and compare the outputs
@@ -24,6 +28,9 @@ const BUNDLES = [
   { entry: "src/index.js", out: "ournotes-player", format: "esm" },
   { entry: "src/element.js", out: "ournotes-player.element", format: "esm" },
   { entry: "src/element.js", out: "ournotes-player.global", format: "iife", globalName: "OurnotesPlayer" },
+  { entry: "src/live2d/index.js", out: "ournotes-player.live2d", format: "esm" },
+  { entry: "src/live2d/define.js", out: "ournotes-player.live2d.element", format: "esm" },
+  { entry: "src/live2d/define.js", out: "ournotes-player.live2d.global", format: "iife", globalName: "OurnotesLive2D" },
 ];
 
 async function build(outdir) {
