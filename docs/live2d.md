@@ -168,4 +168,5 @@ viewer reads is described in [data-format.md](data-format.md#live2d-models).
 ## Example
 
 [examples/live2d/](../examples/live2d/) lists the models of a site (`models.json`) and shows the chosen one with its
-motions and expressions.
+motions and expressions. A model with a character name in `models.json` is listed by that name and its id
+(`?lang=<language>` picks the name from `names`, else `label` is shown).

@@ -18,6 +18,8 @@
           "key": { "type": "string" },
           "group": { "type": "string" },
           "label": { "type": "string" },
+          "character": { "type": "integer" },
+          "names": { "$ref": "#/$defs/names" },
           "bytes": { "type": "integer", "minimum": 0 },
           "files": { "type": "integer", "minimum": 1 },
           "textures": { "type": "integer", "minimum": 0 },
@@ -28,6 +30,11 @@
   },
   "$defs": {
     "id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+    "names": {
+      "type": "object",
+      "propertyNames": { "minLength": 1 },
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    },
     "canvas": {
       "type": "object",
       "properties": {

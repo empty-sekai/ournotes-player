@@ -13,7 +13,21 @@ export interface ModelInfo {
   format?: number;
   id?: string;
   key?: string;
-  model?: { [key: string]: unknown };
+  /** Facts about the model: its group, the moc3 canvas, the atlas page and node counts, the character's names. */
+  model?: {
+    group?: string;
+    canvas?: { pixelsPerUnit?: number; originX?: number; originY?: number; width?: number; height?: number;
+               mocVersion?: number; [key: string]: unknown };
+    textures?: number;
+    nodes?: number;
+    /** The character's id in the game's master data. */
+    character?: number;
+    /** The character's name per language (`ja`, `en`, `zh-Hant`, `zh-Hans`, `ko`). */
+    names?: Record<string, string>;
+    /** A display text: the character's name in the site's language. */
+    label?: string;
+    [key: string]: unknown;
+  };
   [key: string]: unknown;
 }
 

@@ -1,8 +1,10 @@
 // Model index page: lists the site's models.json (grouped by `group`), shows the chosen model in <ournotes-live2d> and
 // offers its motions and expressions. ?model=<id> opens a model, ?site=<URL> names the site root (default: the parent
-// directory of this page), ?core=<URL> loads Live2D Cubism Core from another place than Live2D's distribution.
+// directory of this page), ?core=<URL> loads Live2D Cubism Core from another place than Live2D's distribution, ?lang=
+// picks the language of the character names where models.json has them (listing.js).
 // Served from the repository. On a site, import dist/ournotes-player.live2d.element.min.js instead.
 import "../../src/live2d/define.js";
+import { modelText } from "./listing.js";
 
 const CORE = "https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js";
 const q = new URLSearchParams(location.search);
@@ -81,7 +83,7 @@ setInterval(status, 250);
     }
     for (const [g, list] of groups) {
       const parent = g ? Object.assign(document.createElement("optgroup"), { label: g }) : pick;
-      for (const m of list) parent.append(new Option(`${m.label || m.id}${m.bytes ? ` (${mb(m.bytes)})` : ""}`, m.id));
+      for (const m of list) parent.append(new Option(modelText(m, q.get("lang")), m.id));
       if (parent !== pick) pick.append(parent);
     }
     const first = models.find((m) => m.id === q.get("model")) || models[0];

@@ -12,6 +12,12 @@ export interface ChartInfo {
   durationMs?: number;
   sortOrder?: number;
   stageBand?: number;
+  /** The language of `title` and `bands` (a site of several languages). */
+  language?: string;
+  /** The title per language. */
+  titles?: Record<string, string>;
+  /** The band names per language. */
+  bandNames?: Record<string, string[]>;
   [key: string]: unknown;
 }
 
@@ -24,6 +30,8 @@ export interface ManifestInfo {
   audio?: boolean;
   audioFormat?: string;
   chart?: ChartInfo;
+  /** The regions this manifest serves (a site of several regions). */
+  regions?: string[];
   [key: string]: unknown;
 }
 

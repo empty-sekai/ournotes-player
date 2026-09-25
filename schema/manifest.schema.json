@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/empty-sekai/ournotes-player/main/schema/manifest.schema.json",
-  "title": "Chart manifest (charts/<musicId>_<difficulty>.json)",
+  "title": "Chart manifest (charts/<musicId>_<difficulty>.json, or charts/<region>/<musicId>_<difficulty>.json)",
   "description": "The logical files of one chart and where their bytes are. See docs/data-format.md.",
   "type": "object",
   "required": ["format", "musicId", "difficulty", "files"],
@@ -10,6 +10,7 @@
     "musicId": { "type": "integer", "minimum": 1 },
     "difficulty": { "type": "string", "pattern": "^[a-z]+$" },
     "chart": { "$ref": "#/$defs/chart" },
+    "regions": { "type": "array", "items": { "$ref": "#/$defs/regionId" }, "minItems": 1 },
     "audio": { "type": "boolean" },
     "audioFormat": { "enum": ["aac", "flac"] },
     "flows": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
@@ -23,6 +24,8 @@
     }
   },
   "$defs": {
+    "language": { "type": "string", "minLength": 1 },
+    "regionId": { "type": "string", "pattern": "^[a-z0-9_-]+$" },
     "asset": { "type": "string", "pattern": "^assets/[0-9a-f]{64}\\.[a-z0-9]+$" },
     "size": { "type": "integer", "minimum": 0 },
     "whole": {
@@ -53,7 +56,14 @@
       "type": "object",
       "properties": {
         "title": { "type": "string" },
+        "language": { "$ref": "#/$defs/language" },
+        "titles": { "type": "object", "propertyNames": { "minLength": 1 }, "additionalProperties": { "type": "string" } },
         "bands": { "type": "array", "items": { "type": "string" } },
+        "bandNames": {
+          "type": "object",
+          "propertyNames": { "minLength": 1 },
+          "additionalProperties": { "type": "array", "items": { "type": "string" } }
+        },
         "bandIds": { "type": "array", "items": { "type": "integer" } },
         "stageBand": { "type": "integer" },
         "level": { "type": "integer" },

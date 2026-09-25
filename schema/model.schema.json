@@ -9,7 +9,18 @@
     "format": { "const": 2 },
     "id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
     "key": { "type": "string" },
-    "model": { "type": "object" },
+    "model": {
+      "type": "object",
+      "properties": {
+        "group": { "type": "string" },
+        "canvas": { "$ref": "#/$defs/canvas" },
+        "textures": { "type": "integer", "minimum": 0 },
+        "nodes": { "type": "integer", "minimum": 0 },
+        "character": { "type": "integer" },
+        "names": { "$ref": "#/$defs/names" },
+        "label": { "type": "string" }
+      }
+    },
     "files": {
       "type": "object",
       "propertyNames": { "pattern": "^[A-Za-z0-9_][^\\\\]*$" },
@@ -19,6 +30,22 @@
     }
   },
   "$defs": {
+    "names": {
+      "type": "object",
+      "propertyNames": { "minLength": 1 },
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    },
+    "canvas": {
+      "type": "object",
+      "properties": {
+        "pixelsPerUnit": { "type": "number" },
+        "originX": { "type": "number" },
+        "originY": { "type": "number" },
+        "width": { "type": "number" },
+        "height": { "type": "number" },
+        "mocVersion": { "type": "integer" }
+      }
+    },
     "asset": { "type": "string", "pattern": "^assets/[0-9a-f]{64}\\.[a-z0-9]+$" },
     "size": { "type": "integer", "minimum": 0 },
     "whole": {

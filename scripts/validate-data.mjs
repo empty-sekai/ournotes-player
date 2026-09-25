@@ -14,6 +14,9 @@
 // reads.
 // charts.json of a site of several regions: an id at most once per region (an entry without `regions` serves every
 // region, so its id only once), every entry's regions among the index's `regions`, text languages among `languages`.
+// Without charts.json the manifests are charts/*.json and charts/<region>/*.json. A models.json entry's key and model
+// facts (group, canvas, textures) must equal its manifest's `key` and `model` where both have them, and its character,
+// names and label where either has them.
 // Prints the failures and a summary; exits 1 when a chart or a model fails. No dependencies.
 
 import crypto from "node:crypto";
@@ -475,6 +478,15 @@ class Model extends Chart {
     if (!isObj(m.files)) return this.errs;
     if (entry) {
       if (entry.id !== m.id) this.err("models.json", `id ${entry.id}, manifest id ${m.id}`);
+      if (has(entry, "key") && has(m, "key") && entry.key !== m.key) this.err("models.json", "key differs from the manifest");
+      if (isObj(m.model))
+        for (const k of ["group", "canvas", "textures"])
+          if (has(entry, k) && has(m.model, k) && JSON.stringify(entry[k]) !== JSON.stringify(m.model[k]))
+            this.err("models.json", `${k} differs from the manifest's model.${k}`);
+      const facts = isObj(m.model) ? m.model : {};
+      for (const k of ["character", "names", "label"])
+        if ((has(entry, k) || has(facts, k)) && JSON.stringify(entry[k]) !== JSON.stringify(facts[k]))
+          this.err("models.json", `${k} differs from the manifest's model.${k}`);
       const total = Object.values(this.files).reduce((n, f) => n + (f.size || 0), 0);
       if (has(entry, "bytes") && entry.bytes !== total) this.err("models.json", `bytes ${entry.bytes}, manifest files total ${total}`);
       if (has(entry, "files") && entry.files !== Object.keys(this.files).length) this.err("models.json", `files ${entry.files}, manifest ${Object.keys(this.files).length}`);
@@ -569,8 +581,12 @@ function main(argv) {
     out.push(...indexErrors(index));
     entries = index.charts.map((e) => ({ id: e.id, manifest: e.manifest, entry: e }));
   } else if (fs.existsSync(site.file("charts"))) {
-    entries = fs.readdirSync(site.file("charts")).filter((f) => f.endsWith(".json")).sort()
-      .map((f) => ({ id: f.slice(0, -5), manifest: `charts/${f}`, entry: null }));
+    // charts/<id>.json, then the region manifests charts/<region>/<id>.json
+    const list = (dir) => fs.readdirSync(site.file(dir), { withFileTypes: true });
+    const files = (dir) => list(dir).filter((e) => e.isFile() && e.name.endsWith(".json")).map((e) => e.name).sort()
+      .map((f) => ({ id: f.slice(0, -5), manifest: `${dir}/${f}`, entry: null }));
+    entries = [...files("charts"), ...list("charts").filter((e) => e.isDirectory()).map((e) => e.name).sort()
+      .flatMap((r) => files(`charts/${r}`))];
   } else entries = [];
   let models = [];
   const modelsPath = site.file("models.json");

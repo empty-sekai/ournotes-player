@@ -100,7 +100,8 @@ loads the manifest of the chosen region's entry. The chart list page of this rep
 
 ## Chart manifest
 
-`charts/<musicId>_<difficulty>.json` ([schema](../schema/manifest.schema.json)) lists the logical files of one chart
+`charts/<musicId>_<difficulty>.json`, or `charts/<region>/<musicId>_<difficulty>.json` on a site of
+[several regions](#several-regions) ([schema](../schema/manifest.schema.json)), lists the logical files of one chart
 and where their bytes are.
 
 ```json
@@ -471,7 +472,8 @@ paths of a manifest against `models/..`, the site root, as for charts.
 | `format` | `2`, the version of this layout. |
 | `models[].id`, `manifest` | The model and the path of its manifest, relative to the site root. |
 | `models[].key` | The game's asset key of the model prefab. |
-| `models[].group`, `label` | Optional: a group for listings (the directory of the key) and a display text. |
+| `models[].group`, `label` | Optional: a group for listings (the directory of the key) and a display text (the character's name in the site's language, when the producer knows it). |
+| `models[].character`, `names` | Optional: the character's id in the game's master data, and its name per language (`{ "<language>": "…" }`, only languages with a name). |
 | `models[].bytes`, `files` | Optional: the sum of `size` over the manifest's `files`, and their count. |
 | `models[].textures`, `canvas` | Optional: atlas page count, and the moc3 canvas (as the prefab's `canvas`). |
 
@@ -480,8 +482,12 @@ paths of a manifest against `models/..`, the site root, as for charts.
 `models/<id>.json` ([schema](../schema/model.schema.json)):
 `{ "format": 2, "id": "…", "key": "…", "model": { … }, "files": { … } }`. `files` maps logical paths to file entries
 exactly as in a [chart manifest](#file-entries) (whole files or split JSON objects, with the same checks). The viewer
-reads `files`; `id`, `key` and `model` (facts about the model: group, canvas, texture count, …) are handed to the page
-(`ModelPlayer.info`) as they are.
+reads `files`; `id`, `key` and `model` are handed to the page (`ModelPlayer.info`) as they are. `model` holds facts
+about the model, all optional: `group` (as in models.json), `canvas` (the moc3 canvas, as in models.json), `textures`
+(the atlas page count), `nodes` (the node count of the prefab), and `character`, `names`, `label` (as in
+models.json); producers may add their own. Where a models.json entry has `key`, `group`, `canvas` or `textures`, they
+equal the manifest's `key` and `model` values; `character`, `names` and `label` are in both or in neither, with equal
+values.
 
 The logical files, all read when the model loads:
 
@@ -581,7 +587,8 @@ node scripts/validate-data.mjs <site dir> [chart id | model id ...]
 ```
 
 Validates `charts.json` and every chart, and `models.json` and every model (or only the given ids), and prints the
-failures and a summary. Per chart:
+failures and a summary. A site without `charts.json` is validated from the manifests in `charts/` and
+`charts/<region>/`. Per chart:
 
 - the manifest (schema, agreement with `charts.json`);
 - every asset: present, byte size, SHA-256 equal to its name, extension matching the logical file; split JSON files
@@ -596,11 +603,11 @@ failures and a summary. Per chart:
 - textures: the lane skin, background, jacket and film grain PNGs are present, and every PNG a descriptor refers to
   has the described size and `mipCount` 1.
 
-Per model: the manifest (schema, agreement with `models.json`), every asset as for charts, `model.json`, the moc3
-header, the prefab (the components and fields above, clip and fade references, one Lit material and a texture
-descriptor per drawable), the drawables' PNGs (present, described size, `mipCount` at most a full chain), the shader
-index and programs,
-and that the manifest lists exactly the files the viewer reads.
+Per model: the manifest (schema, agreement with `models.json`: `id`, `key`, the model facts, `bytes`, `files`), every
+asset as for charts, `model.json`, the moc3 header, the prefab (the components and fields above, clip and fade
+references, one Lit material and a texture descriptor per drawable), the drawables' PNGs (present, described size,
+`mipCount` at most a full chain), the shader index and programs, and that the manifest lists exactly the files the
+viewer reads.
 
 It needs Node.js 20 or later and no dependencies. The opt-in data tests (`OURNOTES_DATA=<site dir> npm run test:data`)
 go further and run charts through the player in Node (see [CONTRIBUTING.md](../CONTRIBUTING.md)).
