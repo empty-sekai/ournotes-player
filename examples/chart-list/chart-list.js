@@ -8,6 +8,9 @@ const DIFFICULTIES = ["easy", "normal", "hard", "expert"];
 const q = new URLSearchParams(location.search);
 const site = new URL(q.get("site") || "./", location.href);
 const off = (v) => v === "off" || v === "0" || v === "false";
+// `music` carries both the chart's music id and the music switch (music=off): digits are the id
+const musicId = q.getAll("music").find((v) => /^\d+$/.test(v));
+const musicOff = q.getAll("music").some(off);
 
 const message = (text) => {
   const m = document.createElement("div");
@@ -23,7 +26,7 @@ const play = (music, difficulty) => {
   el.controls = true;
   if (q.has("autoplay")) el.autoplay = true;
   if (q.get("speed")) el.setAttribute("speed", q.get("speed"));
-  if (off(q.get("music"))) el.music = false;
+  if (musicOff) el.music = false;
   if (off(q.get("se"))) el.se = false;
   el.addEventListener("ready", () => {
     const c = el.chart;
@@ -66,7 +69,7 @@ const list = async () => {
 
 (async () => {
   try {
-    if (q.has("music") || q.has("difficulty")) play(String(q.get("music")), String(q.get("difficulty") || "expert"));
+    if (musicId !== undefined || q.has("difficulty")) play(String(musicId), String(q.get("difficulty") || "expert"));
     else await list();
   } catch (e) {
     console.error(e);

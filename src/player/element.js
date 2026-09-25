@@ -46,11 +46,11 @@ export class OurnotesPlayerElement extends Base {
   get autoplay() { return this.hasAttribute("autoplay"); }
   set autoplay(v) { this.toggleAttribute("autoplay", !!v); }
   get speed() { return this.player ? this.player.speed : attrNumber(this.getAttribute("speed"), 1); }
-  set speed(v) { this.setAttribute("speed", String(Number(v))); }
+  set speed(v) { const r = Number(v); if (this.player && r > 0) this.player.speed = r; this.setAttribute("speed", String(r)); }
   get music() { return this.player ? this.player.music : !OFF.has(String(this.getAttribute("music")).toLowerCase()); }
-  set music(v) { if (v) this.removeAttribute("music"); else this.setAttribute("music", "off"); }
+  set music(v) { if (this.player) this.player.music = !!v; if (v) this.removeAttribute("music"); else this.setAttribute("music", "off"); }
   get se() { return this.player ? this.player.se : !OFF.has(String(this.getAttribute("se")).toLowerCase()); }
-  set se(v) { if (v) this.removeAttribute("se"); else this.setAttribute("se", "off"); }
+  set se(v) { if (this.player) this.player.se = !!v; if (v) this.removeAttribute("se"); else this.setAttribute("se", "off"); }
 
   get currentTime() { return this.player ? this.player.currentTime : 0; }
   set currentTime(ms) { this.seek(ms); }
@@ -95,7 +95,10 @@ export class OurnotesPlayerElement extends Base {
     const gen = ++this._gen, abort = new AbortController();
     this._abort = abort;
     const num = (a) => (this.hasAttribute(a) ? Number(this.getAttribute(a)) : undefined);
-    const relay = (e) => this.dispatchEvent(new CustomEvent(e.type, { detail: e.detail }));
+    const relay = (e) => {
+      if (e.type === "ready" && gen === this._gen) this.player = e.target;   // state readable in the element's ready
+      this.dispatchEvent(new CustomEvent(e.type, { detail: e.detail }));
+    };
     this._loading = ChartPlayer.create(this.shadowRoot, {
       src: new URL(this.src, document.baseURI).href, controls: this.controls, autoplay: this.autoplay,
       speed: attrNumber(this.getAttribute("speed"), 1), music: this.music, se: this.se,

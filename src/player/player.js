@@ -136,6 +136,8 @@ export class ChartPlayer extends EventTarget {
     if (this._ui) this._ui.big.hidden = true;
     await done;
     this._wasEnded = false;
+    if (this._announced) return;                                  // an earlier play() (a pending autoplay) announced it
+    this._announced = true;
     this._emit("play");
     this._changed();
   }
@@ -144,6 +146,7 @@ export class ChartPlayer extends EventTarget {
     const s = this._need();
     if (!s.playing) return;
     await s.pause();
+    this._announced = false;
     this._emit("pause");
     this._changed();
   }
@@ -257,6 +260,7 @@ export class ChartPlayer extends EventTarget {
       if (n) {
         if (s.ended && !this._wasEnded) {
           this._wasEnded = true;
+          this._announced = false;
           this._emit("timeupdate", { time: s.positionMs() });
           this._emit("pause");
           this._emit("ended");
