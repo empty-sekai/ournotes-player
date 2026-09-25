@@ -505,15 +505,18 @@ inline. The viewer reads:
 | root | `CubismMouthController` | `BlendMode` (must be 0), `MouthOpening` |
 | root | `CubismHarmonicMotionController` | `BlendMode` (must be 1), `ChannelTimescales` |
 | root | `CubismPhysicsController` | Optional (a model without it has no physics). `_rig`: `Fps`, `Gravity`, `Wind`, `SubRigs[]` (`Input`, `Output`, `Particles`, `Normalization`) |
-| root | `CubismRenderController` | `_sortingOrder`, `Opacity` |
+| root | `CubismRenderController` | `_sortingOrder`, `Opacity`, `_lastOpacity` |
 | `Parameters/<id>` | `CubismEyeBlinkParameter`, `CubismHarmonicMotionParameter` | the parameters the eye blink and the breath drive (`Channel`, `Direction` (must be 2), `NormalizedOrigin`, `NormalizedRange`, `Duration`) |
 | `Drawables/<id>` | `CubismDrawable` | `_unmanagedIndex`: the Core drawable index (the node's name is the Core drawable id) |
 | `Drawables/<id>` | `CubismRenderer` | `_mainTexture` (a [texture descriptor](#texture-descriptors), relative to the prefab's directory; unlike chart textures it may be mipmapped: the PNG is level 0 and the viewer generates the other `mipCount - 1` levels), `_color`, `_localSortingOrder` |
 | `Drawables/<id>` | `MeshRenderer` | `m_Materials`: one material of "Live2D Cubism/Lit-URP-ADV-optimize" (`keywords`, `floats`, `colors`) |
 
 A clip of `_motionList` is a [Mecanim clip](#note-assets-livenotesnotesjson) (`clip` is its name) with streamed and
-constant curves only (no dense curves, `startTime` and `cycleOffset` 0), every binding a `CubismParameter` `Value` at
-`Parameters/<id>`, and an `InstanceId` animation event whose `intParameter` names its entry of the fade motion list.
+constant curves only (no dense curves, `startTime` and `cycleOffset` 0) and an `InstanceId` animation event whose
+`intParameter` names its entry of the fade motion list. Each binding is a `CubismParameter` `Value` at
+`Parameters/<id>`, a field of a root controller (path `""`: `CubismEyeBlinkController.EyeOpening`,
+`CubismMouthController.MouthOpening`, `CubismRenderController.Opacity`), or unresolved (`path` null: it animates
+nothing). Expression parameters whose `Id` the moc3 lacks are skipped, as in the game.
 Models with `CubismPosePart` components, other blend modes or more than 36 mask groups are not supported; loading them
 fails with an error that names the feature. The prefab's `canvas` is not read (the viewer reads the canvas from the
 moc3).

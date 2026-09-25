@@ -70,7 +70,10 @@ export class Live2DCharacter {
     const eo = (el.ExpressionsList && el.ExpressionsList.CubismExpressionObjects) || [];
     this.expressions = eo.map((e) => ({
       name: e.name.replace(/\.exp3$/, ""), fadeIn: e.FadeInTime, fadeOut: e.FadeOutTime,
-      dest: e.Parameters.map((p) => ({ i: this.params.idx(p.Id), v: p.Value, blend: p.Blend })),
+      // CubismPlayingExpression.Create: FindById is null for an id the model lacks; UpdateExpression and
+      // ResetExpressionParametersToDefault skip such a destination
+      dest: e.Parameters.filter((p) => this.params.index.has(p.Id))
+        .map((p) => ({ i: this.params.idx(p.Id), v: p.Value, blend: p.Blend })),
     }));
     this.expressionIndex = new Map(this.expressions.map((e, i) => [e.name, i]));
     if (ch._expressionList.some((n, i) => !this.expressions[i] || this.expressions[i].name !== n))
@@ -203,7 +206,10 @@ export class Live2DCharacter {
       if (mr.m_Materials.length !== 1) throw new Error(`${e.node.name}: ${mr.m_Materials.length} materials`);
       byIndex[dc._unmanagedIndex] = { node: e.node, transform: e.transform, cr: r, material: mr.m_Materials[0] };
     }
-    this.rc = { sortingOrder: rc._sortingOrder, opacity: rc.Opacity };
+    // renderOpacity: CubismRenderController.Opacity (clips may animate it); rc.opacity: the value last passed to the
+    // renderers (_lastOpacity, cubism_ModelOpacity)
+    this.renderOpacity = rc.Opacity;
+    this.rc = { sortingOrder: rc._sortingOrder, opacity: rc._lastOpacity ?? rc.Opacity };
     this.renderers = byIndex.map((x, i) => {
       if (!x) throw new Error(`drawable ${i} has no node`);
       const pos = Float32Array.from(d.vertexPositions[i]);
@@ -601,6 +607,10 @@ export class Live2DCharacter {
   }
 
   _renderLateUpdate() {                 // _LightingEnabled per renderer (ApplyLightingState)
+    // CubismRenderController.UpdateOpacity: a change of Opacity is clamped to [0, 1] and passed to every renderer
+    // (OnModelOpacityDidChange; the prefabs have no opacity handler)
+    const o = this.renderOpacity;
+    if (Math.abs(F(o - this.rc.opacity)) >= 1.4e-45) this.renderOpacity = this.rc.opacity = o > 1 ? 1 : (o >= 0 ? o : 0);
     for (const r of this.renderers) {
       const light = this.lightingEnabled && !(this.disableLightingForMultiply && r.multiplyBlend);
       r.lightingEnabled = light ? 1 : 0;

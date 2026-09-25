@@ -69,18 +69,19 @@ const fadeData = (name, len, value) => ({
   ParameterIds: ["ParamAngleX"], ParameterCurves: [{ m_Curve: [{ time: 0, value, inSlope: 0, outSlope: 0 },
                                                                { time: len, value, inSlope: 0, outSlope: 0 }] }],
 });
-const clip = (name, id, len, value) => ({
+const clip = (name, id, len, value, opacity) => ({
   clip: name, stopTime: len, loopTime: true, startTime: 0, cycleOffset: 0,
   events: [{ functionName: "InstanceId", intParameter: id }], dense: { curveCount: 0 },
-  bindings: [{ path: "Parameters/ParamAngleX", class: "CubismParameter", attribute: "Value" }],
-  streamed: { curveCount: 0, frames: [] }, constant: [value],
+  bindings: [{ path: "Parameters/ParamAngleX", class: "CubismParameter", attribute: "Value" },
+             ...(opacity === undefined ? [] : [{ path: "", class: "CubismRenderController", attribute: "Opacity" }])],
+  streamed: { curveCount: 0, frames: [] }, constant: [value, ...(opacity === undefined ? [] : [opacity])],
 });
 const tex = { texture: "textures/texture_00.png", name: "texture_00", width: 4, height: 4, mipCount: 1,
               settings: { m_FilterMode: 1, m_WrapU: 1, m_WrapV: 1 } };
 const material = (keywords) => ({ material: keywords.length ? "LitMasked" : "Lit", shader: { shader: "Live2D Cubism/Lit-URP-ADV-optimize" },
                                   keywords, floats: { _SrcColor: 1, _DstColor: 10, _SrcAlpha: 1, _DstAlpha: 10, _Cull: 0 }, colors: {} });
 
-const prefab = ({ physics = true, mipCount = 1 } = {}) => {
+const prefab = ({ physics = true, mipCount = 1, opacity, missing = false } = {}) => {
   const root = "model";
   const node = (path, components = []) => ({ path, name: path.split("/").pop(), active: true, layer: 0,
     localPosition: { x: 0, y: 0, z: 0 }, localRotation: { x: 0, y: 0, z: 0, w: 1 }, localScale: { x: 1, y: 1, z: 1 }, components });
@@ -88,14 +89,15 @@ const prefab = ({ physics = true, mipCount = 1 } = {}) => {
   return { key: "model", canvas: {}, nodes: [
     node(root, [
       mb("Live2DCharacter", { DefaultMotionName: "mtn_idle", DefaultExpressionName: "exp_idle", BasePosition: { x: 0, y: -0.41, z: 0 },
-                              BaseScale: 1.6, _motionList: [clip("mtn_idle", -1, 2, 0), clip("mtn_turn", -2, 1, 30)],
+                              BaseScale: 1.6, _motionList: [clip("mtn_idle", -1, 2, 0), clip("mtn_turn", -2, 1, 30, opacity)],
                               _expressionList: ["exp_idle", "exp_closed"] }),
       mb("CubismFadeController", { CubismFadeMotionList: { MotionInstanceIds: [-1, -2],
         CubismFadeMotionObjects: [fadeData("mtn_idle", 2, 0), fadeData("mtn_turn", 1, 30)] } }),
       mb("CubismExpressionController", { UseLegacyBlendCalculation: 0, CurrentExpressionIndex: -1, CurrentFadeInTime: -1,
         ExpressionsList: { CubismExpressionObjects: [
           { name: "exp_idle.exp3", FadeInTime: 0.5, FadeOutTime: 0.5, Parameters: [] },
-          { name: "exp_closed.exp3", FadeInTime: 0.5, FadeOutTime: 0.5, Parameters: [{ Id: "ParamEyeLOpen", Value: 0, Blend: 2 }] }] } }),
+          { name: "exp_closed.exp3", FadeInTime: 0.5, FadeOutTime: 0.5, Parameters: [
+            ...(missing ? [{ Id: "ParamMissing", Value: 1, Blend: 1 }] : []), { Id: "ParamEyeLOpen", Value: 0, Blend: 2 }] }] } }),
       mb("CubismHarmonicMotionController", { BlendMode: 1, ChannelTimescales: [1] }),
       mb("CubismAutoEyeBlinkInput", { Mean: 2.5, MaximumDeviation: 2, Timescale: 10 }),
       mb("CubismEyeBlinkController", { BlendMode: 2, EyeOpening: 1 }),
@@ -130,14 +132,14 @@ const pass = (blend) => ({ state: {
 const litPass = pass([V(1, "_SrcColor"), V(10, "_DstColor"), V(1, "_SrcAlpha"), V(10, "_DstAlpha")]);
 const maskPass = pass([V(1), V(1), V(1), V(1)]);
 
-const modelFiles = ({ format = 1, physics = true, mipCount = 1 } = {}) => {
+const modelFiles = ({ format = 1, physics = true, mipCount = 1, opacity, missing = false } = {}) => {
   const lit = "Live2D Cubism/Lit-URP-ADV-optimize", mask = "Live2D Cubism/Mask";
   const text = {
     "model.json": JSON.stringify({ format, name: "model", moc3: "model.moc3", prefab: "model.prefab.json",
       shaders: "shaders/shaders.json", resources: {
         cubismMask: { material: "Mask", shader: { shader: mask }, keywords: [], floats: { _Cull: 0 }, colors: {} },
         cubismMaskCulling: { material: "MaskCulling", shader: { shader: mask }, keywords: [], floats: { _Cull: 1 }, colors: {} } } }),
-    "model.prefab.json": JSON.stringify(prefab({ physics, mipCount })),
+    "model.prefab.json": JSON.stringify(prefab({ physics, mipCount, opacity, missing })),
     "shaders/shaders.json": JSON.stringify([
       { name: lit, parsed: "lit.json", variants: [{ file: "lit/0.glsl", subShader: 0, pass: 0, keywords: [] },
                                                    { file: "lit/1.glsl", subShader: 0, pass: 0, keywords: ["CUBISM_MASK_ON"] }] },
@@ -290,6 +292,33 @@ test("a model without CubismPhysicsController has no physics", () => withCore(as
   for (let i = 0; i < 10; i++) await s.step();
   assert.equal(s.physics, false);
   await s.dispose();
+}));
+
+test("a clip curve on CubismRenderController.Opacity sets the model opacity, clamped to [0, 1]", () => withCore(async () => {
+  for (const [curve, shown] of [[0.25, 0.25], [1.5, 1], [-2, 0]]) {
+    const s = await ModelSession.create({ gl: headlessGL(), assets: modelFiles({ opacity: curve }), seed: 1 });
+    assert.equal(s.character.rc.opacity, 1);
+    s.playMotion("mtn_turn");
+    for (let i = 0; i < 3; i++) await s.step();
+    assert.equal(s.character.rc.opacity, Math.fround(shown));
+    assert.equal(s.drawing._mpb(s.character.renderers[0]).cubism_ModelOpacity, Math.fround(shown));
+    await s.dispose();
+  }
+}));
+
+test("an expression parameter the model lacks is skipped", () => withCore(async () => {
+  const run = async (missing) => {
+    const s = await ModelSession.create({ gl: headlessGL(), assets: modelFiles({ missing }), seed: 1 });
+    assert.deepEqual(s.character.expressions[1].dest.map((d) => s.character.params.ids[d.i]), ["ParamEyeLOpen"]);
+    s.setExpression("exp_closed");
+    const v = [];
+    for (let i = 0; i < 30; i++) { await s.step(); v.push(s.character.params.value[s.character.params.idx("ParamEyeLOpen")]); }
+    await s.dispose();
+    return v;
+  };
+  const a = await run(true);
+  assert.deepEqual(a, await run(false));
+  assert.ok(a[a.length - 1] < 0.5);
 }));
 
 test("a mipmapped texture gets its other levels generated", () => withCore(async () => {

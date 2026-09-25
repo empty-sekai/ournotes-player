@@ -4,7 +4,8 @@ import { F } from "../engine/core.js";
 // CubismFadeMotionData of CubismFadeController (what the fade blends with).
 
 // Model curves (the Cubism importer's EyeBlink and LipSync targets) animate fields of the root's controllers.
-const FIELDS = { "CubismEyeBlinkController.EyeOpening": "eyeOpening", "CubismMouthController.MouthOpening": "mouthOpening" };
+const FIELDS = { "CubismEyeBlinkController.EyeOpening": "eyeOpening", "CubismMouthController.MouthOpening": "mouthOpening",
+                 "CubismRenderController.Opacity": "renderOpacity" };
 
 const sample = (s, t) => {
   let lo = 0, hi = s.t.length - 1;
@@ -55,7 +56,7 @@ export class Live2DClip {
   // ENGINE: what the Animator samples past a clip playable's duration is native; wrapped around the length here.
   localTime(t) { return (this.loopTime && t > this.length) ? t % this.length : Math.min(t, this.length); }
 
-  // values: the parameter values; fields: the object whose eyeOpening / mouthOpening the model curves set
+  // values: the parameter values; fields: the object whose eyeOpening / mouthOpening / renderOpacity the model curves set
   write(clipTime, values, fields = null) {
     const t = F(this.localTime(clipTime));
     for (const s of this.streamed) values[s.param] = sample(s, t);
