@@ -351,3 +351,38 @@ test("errors: no Core, unknown format, unknown initial motion; a disposed sessio
     await again.dispose();
   });
 });
+
+test("a session creates no AudioContext and deletes the GL objects it created on dispose", () => withCore(async () => {
+  const saved = { ac: globalThis.AudioContext, gl2: globalThis.WebGL2RenderingContext };
+  globalThis.AudioContext = class { constructor() { throw new Error("an AudioContext was created"); } };
+  globalThis.WebGL2RenderingContext = class {};
+  try {
+    // a WebGL2RenderingContext (so the session tracks its objects) over the no-op context, recording creates and deletes
+    const base = headlessGL({ width: 200, height: 300 }), made = new Set(), deleted = new Set();
+    const target = Object.create(globalThis.WebGL2RenderingContext.prototype);
+    const gl = new Proxy(target, {
+      get(t, k) {
+        if (k in t) return t[k];
+        const v = base[k];
+        if (typeof v !== "function") return v;
+        return (...a) => {
+          const r = v(...a);
+          if (typeof k === "string" && k.startsWith("create") && r) made.add(r);
+          if (typeof k === "string" && k.startsWith("delete") && a[0]) deleted.add(a[0]);
+          return r;
+        };
+      },
+    });
+    const s = await ModelSession.create({ gl, assets: modelFiles(), seed: 1 });
+    for (let i = 0; i < 5; i++) await s.step();
+    s.render();
+    assert.ok(made.size > 10);
+    assert.ok(Object.keys(target).length > 0, "the create / delete methods are wrapped while the session lives");
+    await s.dispose();
+    assert.deepEqual([...made].filter((o) => !deleted.has(o)), []);
+    assert.deepEqual(Object.keys(target), [], "the wrappers are removed");
+  } finally {
+    for (const [k, v] of [["AudioContext", saved.ac], ["WebGL2RenderingContext", saved.gl2]])
+      if (v) globalThis[k] = v; else delete globalThis[k];
+  }
+}));

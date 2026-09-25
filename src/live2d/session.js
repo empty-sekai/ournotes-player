@@ -1,4 +1,5 @@
 import { bindAssets, unbindAssets } from "../data/assets.js";
+import { trackGL } from "../engine/gltrack.js";
 import { ShaderLib } from "../engine/glsl.js";
 import { PlayerLoop } from "../engine/loop.js";
 import { mat4 } from "../engine/math.js";
@@ -46,40 +47,6 @@ export const NEUTRAL_AMBIENT = {
   unity_LightData: [0, 0, 0, 0],
 };
 export const CAMERA_NEAR = 0.3, CAMERA_FAR = 1000, CAMERA_DISTANCE = 10;   // Unity's camera defaults; camera at z = -10
-
-// GL objects created through the session's context, deleted by dispose() (as ChartSession does). Only a
-// WebGL2RenderingContext itself is tracked; a wrapped or proxied context is used as given.
-const GL_OBJECTS = [["createBuffer", "deleteBuffer"], ["createTexture", "deleteTexture"],
-  ["createFramebuffer", "deleteFramebuffer"], ["createRenderbuffer", "deleteRenderbuffer"],
-  ["createProgram", "deleteProgram"], ["createShader", "deleteShader"], ["createVertexArray", "deleteVertexArray"]];
-
-const trackGL = (gl) => {
-  if (typeof WebGL2RenderingContext !== "function" || !(gl instanceof WebGL2RenderingContext)) return { release() {} };
-  const live = new Set(), entry = new WeakMap(), wrapped = [];
-  const collected = new FinalizationRegistry((e) => live.delete(e));
-  for (const [c, d] of GL_OBJECTS) {
-    const create = gl[c], del = gl[d];
-    if (typeof create !== "function" || typeof del !== "function") continue;
-    gl[c] = (...a) => {
-      const o = create.apply(gl, a);
-      if (o) { const e = { ref: new WeakRef(o), del: d }; live.add(e); entry.set(o, e); collected.register(o, e, e); }
-      return o;
-    };
-    gl[d] = (o) => {
-      const e = o && entry.get(o);
-      if (e) { live.delete(e); entry.delete(o); collected.unregister(e); }
-      return del.call(gl, o);
-    };
-    wrapped.push(c, d);
-  }
-  return {
-    release() {
-      for (const k of wrapped) delete gl[k];
-      if (!gl.isContextLost()) for (const e of [...live].reverse()) { const o = e.ref.deref(); if (o) gl[e.del](o); }
-      live.clear();
-    },
-  };
-};
 
 const dirname = (p) => { const i = p.lastIndexOf("/"); return i < 0 ? "" : p.slice(0, i); };
 
