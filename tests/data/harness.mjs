@@ -7,6 +7,8 @@
 //   OURNOTES_CHARTS=<id>,<id>,...      charts for the full-run test (default: 100001_expert and 100040_expert when
 //                                      present, else the first chart of the site)
 //   OURNOTES_SEEK_CHART=<id>           chart for the seek / speed / stall test (default: 100082_expert when present)
+//   OURNOTES_READSET_CHARTS=<id>,... | all   charts for the read-set plan check (default: as OURNOTES_CHARTS)
+//   OURNOTES_JOBS=<n>                  read-set charts checked at a time (default 1)
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -16,7 +18,7 @@ import { HeadlessAudioContext, headlessGL, openChart } from "../../scripts/lib/h
 export const DATA = process.env.OURNOTES_DATA || "";
 export const SKIP = DATA ? false : "OURNOTES_DATA is not set (path of a chart site)";
 
-const siteCharts = () => {
+export const siteCharts = () => {
   const index = path.join(DATA, "charts.json");
   if (fs.existsSync(index)) return JSON.parse(fs.readFileSync(index, "utf8")).charts.map((c) => c.id);
   return fs.readdirSync(path.join(DATA, "charts")).filter((f) => f.endsWith(".json")).map((f) => f.slice(0, -5)).sort();

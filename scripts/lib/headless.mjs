@@ -13,6 +13,8 @@ import { AssetStore, TEXT_FILE } from "../../src/data/assets.js";
 // ---- WebGL2 ---------------------------------------------------------------------------------------------------------
 // Every constant is a distinct number (shared by all contexts), every create* returns a new {kind, id} object, queries
 // answer "complete / linked / compiled", everything else does nothing. onCall(name, args), when given, sees every call.
+// The context is a plain object: a constant or method is made at its first access (through a Proxy prototype) and kept
+// as an own property, so later accesses are ordinary property reads.
 const glConstants = new Map();
 const glConst = (name) => {
   if (!glConstants.has(name)) glConstants.set(name, 0x8000 + glConstants.size);
@@ -44,20 +46,26 @@ export const headlessGL = ({ width = 320, height = 180, onCall = null } = {}) =>
   };
   const canvas = { width, height };
   const fns = new Map();
-  return new Proxy({ canvas, drawingBufferWidth: width, drawingBufferHeight: height }, {
-    get(t, k) {
-      if (k in t) return t[k];
+  const make = (k) => {
+    if (/^[A-Z0-9_]+$/.test(k)) return glConst(k);
+    let f = fns.get(k);
+    if (!f) {
+      const g = impl[k] || (k.startsWith("create") ? () => obj(k.slice(6)) : () => undefined);
+      f = onCall ? (...a) => { onCall(k, a); return g(...a); } : g;
+      fns.set(k, f);
+    }
+    return f;
+  };
+  const gl = Object.create(new Proxy({}, {
+    get(t, k, receiver) {
       if (typeof k !== "string") return undefined;
-      if (/^[A-Z0-9_]+$/.test(k)) return glConst(k);
-      let f = fns.get(k);
-      if (!f) {
-        const g = impl[k] || (k.startsWith("create") ? () => obj(k.slice(6)) : () => undefined);
-        f = onCall ? (...a) => { onCall(k, a); return g(...a); } : g;
-        fns.set(k, f);
-      }
-      return f;
+      if (k in t) return t[k];                                    // Object.prototype's members, as on any object
+      const v = make(k);
+      Object.defineProperty(receiver, k, { value: v, writable: true, configurable: true });
+      return v;
     },
-  });
+  }));
+  return Object.assign(gl, { canvas, drawingBufferWidth: width, drawingBufferHeight: height });
 };
 
 // ---- WebAudio -------------------------------------------------------------------------------------------------------
@@ -144,10 +152,58 @@ export const storeFromDir = (dir, info = null) => {
   return new AssetStore({ text, bytes, info });
 };
 
-// a chart manifest file (site/charts/<id>.json, assets under site/assets) or a directory holding live.json
+// the files under `dir` as storeFromDir has them, each read when it is first asked for (has, text, bytes, ...); a
+// path names a file by its exact name, "/"-separated, without "." or ".." segments
+export class DirStore extends AssetStore {
+  constructor(dir, info = null) {
+    super({ info });
+    this.dir = dir;
+    this._entries = new Map();            // directory -> Map(name -> is a directory)
+  }
+
+  _entriesOf(d) {
+    let m = this._entries.get(d);
+    if (!m) {
+      try { m = new Map(fs.readdirSync(d, { withFileTypes: true }).map((e) => [e.name, e.isDirectory()])); } catch { m = new Map(); }
+      this._entries.set(d, m);
+    }
+    return m;
+  }
+
+  _load(p) {
+    if (typeof p !== "string" || this._text.has(p) || this._bin.has(p)) return;
+    const parts = p.split("/");
+    if (parts.some((x) => !x || x === "." || x === "..")) return;
+    let f = this.dir;
+    for (let i = 0; i < parts.length; i++) {
+      if (this._entriesOf(f).get(parts[i]) !== (i < parts.length - 1)) return;   // missing, or a file / directory mix-up
+      f = path.join(f, parts[i]);
+    }
+    if (TEXT_FILE.test(p)) this._text.set(p, fs.readFileSync(f, "utf8"));
+    else this._bin.set(p, new Uint8Array(fs.readFileSync(f)));
+  }
+
+  has(p) { this._load(p); return super.has(p); }
+  text(p) { this._load(p); return super.text(p); }
+  bytes(p) { this._load(p); return super.bytes(p); }
+
+  list(prefix = "") {
+    const walk = (d, pre) => {
+      for (const [name, isDir] of this._entriesOf(d)) {
+        const p = pre ? `${pre}/${name}` : name;
+        if (isDir) walk(path.join(d, name), p); else this._load(p);
+      }
+    };
+    walk(this.dir, "");
+    return super.list(prefix).sort();
+  }
+}
+
+// a chart manifest file (site/charts/<id>.json, assets under site/assets) or a directory holding live.json (its files
+// read on demand)
 export const openChart = async (where) => {
   const p = path.resolve(where);
-  const store = fs.statSync(p).isDirectory() ? storeFromDir(p)
+  const store = fs.statSync(p).isDirectory() ? new DirStore(p)
     : await AssetStore.fromManifest(pathToFileURL(p).href, { fetch: fileFetch });
   return headlessImages(store);
 };

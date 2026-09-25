@@ -126,6 +126,16 @@ export class NoteGL {
     gl.drawElements(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0);
   }
 
+  // the shader library requests a draw with `mat` makes (drawSprite / drawBody: program, render state, property
+  // defaults), without drawing: the read-set plan (scripts/read-set.mjs --plan) makes them for the materials of
+  // LiveNotes.plannedMaterials(), so the files they read are read without stepping the chart
+  prepare(mat) {
+    const shader = mat.shader.shader;
+    this.lib.program(shader, 0, mat.keywords);
+    this.lib.state(shader, 0, mat.floats);
+    this.lib.defaults(shader, this.defTex);
+  }
+
   // one body mesh (Live/Unlit/SlideLine): m = NoteGeo.bodyMesh result, mpb = {_GradientTex, _Color, _GradientState}
   drawBody(ctx, mat, m, M, mpb) {
     const gl = this.gl, shader = mat.shader.shader, prog = this.lib.program(shader, 0, mat.keywords);
@@ -457,6 +467,35 @@ export class LiveNotes {
   }
 
   *_heads() { yield* this.spawned.values(); for (const h of this.held.values()) yield h.view; }
+
+  // The materials the note views draw over the whole chart, from the score alone (the read-set plan; nothing is
+  // stepped and the views' state is not touched). update() spawns every note of a view type other than Undefined and
+  // None once it approaches (TrySpawnNote) and submit() draws it while it is spawned, so: the head renderers of every
+  // such note (its setup width decides which part and arrow sprites it has), the pair line when pair lines are shown
+  // and such a note has a pair note, and the line body material when such a note begins a line.
+  plannedMaterials() {
+    const T = NoteViewType, G = NoteGeo, out = new Set();
+    let pair = false, body = false;
+    for (const note of this.score.notes) {
+      const vt = T.of(note);
+      if (vt === 0 || vt === 1) continue;                            // IsEnableViewNoteViewType
+      const view = new NoteHeadView(this, vt);                        // as _rent / _trySpawnNote, without their state
+      const lane0 = F(note.laneStartFloat + F(F(note.laneEndFloat - note.laneStartFloat) * 0.5));
+      const cw = G.clampLaneAndWidth(lane0, F(note.width), this.geo.laneMin, this.geo.laneMax);
+      view.setup(note.id, cw.width, cw.center, note.timeMs, note.critical);
+      view.setViewProgress(1);
+      view.updateView();
+      for (const n of view.renderers()) out.add(n.comp.m_Materials[0]);
+      if (this.showPairLines && note.pairNoteId && this.notes.has(note.pairNoteId)) pair = true;
+      if (T.isLineBegin(note.op) && note.lineIds.length) body = true;
+    }
+    if (pair) {
+      const pl = new PairLineView(this);
+      if (pl.r.enabled && pl.r.active) out.add(pl.r.comp.m_Materials[0]);
+    }
+    if (body) out.add(this.material);
+    return [...out];
+  }
 
   holdHeads() {
     return [...this.held.entries()].filter(([, h]) => h.visible)

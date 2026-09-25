@@ -39,6 +39,10 @@ public API changes, and document it in [docs/api.md](docs/api.md).
   OURNOTES_DATA=/path/to/site OURNOTES_CHARTS=100001_expert,100040_expert OURNOTES_SEEK_CHART=100082_expert npm run test:data
   ```
 
+  The same run checks that the read-set plan (`node scripts/read-set.mjs <chart> --plan`, which lists the files a chart
+  reads without stepping it) equals the full simulation's read set; `OURNOTES_READSET_CHARTS=all OURNOTES_JOBS=<n>`
+  checks every chart of the site, `n` at a time.
+
 - `npm run validate-data -- <site dir> [chart id ...]` checks a site against the data format and the schemas in
   `schema/`.
 
