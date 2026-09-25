@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/empty-sekai/ournotes-player/main/schema/charts.schema.json",
+  "title": "Chart index (charts.json)",
+  "description": "The list of charts a site offers. The player itself does not read it; chart listings do. See docs/data-format.md.",
+  "type": "object",
+  "required": ["format", "charts"],
+  "properties": {
+    "format": { "const": 2 },
+    "charts": { "type": "array", "items": { "$ref": "#/$defs/entry" } }
+  },
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "required": ["id", "musicId", "difficulty", "manifest", "title", "level", "notes", "durationMs", "audio", "flows", "bytes"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[0-9]+_[a-z]+$" },
+        "musicId": { "type": "integer", "minimum": 1 },
+        "difficulty": { "type": "string", "pattern": "^[a-z]+$" },
+        "manifest": { "type": "string", "pattern": "^charts/[0-9]+_[a-z]+\\.json$" },
+        "title": { "type": "string" },
+        "bands": { "type": "array", "items": { "type": "string" } },
+        "bandIds": { "type": "array", "items": { "type": "integer" } },
+        "stageBand": { "type": "integer" },
+        "level": { "type": "integer" },
+        "displayLevel": { "type": "number" },
+        "notes": { "type": "integer", "minimum": 0 },
+        "fullComboCount": { "type": "integer", "minimum": 0 },
+        "durationMs": { "type": "integer", "minimum": 0 },
+        "sortOrder": { "type": "integer" },
+        "audio": { "type": "boolean" },
+        "audioFormat": { "enum": ["aac", "flac"] },
+        "flows": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "bytes": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/empty-sekai/ournotes-player/main/schema/score.schema.json",
+  "title": "Score notes (the file live.json `notes` names)",
+  "description": "The notes and lines of one chart, in the order the game's simulation updates them. Only the keys the player reads are described. See docs/data-format.md.",
+  "type": "object",
+  "required": ["laneCount", "notes", "lines"],
+  "properties": {
+    "laneCount": { "type": "integer", "minimum": 2 },
+    "notes": { "type": "array", "items": { "$ref": "#/$defs/note" } },
+    "lines": { "type": "array", "items": { "$ref": "#/$defs/line" } }
+  },
+  "$defs": {
+    "ease": { "enum": ["Linear", "EaseIn", "EaseOut"] },
+    "note": {
+      "type": "object",
+      "required": ["id", "op", "timeMs", "bar", "barProgress", "laneStart", "laneEnd", "laneStartFloat", "laneEndFloat",
+                   "width", "critical", "direction", "slideAlong", "lineIds", "lineEase", "lineEaseR", "pairNoteId"],
+      "properties": {
+        "id": { "type": "integer", "minimum": 1 },
+        "op": { "enum": [1, 20, 21, 22, 40, 41, 42, 60, 61, 62, 63, 80, 82, 100, 101, 102, 103, 104, 105, 120, 121, 122] },
+        "timeMs": { "type": "integer" },
+        "bar": { "type": "integer", "minimum": 0 },
+        "barProgress": { "type": "number", "minimum": 0 },
+        "laneStart": { "type": "integer" },
+        "laneEnd": { "type": "integer" },
+        "laneStartFloat": { "type": "number" },
+        "laneEndFloat": { "type": "number" },
+        "width": { "type": "number" },
+        "critical": { "type": "boolean" },
+        "direction": { "enum": ["Normal", "Left", "Right"] },
+        "slideAlong": { "type": "boolean" },
+        "lineIds": { "type": "array", "items": { "type": "integer", "minimum": 1 } },
+        "lineEase": { "$ref": "#/$defs/ease" },
+        "lineEaseR": { "$ref": "#/$defs/ease" },
+        "pairNoteId": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "line": {
+      "type": "object",
+      "required": ["lineId", "type", "noteIds"],
+      "properties": {
+        "lineId": { "type": "integer", "minimum": 1 },
+        "type": { "enum": ["long", "guide"] },
+        "noteIds": { "type": "array", "minItems": 2, "items": { "type": "integer", "minimum": 1 } }
+      }
+    }
+  }
+}

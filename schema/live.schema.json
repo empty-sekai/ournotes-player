@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/empty-sekai/ournotes-player/main/schema/live.schema.json",
+  "title": "Live index (live.json)",
+  "description": "The entry file of a chart: the paths of the logical files the player reads. See docs/data-format.md.",
+  "type": "object",
+  "required": ["scene", "notes", "noteAssets", "liveAudio"],
+  "properties": {
+    "musicId": { "type": "integer" },
+    "difficulty": { "type": "string" },
+    "scene": { "$ref": "#/$defs/path", "description": "Live scene (usually livescene/scene.json)." },
+    "notes": { "$ref": "#/$defs/path", "description": "Score notes of the chart (e.g. score/0001_03.notes.json)." },
+    "noteAssets": { "$ref": "#/$defs/path", "description": "Note, effect and UI assets (usually livenotes/notes.json)." },
+    "liveAudio": { "$ref": "#/$defs/path", "description": "Sound definitions (usually audio/live-audio.json)." }
+  },
+  "$defs": {
+    "path": { "type": "string", "pattern": "^[A-Za-z0-9_][^\\\\]*\\.json$" }
+  }
+}

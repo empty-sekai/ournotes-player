@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/empty-sekai/ournotes-player/main/schema/manifest.schema.json",
+  "title": "Chart manifest (charts/<musicId>_<difficulty>.json)",
+  "description": "The logical files of one chart and where their bytes are. See docs/data-format.md.",
+  "type": "object",
+  "required": ["format", "musicId", "difficulty", "files"],
+  "properties": {
+    "format": { "const": 2 },
+    "musicId": { "type": "integer", "minimum": 1 },
+    "difficulty": { "type": "string", "pattern": "^[a-z]+$" },
+    "chart": { "$ref": "#/$defs/chart" },
+    "audio": { "type": "boolean" },
+    "audioFormat": { "enum": ["aac", "flac"] },
+    "flows": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "quality": { "enum": [0, 1, 2] },
+    "files": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Za-z0-9_][^\\\\]*$" },
+      "additionalProperties": {
+        "anyOf": [{ "$ref": "#/$defs/whole" }, { "$ref": "#/$defs/parts" }]
+      }
+    }
+  },
+  "$defs": {
+    "asset": { "type": "string", "pattern": "^assets/[0-9a-f]{64}\\.[a-z0-9]+$" },
+    "size": { "type": "integer", "minimum": 0 },
+    "whole": {
+      "type": "object",
+      "required": ["asset", "size"],
+      "additionalProperties": false,
+      "properties": { "asset": { "$ref": "#/$defs/asset" }, "size": { "$ref": "#/$defs/size" } }
+    },
+    "parts": {
+      "type": "object",
+      "required": ["parts", "size"],
+      "additionalProperties": false,
+      "properties": {
+        "parts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "array",
+            "prefixItems": [{ "type": "string" }, { "$ref": "#/$defs/asset" }, { "$ref": "#/$defs/size" }],
+            "minItems": 3,
+            "maxItems": 3
+          }
+        },
+        "size": { "$ref": "#/$defs/size" }
+      }
+    },
+    "chart": {
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "bands": { "type": "array", "items": { "type": "string" } },
+        "bandIds": { "type": "array", "items": { "type": "integer" } },
+        "stageBand": { "type": "integer" },
+        "level": { "type": "integer" },
+        "displayLevel": { "type": "number" },
+        "notes": { "type": "integer", "minimum": 0 },
+        "fullComboCount": { "type": "integer", "minimum": 0 },
+        "durationMs": { "type": "integer", "minimum": 0 },
+        "sortOrder": { "type": "integer" }
+      }
+    }
+  }
+}
