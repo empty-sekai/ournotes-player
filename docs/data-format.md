@@ -3,7 +3,8 @@
 The player does not ship any game data. It plays a chart from a set of **logical files** (paths such as
 `live.json` or `livescene/scene.json`) that the embedding page supplies, usually as a static **site** served over
 HTTP. This document describes that data: the site layout, the chart manifest, and every logical file as far as the
-player reads it. Producing the data is outside this repository.
+player reads it. Producing the data is outside this repository; the
+[nnnotes](https://github.com/empty-sekai/nnnotes) toolkit produces it from game files the user supplies.
 
 Machine-readable schemas are in [`schema/`](../schema), and `node scripts/validate-data.mjs <site dir> [chart id ...]`
 checks a whole site (see [Validation](#validation)).
@@ -56,7 +57,7 @@ does not.
 ```json
 { "format": 2, "charts": [ { "id": "100001_expert", "musicId": 100001, "difficulty": "expert",
                              "manifest": "charts/100001_expert.json", "title": "…", "level": 25, "notes": 768,
-                             "durationMs": 99989, "audio": true, "audioFormat": "aac", "flows": ["direct", "game"],
+                             "durationMs": 99989, "audio": true, "audioFormat": "aac", "flows": ["direct"],
                              "bytes": 42860517, "…": "…" } ] }
 ```
 
@@ -83,7 +84,7 @@ and where their bytes are.
   "chart": { "title": "…", "level": 25, "notes": 768, "durationMs": 99989, "…": "…" },
   "audio": true,
   "audioFormat": "aac",
-  "flows": ["direct", "game"],
+  "flows": ["direct"],
   "quality": 1,
   "files": {
     "live.json": { "asset": "assets/5203…cba0.json", "size": 466 },
@@ -101,7 +102,7 @@ and where their bytes are.
 | `chart` | object | yes | The chart's facts (title, bands, level, note count, duration, …), handed to the page as they are (see [docs/api.md](api.md)). The player does not interpret them. |
 | `audio` | boolean | yes | `false`: the chart has no waveform files. The player then plays no sound and runs the chart clock from game time, as with the music switched off. |
 | `audioFormat` | `"aac"` \| `"flac"` | no | Format of the music file: AAC in an MP4 container (`.m4a`) or FLAC. Sound effects are FLAC. |
-| `flows` | string[] | no | Start flows the files support. The player always uses the direct start (the chart starts at the end of the live's intro timeline), which every chart supports (`"direct"`). `"game"` means the files for the game's own start sequence are included as well; this player does not use them. |
+| `flows` | string[] | no | Start flows the files support. The player uses the direct start (the chart starts at the end of the live's intro timeline), `"direct"`, which every chart supports; other values name start sequences this player does not use. |
 | `quality` | `0` \| `1` \| `2` | yes | The `LiveQuality` the files were prepared for (0 High, 1 Middle, 2 Low); the default quality of the player. The current data uses 1 (Middle, the game's default option). |
 | `files` | object | yes | Logical path → file entry. |
 
@@ -127,8 +128,7 @@ Rules:
   file is binary.
 - Every asset's byte length must equal its `size`; the player checks it while loading.
 - The player fetches every listed file before the chart starts (several requests at a time), so a manifest should list
-  only what a chart needs. Files the player does not read (the current data includes `liveui/` and some shaders for
-  the game's start sequence) are fetched but unused.
+  only what a chart needs: files the player does not read are fetched but unused.
 
 ## Logical files
 
