@@ -59,12 +59,12 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
+    "prepare": "node scripts/build.mjs",
     "test": "node --test tests/unit/*.test.mjs",
     "test:data": "node --test tests/data/*.test.mjs",
     "typecheck": "tsc -p tests/types",
     "validate-data": "node scripts/validate-data.mjs",
-    "read-set": "node scripts/read-set.mjs",
-    "prepack": "node scripts/build.mjs"
+    "read-set": "node scripts/read-set.mjs"
   },
   "devDependencies": {
     "esbuild": "0.25.10",
