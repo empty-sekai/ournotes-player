@@ -62,7 +62,7 @@ export interface ChartSessionOptions {
   /** The context to draw into; used by this session alone while it lives. */
   gl: WebGL2RenderingContext;
   assets: AssetStore;
-  /** A 48 kHz AudioContext (default: one created, and closed on dispose, by the session). */
+  /** An AudioContext at any sample rate (default: a 48 kHz one created, and closed on dispose, by the session). */
   audioContext?: AudioContext;
   /** LiveQuality 0..4 (default: the manifest's `quality`, else 1). */
   quality?: number;
@@ -131,6 +131,7 @@ export interface ChartPlayerOptions {
   se?: boolean;
   quality?: number;
   seed?: number;
+  /** An AudioContext at any sample rate (default: the player's own, 48 kHz). */
   audioContext?: AudioContext;
   /** Device pixels per CSS pixel of the drawing buffer (default devicePixelRatio). */
   pixelRatio?: number;

@@ -1,4 +1,4 @@
-import { Audio } from "../engine/audio.js";
+import { Audio, framesAt } from "../engine/audio.js";
 
 // Live sounds: BGM, note SE, slide-hold loop, start / finish cheers, finish direction SE and character voices, with
 // the game's LiveSoundPlayer rules (App.Live.LiveSoundPlayer) on Audio, routed through the CRI categories, cue layers
@@ -224,14 +224,17 @@ export class LiveSoundManager extends Audio {
       const c = this.cueOf(id);
       for (const L of c.entry.layers) {
         if (this.layerBuffers.has(L.file)) continue;
+        // the buffer is at the context's rate R (browsers resample while decoding); samples and encoderDelay count
+        // frames at the layer's own rate r and are scaled to R (framesAt; unchanged when R = r)
         let buf = await this.ctx.decodeAudioData(this.assets.arrayBuffer(L.file));
-        if (buf.sampleRate !== L.sampleRate) throw new Error(`${L.file}: decoded at ${buf.sampleRate} Hz`);
+        const R = buf.sampleRate, r = L.sampleRate;
         // AAC layers: a decoder that does not apply the MP4 edit list returns the encoder's priming samples
         // first; with at least samples + encoderDelay decoded, the first encoderDelay samples are dropped
         const d = L.encoderDelay || 0;
-        if (d > 0 && buf.length >= L.samples + d) {
-          const t = this.ctx.createBuffer(buf.numberOfChannels, L.samples, buf.sampleRate);
-          for (let ch = 0; ch < buf.numberOfChannels; ch++) t.copyToChannel(buf.getChannelData(ch).subarray(d, d + L.samples), ch);
+        if (d > 0 && buf.length >= framesAt(L.samples + d, r, R, Math.floor)) {
+          const skip = framesAt(d, r, R), keep = Math.min(framesAt(L.samples, r, R), buf.length - skip);
+          const t = this.ctx.createBuffer(buf.numberOfChannels, keep, R);
+          for (let ch = 0; ch < buf.numberOfChannels; ch++) t.copyToChannel(buf.getChannelData(ch).subarray(skip, skip + keep), ch);
           buf = t;
         }
         this.layerBuffers.set(L.file, buf);
@@ -272,7 +275,7 @@ export class LiveSoundManager extends Audio {
       src.buffer = buf;
       const own = L.loopFlag === 2 && L.loopStart != null;
       if (loop || own) {
-        src.loop = true;
+        src.loop = true;                        // loop points in seconds (frames at the layer's rate): any context rate
         if (L.loopStart != null) { src.loopStart = L.loopStart / L.sampleRate; src.loopEnd = L.loopEnd / L.sampleRate; }
       }
       if (info.rate !== 1) src.playbackRate.value = info.rate;

@@ -70,7 +70,7 @@ Options:
 | `music`, `se` | `true` | Music and sound effects on. |
 | `quality` | manifest | LiveQuality 0..4; a chart manifest carries the files of one quality. |
 | `seed` | clock | Seed of the particle random stream (a fixed seed gives the same effects every run). |
-| `audioContext` | | A 48 kHz `AudioContext` for this player (`pause()` suspends it). By default the player creates its own and closes it on `dispose()`. |
+| `audioContext` | | An `AudioContext` for this player, at any sample rate: the audio files are decoded into its rate. `pause()` and the end of the chart suspend it, `play()` resumes it. By default the player creates its own at 48 kHz, the rate of the audio files, and closes it on `dispose()`. |
 | `pixelRatio` | `devicePixelRatio` | Device pixels per CSS pixel of the drawing buffer. |
 | `signal` | | An `AbortSignal` that cancels the loading. |
 | `on` | | `{type: listener}`: listeners added before loading starts (for `progress`, `ready`, `error`). |
@@ -138,7 +138,7 @@ the chart. The context serves this session alone while it lives (one session per
 
 | | |
 |---|---|
-| `step({draw = true})` | Advances one frame of game time (1/60 s × speed) and draws it unless `draw` is false. Do not call it while `paused` or `busy`. To keep game time on real time, run as many steps as 60 Hz × elapsed time asks for and draw only the last (`ChartPlayer` runs at most 4 per animation frame). |
+| `step({draw = true})` | Advances one frame of game time (1/60 s × speed) and draws it unless `draw` is false; the step that ends the chart suspends the `AudioContext`. Do not call it while `paused` or `busy`. To keep game time on real time, run as many steps as 60 Hz × elapsed time asks for and draw only the last (`ChartPlayer` runs at most 4 per animation frame). |
 | `render()` | Draws the current state. |
 | `resize(width, height)` | Drawing buffer size in pixels, applied by the next `render()` (the canvas is resized when it differs, and drawn in the same task). |
 | `play()`, `pause()`, `seek(ms)` | As on `ChartPlayer`. `pause()` draws the frame it stopped at; so does a seek while paused. |
@@ -190,6 +190,7 @@ whose pitch changes with the speed. With the music off, the chart runs on game t
 ### Audio
 
 Browsers start audio only after a user gesture on the page. `play()` resumes the `AudioContext`, so call it from a
-click, tap or key handler (the control bar does). With `autoplay` and no gesture yet, the player stays paused with the
+click, tap or key handler (the control bar does). At the end of the chart the `AudioContext` is suspended: sounds
+still playing then (the finish cheer loops by itself) stop, and `play()` resumes it and starts the chart again. With `autoplay` and no gesture yet, the player stays paused with the
 play button shown until `play()` is called from a gesture. A chart whose manifest has `"audio": false` plays without
 sound on game time.

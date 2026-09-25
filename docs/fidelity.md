@@ -46,7 +46,8 @@ These are not in the game; they are kept apart from the reproduced code and docu
 - **Direct start.** The player starts at the chart. The game's start sequence (start canvas, start cheer, start voice)
   is not shown: the live's intro timeline runs to its end once without drawing and without sound, so stage, lane and
   tap area are as the game leaves them when the music starts.
-- **Pause and resume.** The loop stops stepping and the audio is suspended.
+- **Pause and resume.** The loop stops stepping and the audio is suspended. At the end of the chart the audio is
+  suspended too (the game goes on to its result screen, which is not part of the player).
 - **Seek.** The chart state is re-simulated frame by frame on the 60 fps grid without drawing, from the chart start (or
   the current position when seeking forward); judgements, combo, note views and UI equal an uninterrupted run at the
   time reached. Effects and particles are cleared and sounds other than the music stop.

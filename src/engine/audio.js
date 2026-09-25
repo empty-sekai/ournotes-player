@@ -10,6 +10,12 @@
 // (Bgm 0.7, Se 1.0, Voice 1.0 with default options).
 
 export const SOUND_CATEGORY = { Bgm: 0, Se: 1, Voice: 2, NotesSe: 3, All: 9999 };
+
+// Sample frames at another sample rate. The cue data counts frames at the waveform's own rate (48 kHz in the data);
+// decodeAudioData resamples to the AudioContext's rate, so n frames at `from` are n x to / from frames of the decoded
+// buffer (rounded by `round`). At equal rates the count is n itself. Times in seconds (loop points, start offsets, the
+// audio-synced time) do not depend on the rate.
+export const framesAt = (n, from, to, round = Math.round) => (from === to ? n : round(n * to / from));
 export const SOUND_BUS_GAIN = { 0: 0.7, 1: 1.0, 2: 1.0 };
 
 // Fwk.Sound.SoundVolume over the CRI category volumes. SoundVolumeSettings gives each category name its
@@ -54,7 +60,8 @@ export class Audio {
   constructor(resolve, loop, { context = null, assets = null } = {}) {
     this.ownsContext = !context;
     this.assets = assets;
-    this.ctx = context || new AudioContext({ sampleRate: 48000 });   // the cues are 48 kHz; no resampling
+    // the cues are 48 kHz: an own context at that rate decodes without resampling; a given context may run at any rate
+    this.ctx = context || new AudioContext({ sampleRate: 48000 });
     this.resolve = resolve;
     this.loop = loop;
     this.buffers = new Map();
@@ -100,8 +107,8 @@ export class Audio {
       if (this.buffers.has(key)) continue;
       const meta = this.assets.json(`audio/${c.sheet}/cues.json`)[c.cue];
       if (!meta) throw new Error(`cue ${c.cue} not decoded in ${c.sheet}`);
+      // decoded at the context's rate; the loop points below are converted to seconds with the cue's own rate
       const buf = await this.ctx.decodeAudioData(this.assets.arrayBuffer(`audio/${c.sheet}/${meta.file}`));
-      if (buf.sampleRate !== meta.sampleRate) throw new Error(`${c.cue}: decoded at ${buf.sampleRate} Hz`);
       this.buffers.set(key, { buf, meta });
     }
   }
@@ -139,7 +146,7 @@ export class Audio {
     src.onended = () => { info.finished = true; };
     const start = Math.trunc(startSec * 1000) / 1000;
     info.startCtx = this.ctx.currentTime;
-    info.startSample = Math.round(start * entry.meta.sampleRate);
+    info.startSample = Math.round(start * entry.meta.sampleRate);   // in frames at the cue's own rate
     info.startOffsetSec = start;
     src.start(info.startCtx, start);
     info.src = src;

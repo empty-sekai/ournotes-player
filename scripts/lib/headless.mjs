@@ -61,7 +61,8 @@ export const headlessGL = ({ width = 320, height = 180, onCall = null } = {}) =>
 };
 
 // ---- WebAudio -------------------------------------------------------------------------------------------------------
-// The clock is `t` (seconds), set by the caller. decodeAudioData reads the header only (FLAC STREAMINFO, MP4 mdhd).
+// The clock is `t` (seconds), set by the caller. decodeAudioData reads the header only (FLAC STREAMINFO, MP4 mdhd) and,
+// as a browser does, returns a buffer at the context's sample rate (the length scaled from the file's rate).
 const param = (v = 0) => ({ value: v, setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {},
                             cancelScheduledValues() {}, setTargetAtTime() {}, cancelAndHoldAtTime() {} });
 const audioNode = (extra = {}) => ({ connect(d) { return d; }, disconnect() {}, ...extra });
@@ -105,7 +106,8 @@ export class HeadlessAudioContext {
     const i = b.toString("latin1", 0, 4) === "fLaC" ? flacInfo(b)
       : b.toString("latin1", 4, 8) === "ftyp" ? mp4Info(b) : null;
     if (!i) throw new Error("the headless AudioContext reads FLAC and MP4 headers only");
-    return audioBuffer(i.channels, i.samples, i.sampleRate);
+    const n = i.sampleRate === this.sampleRate ? i.samples : Math.floor(i.samples * this.sampleRate / i.sampleRate);
+    return audioBuffer(i.channels, n, this.sampleRate);
   }
 }
 

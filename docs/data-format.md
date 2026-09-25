@@ -277,12 +277,12 @@ A layer:
 | Key | Meaning |
 |---|---|
 | `file` | Logical path of the waveform: FLAC, or AAC in MP4 (`.m4a`). |
-| `sampleRate` | 48000. The player decodes at 48 kHz and checks the decoded rate. |
+| `sampleRate` | 48000, the rate of the waveform file. `samples`, the loop points and `encoderDelay` count frames at this rate. Browsers decode into the rate of the `AudioContext` (the player's own runs at 48 kHz; a page may give one at another rate), and the player scales these counts to it. |
 | `channels` | Channel count. |
 | `samples` | Length of the waveform in sample frames, without encoder padding. The music's first layer defines the chart's length: `floor(samples × 1000 / sampleRate)` ms. |
 | `loopFlag`, `loopStart`, `loopEnd` | `loopFlag` 2 with loop points (sample frames): the waveform loops by itself. When the player loops a cue (the hold sound effect) a layer loops at its loop points, else as a whole. `loopStart` and `loopEnd` are both `null` when there are none. |
 | `volume` | Layer volume (multiplied with the cue volume). |
-| `encoderDelay` | Optional, AAC only: the encoder's priming samples at the start of the stream. A browser decoder that ignores the MP4 edit list returns them first; when the decoded buffer holds at least `samples + encoderDelay` frames, the player drops the first `encoderDelay` frames and keeps `samples`. |
+| `encoderDelay` | Optional, AAC only: the encoder's priming samples at the start of the stream. A browser decoder that ignores the MP4 edit list returns them first; when the decoded buffer holds at least `samples + encoderDelay` frames, the player drops the first `encoderDelay` frames and keeps `samples` (both scaled to the context's rate, see `sampleRate`). |
 
 Types and sounds the player uses:
 

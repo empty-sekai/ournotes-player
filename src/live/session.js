@@ -53,6 +53,9 @@ import { LiveStage } from "./stage.js";
 //   speed   Time.timeScale for the game time (effects, tweens, animators) and the playbackRate of the music (the chart
 //           clock follows the music; its pitch changes); without music the game clock runs at the speed.
 //   pause   no step runs and the AudioContext is suspended (music, sounds and their clock stop together).
+//   end     the step that ends the chart (and a seek to its end) suspends the AudioContext too: the session has no
+//           state after the chart, and the sounds still playing (the finish cheer loops by itself) stop with it;
+//           play() resumes it (and starts the chart again).
 //   music / sound effects on and off; a chart without audio files (manifest "audio": false) runs on the game clock.
 
 export const LIVE_CATCHUP_FX_FRAMES = 12;     // catch-up: effects stepped up to this many missed frames
@@ -101,7 +104,8 @@ export class ChartSession {
   // opts:
   //   gl            WebGL2RenderingContext (required); used by this session alone while it lives
   //   assets        AssetStore of the chart (required)
-  //   audioContext  a 48 kHz AudioContext to play into (default: one created and closed by the session)
+  //   audioContext  an AudioContext to play into, at any sample rate (the waveforms are decoded into its rate; default:
+  //                 a 48 kHz one created and closed by the session)
   //   quality       LiveQuality 0..4 (default: the manifest's `quality`, else 1 = Middle, the game's option default);
   //                 a chart manifest carries the files of one quality
   //   seed          seed of the particle random stream (default: from the clock, as the game's TickCount)
@@ -123,8 +127,6 @@ export class ChartSession {
   async _load({ gl, assets, audioContext = null, quality, seed, width, height } = {}) {
     if (!gl) throw new Error("ChartSession: a WebGL2 context is required");
     if (!assets) throw new Error("ChartSession: an AssetStore is required");
-    if (audioContext && audioContext.sampleRate !== 48000)
-      throw new Error(`ChartSession: the audio context runs at ${audioContext.sampleRate} Hz; the cues need 48000 Hz`);
     bindAssets(gl, assets);
     this.gl = gl; this.assets = assets;
     this._gl = trackGL(gl);
@@ -332,6 +334,7 @@ export class ChartSession {
     if (this.disposed) throw new Error("ChartSession: disposed");
     this._noDraw = !draw;
     try { await this._step(); } finally { this._noDraw = false; }
+    if (this.state === "ended") await this.audio.suspend();       // the end of the chart (see the header)
   }
 
   // one loop step; seek and the controls wait for a step in progress
@@ -452,7 +455,7 @@ export class ChartSession {
       await run;
     } finally {
       this._seekRun = null;
-      if (suspended && !this.paused) await this.audio.resume();
+      if (suspended && !this.paused && this.state !== "ended") await this.audio.resume();
       this.seeking = false;
     }
     if (this.paused && this.started) this.render();
