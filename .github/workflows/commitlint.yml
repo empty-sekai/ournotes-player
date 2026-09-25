@@ -1,0 +1,54 @@
+name: lint-commits
+
+# Enforces conventional commit titles so git-cliff can drive the release notes. See cliff.toml for the type groups.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: conventional commit lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install commitlint
+        run: npm install -g @commitlint/cli @commitlint/config-conventional
+
+      - name: Write commitlint config
+        run: |
+          cat > commitlint.config.cjs <<'CFG'
+          module.exports = {
+            extends: ['@commitlint/config-conventional'],
+            rules: {
+              'body-max-line-length': [0],
+              'footer-max-line-length': [0],
+              'header-max-length': [2, 'always', 100],
+            },
+          };
+          CFG
+
+      - name: Lint pull request commits
+        if: github.event_name == 'pull_request'
+        run: >-
+          npx commitlint
+          --from=${{ github.event.pull_request.base.sha }}
+          --to=${{ github.event.pull_request.head.sha }}
+          --verbose
+
+      # A push has no base/head pair, and linting the full history would fail on commits that predate this workflow.
+      # Lint the pushed tip only.
+      - name: Lint pushed commit
+        if: github.event_name == 'push'
+        run: npx commitlint --last --verbose

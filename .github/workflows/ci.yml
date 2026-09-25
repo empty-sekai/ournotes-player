@@ -1,0 +1,36 @@
+name: ci
+
+# Mirrors the verification job of the release workflow so a green run here predicts a green release. Keep the two in
+# step when either changes.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      - run: npm run typecheck
+      # --check builds twice and fails when the two outputs differ
+      - run: node scripts/build.mjs --check
+      - name: Package contents
+        run: npm pack --dry-run

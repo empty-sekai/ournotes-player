@@ -1,0 +1,73 @@
+{
+  "name": "ournotes-player",
+  "version": "0.0.0",
+  "description": "Browser chart player for BanG Dream! Our Notes charts: WebGL2 + WebAudio, custom element <ournotes-player>",
+  "keywords": [
+    "bang-dream",
+    "rhythm-game",
+    "chart",
+    "player",
+    "webgl2",
+    "webaudio",
+    "custom-element"
+  ],
+  "license": "AGPL-3.0-only",
+  "homepage": "https://github.com/empty-sekai/ournotes-player#readme",
+  "bugs": {
+    "url": "https://github.com/empty-sekai/ournotes-player/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/empty-sekai/ournotes-player.git"
+  },
+  "type": "module",
+  "main": "./src/index.js",
+  "module": "./src/index.js",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./element": {
+      "types": "./types/element.d.ts",
+      "default": "./src/element.js"
+    },
+    "./dist/*": "./dist/*",
+    "./schema/*": "./schema/*",
+    "./package.json": "./package.json"
+  },
+  "sideEffects": [
+    "./src/element.js",
+    "./dist/ournotes-player.element*.js",
+    "./dist/ournotes-player.global*.js"
+  ],
+  "files": [
+    "dist/",
+    "src/",
+    "types/",
+    "schema/",
+    "scripts/lib/",
+    "scripts/read-set.mjs",
+    "scripts/validate-data.mjs",
+    "examples/chart-list/",
+    "LICENSE",
+    "LICENSE-EXCEPTION"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/unit/*.test.mjs",
+    "test:data": "node --test tests/data/*.test.mjs",
+    "typecheck": "tsc -p tests/types",
+    "validate-data": "node scripts/validate-data.mjs",
+    "read-set": "node scripts/read-set.mjs",
+    "prepack": "node scripts/build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10",
+    "typescript": "5.9.3"
+  }
+}
