@@ -6,7 +6,7 @@ import { LIVE_SPEEDS } from "../live/session.js";
 // Up / Down speed, M music, S sound effects. Works at phone width. Every element lives in the player's shadow root.
 
 export const PLAYER_CSS = `
-:host { all: initial; }
+:host { all: initial; visibility: inherit; }   /* hidden with its host element */
 .canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; touch-action: manipulation; }
 .status { position: absolute; left: 12px; bottom: 12px; color: #aaa; font: 12px/1.4 system-ui, sans-serif;
           white-space: pre; pointer-events: none; }

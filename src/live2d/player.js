@@ -1,4 +1,5 @@
 import { AssetStore } from "../data/assets.js";
+import { cubismCore } from "./cubism.js";
 import { MODEL_FRAME_RATE, ModelSession } from "./session.js";
 
 // ModelPlayer: a ModelSession on a canvas inside a host element. It creates the canvas and its WebGL2 context (with a
@@ -17,7 +18,7 @@ import { MODEL_FRAME_RATE, ModelSession } from "./session.js";
 const MAX_STEPS = 4;              // steps per animation frame at most (a late frame catches up to 4 frames of game time)
 
 const PLAYER_CSS = `
-:host { all: initial; }
+:host { all: initial; visibility: inherit; }   /* hidden with its host element */
 .canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; }
 .status { position: absolute; left: 12px; bottom: 12px; color: #888; font: 12px/1.4 system-ui, sans-serif;
           white-space: pre-wrap; pointer-events: none; }
@@ -75,6 +76,7 @@ export class ModelPlayer extends EventTarget {
   async _init() {
     const o = this.opts, signal = o.signal ? anySignal([o.signal, this._abort.signal]) : this._abort.signal;
     this._status("loading…");
+    await cubismCore();                              // a page without the Core fails before downloading the model
     const mb = (n) => (n / 1048576).toFixed(1);
     const assets = o.assets || await AssetStore.fromManifest(o.src, {
       signal,
