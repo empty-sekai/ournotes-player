@@ -1,0 +1,238 @@
+// Type declarations of ournotes-player.
+
+/** Chart metadata of a chart manifest (`chart` key). */
+export interface ChartInfo {
+  title?: string;
+  bands?: string[];
+  bandIds?: number[];
+  level?: number;
+  displayLevel?: number;
+  notes?: number;
+  fullComboCount?: number;
+  durationMs?: number;
+  sortOrder?: number;
+  stageBand?: number;
+  [key: string]: unknown;
+}
+
+/** A chart manifest without its `files` map. */
+export interface ManifestInfo {
+  format?: number;
+  musicId?: number;
+  difficulty?: string;
+  quality?: number;
+  audio?: boolean;
+  audioFormat?: string;
+  chart?: ChartInfo;
+  [key: string]: unknown;
+}
+
+export interface FromManifestOptions {
+  /** Fetch function (default `globalThis.fetch`). */
+  fetch?: typeof globalThis.fetch;
+  /** Called after each asset with the bytes loaded so far and the total. */
+  onProgress?: (loadedBytes: number, totalBytes: number) => void;
+  /** Aborts the requests; the promise rejects with the signal's reason. */
+  signal?: AbortSignal;
+  /** URL the manifest's asset paths are relative to (default: the directory above the manifest's directory). */
+  base?: string | URL;
+  /** Requests in flight at a time (default 6). */
+  concurrency?: number;
+}
+
+type PathMap<T> = Map<string, T> | Record<string, T>;
+
+/** The files of one chart, read synchronously once loaded. */
+export class AssetStore {
+  constructor(files?: { text?: PathMap<string>; bytes?: PathMap<Uint8Array | ArrayBuffer>; info?: ManifestInfo | null });
+  static fromManifest(url: string | URL, options?: FromManifestOptions): Promise<AssetStore>;
+  info: ManifestInfo | null;
+  has(path: string): boolean;
+  text(path: string): string;
+  json<T = any>(path: string): T;
+  /** A copy of the file's bytes. */
+  bytes(path: string): Uint8Array;
+  arrayBuffer(path: string): ArrayBuffer;
+  /** A PNG decoded with its texel values as stored, row 0 at the bottom. */
+  image(path: string): Promise<ImageBitmap>;
+  list(prefix?: string): string[];
+}
+
+export interface ChartSessionOptions {
+  /** The context to draw into; used by this session alone while it lives. */
+  gl: WebGL2RenderingContext;
+  assets: AssetStore;
+  /** A 48 kHz AudioContext (default: one created, and closed on dispose, by the session). */
+  audioContext?: AudioContext;
+  /** LiveQuality 0..4 (default: the manifest's `quality`, else 1). */
+  quality?: number;
+  /** Seed of the particle random stream (default: from the clock). */
+  seed?: number;
+  /** Drawing buffer size in pixels (default: the canvas size). */
+  width?: number;
+  height?: number;
+}
+
+/** The DOM-free chart session: step it at 60 steps per second of game time and render it. */
+export class ChartSession {
+  /** Loads the chart and runs the intro to the chart start; resolves paused at the start. */
+  static create(options: ChartSessionOptions): Promise<ChartSession>;
+  readonly gl: WebGL2RenderingContext;
+  readonly assets: AssetStore;
+  /** "load" | "intro" | "start" | "playing" | "ended" */
+  readonly state: string;
+  readonly paused: boolean;
+  readonly started: boolean;
+  readonly ended: boolean;
+  readonly playing: boolean;
+  /** A seek or a step is in progress (no step may start). */
+  readonly busy: boolean;
+  readonly seeking: boolean;
+  readonly speed: number;
+  readonly musicOn: boolean;
+  readonly seOn: boolean;
+  readonly audioAvailable: boolean;
+  readonly audioContext: AudioContext;
+  readonly chart: ChartInfo | null;
+  /** Chart time of the last live update in ms (0 before the chart starts). */
+  positionMs(): number;
+  /** Length of the music in ms. */
+  durationMs(): number;
+  /** Resumes the AudioContext (call from a user gesture); at the end: from the start. */
+  play(): Promise<void>;
+  pause(): Promise<void>;
+  /** Resolves to the chart time reached: the last frame at or before `ms`. */
+  seek(ms: number): Promise<number>;
+  /** One frame of game time (1/60 s x speed), drawn unless `draw` is false. */
+  step(options?: { draw?: boolean }): Promise<void>;
+  render(): void;
+  /** Drawing buffer size in pixels, applied by the next render(). */
+  resize(width: number, height: number): void;
+  setSpeed(speed: number): void;
+  setMusic(on: boolean): void;
+  setSe(on: boolean): void;
+  dispose(): Promise<void>;
+}
+
+/** The playback speeds the controls offer. */
+export const LIVE_SPEEDS: readonly number[];
+
+export interface ChartPlayerOptions {
+  /** URL of a chart manifest (charts/<id>.json). */
+  src?: string | URL;
+  /** A loaded AssetStore instead of `src`. */
+  assets?: AssetStore;
+  /** Show the control bar (default true). */
+  controls?: boolean;
+  /** Start playing once loaded (default false). */
+  autoplay?: boolean;
+  speed?: number;
+  music?: boolean;
+  se?: boolean;
+  quality?: number;
+  seed?: number;
+  audioContext?: AudioContext;
+  /** Device pixels per CSS pixel of the drawing buffer (default devicePixelRatio). */
+  pixelRatio?: number;
+  /** Cancels the loading. */
+  signal?: AbortSignal;
+  /** Listeners added before the loading starts. */
+  on?: Partial<{ [K in keyof ChartPlayerEventMap]: (event: ChartPlayerEventMap[K]) => void }>;
+}
+
+export interface ChartPlayerEventMap {
+  ready: CustomEvent<null>;
+  play: CustomEvent<null>;
+  pause: CustomEvent<null>;
+  seeked: CustomEvent<{ time: number }>;
+  timeupdate: CustomEvent<{ time: number }>;
+  ended: CustomEvent<null>;
+  error: CustomEvent<{ error: unknown }>;
+  progress: CustomEvent<{ loaded: number; total: number }>;
+}
+
+interface PlayerControls {
+  play(): Promise<void>;
+  pause(): Promise<void>;
+  /** Resolves to the chart time reached (ms). */
+  seek(ms: number): Promise<number>;
+  /** Chart time in ms; setting it seeks. */
+  currentTime: number;
+  /** Length of the music in ms (NaN before the chart is loaded). */
+  readonly duration: number;
+  readonly paused: boolean;
+  readonly ended: boolean;
+  speed: number;
+  music: boolean;
+  se: boolean;
+  readonly chart: ChartInfo | null;
+}
+
+/** A chart player in a host element: canvas, WebGL2 context, requestAnimationFrame, control bar and events. */
+export class ChartPlayer extends EventTarget implements PlayerControls {
+  static create(host: Element | ShadowRoot, options?: ChartPlayerOptions): Promise<ChartPlayer>;
+  readonly host: Element | ShadowRoot;
+  /** The element the player appended to its host. */
+  readonly root: HTMLDivElement;
+  readonly canvas: HTMLCanvasElement;
+  readonly session: ChartSession | null;
+  readonly disposed: boolean;
+  readonly audioAvailable: boolean;
+  controls: boolean;
+  play(): Promise<void>;
+  pause(): Promise<void>;
+  seek(ms: number): Promise<number>;
+  currentTime: number;
+  readonly duration: number;
+  readonly paused: boolean;
+  readonly ended: boolean;
+  speed: number;
+  music: boolean;
+  se: boolean;
+  readonly chart: ChartInfo | null;
+  /** Stops the player, releases its WebGL context and audio, and removes it from the host. */
+  dispose(): Promise<void>;
+  addEventListener<K extends keyof ChartPlayerEventMap>(type: K, listener: (event: ChartPlayerEventMap[K]) => void,
+                                                        options?: boolean | AddEventListenerOptions): void;
+  addEventListener(type: string, listener: EventListenerOrEventListenerObject | null, options?: boolean | AddEventListenerOptions): void;
+  removeEventListener<K extends keyof ChartPlayerEventMap>(type: K, listener: (event: ChartPlayerEventMap[K]) => void,
+                                                           options?: boolean | EventListenerOptions): void;
+  removeEventListener(type: string, listener: EventListenerOrEventListenerObject | null, options?: boolean | EventListenerOptions): void;
+}
+
+/** The <ournotes-player> element. */
+export class OurnotesPlayerElement extends HTMLElement implements PlayerControls {
+  src: string;
+  controls: boolean;
+  autoplay: boolean;
+  play(): Promise<void>;
+  pause(): Promise<void>;
+  seek(ms: number): Promise<number>;
+  currentTime: number;
+  readonly duration: number;
+  readonly paused: boolean;
+  readonly ended: boolean;
+  speed: number;
+  music: boolean;
+  se: boolean;
+  readonly chart: ChartInfo | null;
+  /** The player of the current `src` (null until loaded). */
+  readonly player: ChartPlayer | null;
+  /** Resolves to the player of the current `src`. */
+  readonly ready: Promise<ChartPlayer>;
+  addEventListener<K extends keyof ChartPlayerEventMap>(type: K, listener: (this: OurnotesPlayerElement, event: ChartPlayerEventMap[K]) => void,
+                                                        options?: boolean | AddEventListenerOptions): void;
+  addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
+}
+
+/** Defines the element under `tagName` (default "ournotes-player"); returns its class. */
+export function defineOurnotesPlayer(tagName?: string): typeof OurnotesPlayerElement | null;
+
+/** "m:ss" of a time in ms. */
+export function formatTime(ms: number): string;
+
+declare global {
+  interface HTMLElementTagNameMap {
+    "ournotes-player": OurnotesPlayerElement;
+  }
+}

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>ournotes-player</title>
+<!-- One player filling the page, for use in an iframe:
+       iframe.html?src=<manifest URL>[&speed=0.75][&music=off][&se=off][&autoplay]
+     The manifest URL is relative to this page. -->
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+  ournotes-player { position: absolute; inset: 0; width: 100%; height: 100%; aspect-ratio: auto; }
+  .msg { position: absolute; left: 12px; bottom: 12px; color: #aaa; font: 12px/1.4 system-ui, sans-serif; }
+</style>
+<script type="module" src="../src/element.js"></script>
+</head>
+<body>
+<script type="module">
+  const q = new URLSearchParams(location.search);
+  const src = q.get("src");
+  if (!src) {
+    const m = document.createElement("div");
+    m.className = "msg";
+    m.textContent = "no chart: add ?src=<chart manifest URL>";
+    document.body.append(m);
+  } else {
+    const el = document.createElement("ournotes-player");
+    el.controls = true;
+    if (q.has("autoplay")) el.autoplay = true;
+    if (q.get("speed")) el.setAttribute("speed", q.get("speed"));
+    for (const k of ["music", "se"]) if (q.get(k)) el.setAttribute(k, q.get(k));
+    el.addEventListener("ready", () => { if (el.chart && el.chart.title) document.title = el.chart.title; });
+    el.setAttribute("src", src);
+    document.body.append(el);
+  }
+</script>
+</body>
+</html>

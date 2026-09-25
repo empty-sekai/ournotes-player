@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Charts</title>
+<!-- Chart index of a site: lists the site's charts.json and plays a chart in the same page.
+       index.html                                  the list
+       index.html?music=<musicId>&difficulty=<d>   that chart (charts/<musicId>_<d>.json), full page;
+                                                   options &speed=0.75 &music=off &se=off &autoplay
+     The site root is this page's directory unless ?site=<URL> names another one. -->
+<style>
+  html, body { margin: 0; height: 100%; background: #000; }
+  body.list { overflow: auto; background: #111; color: #ddd; font: 14px/1.5 system-ui, sans-serif; }
+  body.play { overflow: hidden; }
+  ournotes-player { position: absolute; inset: 0; width: 100%; height: 100%; aspect-ratio: auto; }
+  .charts { border-collapse: collapse; margin: 16px; }
+  .charts th, .charts td { padding: 4px 10px; text-align: left; border-bottom: 1px solid #333; }
+  .charts td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .charts a { color: #9cf; }
+  .msg { margin: 16px; color: #aaa; font: 12px/1.4 system-ui, sans-serif; }
+  body.play .msg { position: absolute; left: 12px; bottom: 12px; margin: 0; }
+  @media (max-width: 600px) {
+    .charts { margin: 8px 0; font-size: 13px; }
+    .charts th, .charts td { padding: 4px 6px; }
+    .charts .band { display: none; }
+  }
+</style>
+<script type="module" src="chart-list.js"></script>
+</head>
+<body></body>
+</html>

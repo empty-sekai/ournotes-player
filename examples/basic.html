@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ournotes-player: basic</title>
+<style>
+  body { margin: 0; padding: 16px; background: #111; color: #ddd; font: 14px/1.5 system-ui, sans-serif; }
+  ournotes-player { max-width: 960px; margin: 0 auto; }
+  p { max-width: 960px; margin: 12px auto; }
+  code { color: #9cf; }
+</style>
+<!-- Served from the repository root. With the npm package: import "ournotes-player/element"; from a CDN:
+     dist/ournotes-player.element.min.js -->
+<script type="module" src="../src/element.js"></script>
+</head>
+<body>
+<ournotes-player id="player" controls></ournotes-player>
+<p>Chart manifest: <code id="src"></code>. Pass another one as <code>?src=&lt;manifest URL&gt;</code>.</p>
+<script type="module">
+  const src = new URLSearchParams(location.search).get("src") || "../site/charts/100001_expert.json";
+  const el = document.getElementById("player");
+  document.getElementById("src").textContent = src;
+  el.addEventListener("ready", () => { if (el.chart && el.chart.title) document.title = el.chart.title; });
+  el.addEventListener("ended", () => console.log("ended at", el.currentTime, "ms"));
+  el.addEventListener("error", (e) => console.error(e.detail.error));
+  el.src = src;
+</script>
+</body>
+</html>
