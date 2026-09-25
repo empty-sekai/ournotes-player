@@ -18,15 +18,16 @@ export const END = "<!-- engine-notes:end -->";
 const files = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
   e.isDirectory() ? files(path.join(dir, e.name)) : e.name.endsWith(".js") ? [path.join(dir, e.name)] : []);
 
-// [{file, notes: [text]}] in path order; a note is the rest of the line after `// ENGINE:`
-export const collect = () => files(path.join(root, "src")).sort().map((f) => {
+// [{file, notes: [text]}] in the order of the "/"-separated paths (the same on every platform); a note is the rest of
+// the line after `// ENGINE:`
+export const collect = () => files(path.join(root, "src")).map((f) => {
   const notes = [];
   for (const line of fs.readFileSync(f, "utf8").split("\n")) {
     const m = line.match(/\/\/\s*ENGINE:\s*(.*)$/);
     if (m && m[1] && !m[1].startsWith("`")) notes.push(m[1].trim());
   }
   return { file: path.relative(root, f).split(path.sep).join("/"), notes };
-}).filter((x) => x.notes.length);
+}).filter((x) => x.notes.length).sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
 
 export const render = (groups) => {
   const out = [START, ""];

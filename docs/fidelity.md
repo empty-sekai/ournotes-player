@@ -166,35 +166,6 @@ Every `ENGINE:` note in `src/`, by file. `npm test` checks that this list matche
 - CanvasRenderer applies the inherited CanvasGroup alpha natively; here a float multiply of Color32 alpha / 255.
 - unity_GUIZTestMode is set by Unity's native canvas render path (values as above).
 
-**`src/live2d/character.js`**
-
-- Mesh.RecalculateBounds is native; centre = (max + min) * 0.5, extents = (max - min) * 0.5 in float32.
-- a clip playable created in Update is first sampled after one advance (at t = deltaTime x speed).
-
-**`src/live2d/drawing.js`**
-
-- the values bound for a mesh's missing NORMAL / TANGENT channels are native; (0, 0, 1, 0) / (1, 0, 0, 1) here.
-- the mask RenderTexture's filter and wrap modes are never set (engine defaults); bilinear and clamped here.
-- _ProjectionParams while a command buffer draws into a render texture is set natively; x = 1 here.
-
-**`src/live2d/math.js`**
-
-- AnimationCurve.Evaluate is native; Unity's documented Hermite form, float32 in source order.
-
-**`src/live2d/motion.js`**
-
-- Mecanim samples streamed clips natively; this is the cubic form of the stored keys, float32 in source order.
-- the Animator leaves a binding without a transform at its path unbound.
-- what the Animator samples past a clip playable's duration is native; wrapped around the length here.
-
-**`src/live2d/physics.js`**
-
-- Mathf.Sin / Cos / Atan2 / Sqrt use the device's libm; here double precision rounded to float32 (within one float ulp).
-
-**`src/live2d/session.js`**
-
-- the renderer sort is native; sorting order first, equal distances keep the submission (Core index) order.
-
 **`src/live/background.js`**
 
 - Graphics.Blit draws a quad (0,0)..(1,1), uv = position, ObjectToWorld identity, VP = ortho [0,1] -> clip.
@@ -324,5 +295,34 @@ Every `ENGINE:` note in `src/`, by file. `npm test` checks that this list matche
 
 - CRI's DSP buses are native; the Reverb_short send (a CRIWARE/Reverb bus) is not rendered.
 - CRI's REACT curve shapes and HoldType semantics are native; the ramps here are linear.
+
+**`src/live2d/character.js`**
+
+- Mesh.RecalculateBounds is native; centre = (max + min) * 0.5, extents = (max - min) * 0.5 in float32.
+- a clip playable created in Update is first sampled after one advance (at t = deltaTime x speed).
+
+**`src/live2d/drawing.js`**
+
+- the values bound for a mesh's missing NORMAL / TANGENT channels are native; (0, 0, 1, 0) / (1, 0, 0, 1) here.
+- the mask RenderTexture's filter and wrap modes are never set (engine defaults); bilinear and clamped here.
+- _ProjectionParams while a command buffer draws into a render texture is set natively; x = 1 here.
+
+**`src/live2d/math.js`**
+
+- AnimationCurve.Evaluate is native; Unity's documented Hermite form, float32 in source order.
+
+**`src/live2d/motion.js`**
+
+- Mecanim samples streamed clips natively; this is the cubic form of the stored keys, float32 in source order.
+- the Animator leaves a binding without a transform at its path unbound.
+- what the Animator samples past a clip playable's duration is native; wrapped around the length here.
+
+**`src/live2d/physics.js`**
+
+- Mathf.Sin / Cos / Atan2 / Sqrt use the device's libm; here double precision rounded to float32 (within one float ulp).
+
+**`src/live2d/session.js`**
+
+- the renderer sort is native; sorting order first, equal distances keep the submission (Core index) order.
 
 <!-- engine-notes:end -->
