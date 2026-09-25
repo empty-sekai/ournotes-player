@@ -25,8 +25,10 @@ ournotes-player 是 BanG Dream! Our Notes 谱面的浏览器播放器。它用 W
 ## 快速开始
 
 ```sh
-npm install ournotes-player
+npm install github:empty-sekai/ournotes-player
 ```
+
+从 GitHub 安装时会在安装过程中构建 `dist/`。包发布到 npm 之后，也可以用 `npm install ournotes-player` 安装同一个包。
 
 自定义元素（打包工具）：
 
@@ -38,7 +40,7 @@ import "ournotes-player/element";
 <ournotes-player src="https://example.org/site/charts/100001_expert.json" controls></ournotes-player>
 ```
 
-不使用打包工具时，可以直接从 CDN 加载：
+不使用打包工具时，可以直接从 CDN 加载（包发布到 npm 之后可用；在此之前，可随页面一起提供已安装包中的 `dist/` 文件）：
 
 ```html
 <script type="module" src="https://cdn.jsdelivr.net/npm/ournotes-player/dist/ournotes-player.element.min.js"></script>

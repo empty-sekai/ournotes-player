@@ -5,13 +5,21 @@ player. All of them read a chart from a site laid out as below.
 
 ## Custom element
 
-With a bundler (`npm install ournotes-player`):
+With a bundler:
+
+```sh
+npm install github:empty-sekai/ournotes-player
+```
 
 ```js
 import "ournotes-player/element";
 ```
 
-From a CDN, without a build step:
+Installing from GitHub builds `dist/` during the install. Once the package is published on npm,
+`npm install ournotes-player` installs the same package.
+
+From a CDN, without a build step (the jsDelivr npm URL works once the package is on npm; until then, serve
+`dist/ournotes-player.element.min.js` of the installed package, or of a checkout after `npm run build`, with the page):
 
 ```html
 <script type="module" src="https://cdn.jsdelivr.net/npm/ournotes-player/dist/ournotes-player.element.min.js"></script>
