@@ -12,6 +12,8 @@
 // model.json, the moc3 header, the prefab (the components the model viewer reads, clip and fade references, drawable
 // materials and textures), the shader index and programs, and that the manifest lists exactly the files the viewer
 // reads.
+// charts.json of a site of several regions: an id at most once per region (an entry without `regions` serves every
+// region, so its id only once), every entry's regions among the index's `regions`, text languages among `languages`.
 // Prints the failures and a summary; exits 1 when a chart or a model fails. No dependencies.
 
 import crypto from "node:crypto";
@@ -173,6 +175,8 @@ class Chart {
     for (const k of ["musicId", "difficulty", "audio", "audioFormat"])
       if (has(e, k) && has(m, k) && e[k] !== m[k]) this.err("manifest", `${k} ${JSON.stringify(m[k])}, charts.json ${JSON.stringify(e[k])}`);
     if (has(e, "flows") && JSON.stringify(e.flows) !== JSON.stringify(m.flows)) this.err("manifest", "flows differ from charts.json");
+    if ((has(e, "regions") || has(m, "regions")) && JSON.stringify(e.regions) !== JSON.stringify(m.regions))
+      this.err("manifest", "regions differ from charts.json");
     if (isObj(m.chart))
       for (const [k, v] of Object.entries(m.chart))
         if (has(e, k) && JSON.stringify(e[k]) !== JSON.stringify(v)) this.err("manifest", `chart.${k} differs from charts.json`);
@@ -523,6 +527,34 @@ class Model extends Chart {
 }
 
 // ------------------------------------------------------------------------------------------------ main
+// charts.json beyond its schema: ids per region, the regions and languages the entries name.
+function indexErrors(index) {
+  const out = [];
+  const byId = new Map();
+  for (const e of index.charts) byId.set(e.id, [...(byId.get(e.id) || []), e]);
+  for (const [id, es] of byId) {
+    if (es.length < 2) continue;
+    if (es.some((e) => !Array.isArray(e.regions))) { out.push(`charts.json: id ${id} twice`); continue; }
+    const seen = new Set();
+    for (const r of es.flatMap((e) => e.regions)) {
+      if (seen.has(r)) out.push(`charts.json: id ${id} twice in region ${r}`);
+      seen.add(r);
+    }
+  }
+  if (Array.isArray(index.regions)) {
+    const known = new Set(index.regions.map((r) => r.id));
+    if (known.size !== index.regions.length) out.push("charts.json: a region id twice in regions");
+    for (const e of index.charts) for (const r of e.regions || [])
+      if (!known.has(r)) out.push(`charts.json: ${e.manifest}: region ${r} not in regions`);
+  }
+  if (Array.isArray(index.languages)) {
+    const known = new Set(index.languages);
+    for (const e of index.charts) for (const l of Object.keys(e.titles || {}))
+      if (!known.has(l)) out.push(`charts.json: ${e.manifest}: title language ${l} not in languages`);
+  }
+  return out;
+}
+
 function main(argv) {
   const [dir, ...only] = argv;
   if (!dir) { console.error("usage: node scripts/validate-data.mjs <site dir> [chart id | model id ...]"); return 2; }
@@ -534,8 +566,7 @@ function main(argv) {
     const index = JSON.parse(fs.readFileSync(indexPath, "utf8"));
     const errs = S.charts(index);
     if (errs.length) { console.log("FAIL charts.json"); for (const e of errs) console.log(`  ${e}`); return 1; }
-    const ids = new Set();
-    for (const e of index.charts) { if (ids.has(e.id)) out.push(`charts.json: id ${e.id} twice`); ids.add(e.id); }
+    out.push(...indexErrors(index));
     entries = index.charts.map((e) => ({ id: e.id, manifest: e.manifest, entry: e }));
   } else if (fs.existsSync(site.file("charts"))) {
     entries = fs.readdirSync(site.file("charts")).filter((f) => f.endsWith(".json")).sort()

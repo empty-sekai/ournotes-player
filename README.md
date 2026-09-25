@@ -57,6 +57,8 @@ button.onclick = () => player.play();   // 浏览器要求在用户操作中开�
 
 iframe：[examples/iframe.html](examples/iframe.html) 是一个只含一个播放器的页面，可以用 `<iframe>` 嵌入。
 
+谱面列表：[examples/chart-list](examples/chart-list) 列出站点的 `charts.json` 并播放所选谱面；服务多个区服或多种语言的站点可用 `?region=&lang=` 切换。
+
 - 接口：[docs/api.md](docs/api.md)
 - 嵌入方式与数据托管：[docs/embedding.md](docs/embedding.md)
 - 数据格式：[docs/data-format.md](docs/data-format.md)

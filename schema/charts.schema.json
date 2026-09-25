@@ -7,9 +7,23 @@
   "required": ["format", "charts"],
   "properties": {
     "format": { "const": 2 },
+    "language": { "$ref": "#/$defs/language" },
+    "languages": { "type": "array", "items": { "$ref": "#/$defs/language" } },
+    "regions": { "type": "array", "items": { "$ref": "#/$defs/region" } },
     "charts": { "type": "array", "items": { "$ref": "#/$defs/entry" } }
   },
   "$defs": {
+    "language": { "type": "string", "minLength": 1 },
+    "regionId": { "type": "string", "pattern": "^[a-z0-9_-]+$" },
+    "region": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "$ref": "#/$defs/regionId" },
+        "name": { "type": "string" },
+        "languages": { "type": "array", "items": { "$ref": "#/$defs/language" } }
+      }
+    },
     "entry": {
       "type": "object",
       "required": ["id", "musicId", "difficulty", "manifest", "title", "level", "notes", "durationMs", "audio", "flows", "bytes"],
@@ -17,9 +31,17 @@
         "id": { "type": "string", "pattern": "^[0-9]+_[a-z]+$" },
         "musicId": { "type": "integer", "minimum": 1 },
         "difficulty": { "type": "string", "pattern": "^[a-z]+$" },
-        "manifest": { "type": "string", "pattern": "^charts/[0-9]+_[a-z]+\\.json$" },
+        "manifest": { "type": "string", "pattern": "^charts/([a-z0-9_-]+/)?[0-9]+_[a-z]+\\.json$" },
+        "regions": { "type": "array", "items": { "$ref": "#/$defs/regionId" }, "minItems": 1 },
         "title": { "type": "string" },
+        "language": { "$ref": "#/$defs/language" },
+        "titles": { "type": "object", "propertyNames": { "minLength": 1 }, "additionalProperties": { "type": "string" } },
         "bands": { "type": "array", "items": { "type": "string" } },
+        "bandNames": {
+          "type": "object",
+          "propertyNames": { "minLength": 1 },
+          "additionalProperties": { "type": "array", "items": { "type": "string" } }
+        },
         "bandIds": { "type": "array", "items": { "type": "integer" } },
         "stageBand": { "type": "integer" },
         "level": { "type": "integer" },

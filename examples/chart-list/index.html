@@ -8,6 +8,8 @@
        index.html                                  the list
        index.html?music=<musicId>&difficulty=<d>   that chart (charts/<musicId>_<d>.json), full page;
                                                    options &speed=0.75 &music=off &se=off &autoplay
+       &region=<id> &lang=<language>               a site of several regions / languages: the region's charts
+                                                   (and its own manifest of a chart) and the texts in that language
      The site root is this page's directory unless ?site=<URL> names another one. -->
 <style>
   html, body { margin: 0; height: 100%; background: #000; }
@@ -18,12 +20,15 @@
   .charts th, .charts td { padding: 4px 10px; text-align: left; border-bottom: 1px solid #333; }
   .charts td.num { text-align: right; font-variant-numeric: tabular-nums; }
   .charts a { color: #9cf; }
+  .switch { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 16px 16px 0; }
+  .switch select { margin-left: 4px; background: #222; color: #ddd; border: 1px solid #444; font: inherit; }
   .msg { margin: 16px; color: #aaa; font: 12px/1.4 system-ui, sans-serif; }
   body.play .msg { position: absolute; left: 12px; bottom: 12px; margin: 0; }
   @media (max-width: 600px) {
     .charts { margin: 8px 0; font-size: 13px; }
     .charts th, .charts td { padding: 4px 6px; }
     .charts .band { display: none; }
+    .switch { margin: 8px 8px 0; }
   }
 </style>
 <script type="module" src="chart-list.js"></script>

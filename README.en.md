@@ -70,6 +70,8 @@ button.onclick = () => player.play();   // browsers start audio only from a user
 
 iframe: [examples/iframe.html](examples/iframe.html) is a page holding one player, ready to embed with an `<iframe>`.
 
+Chart list: [examples/chart-list](examples/chart-list) lists a site's `charts.json` and plays the chosen chart; a site of several regions or languages switches with `?region=&lang=`.
+
 - API: [docs/api.md](docs/api.md)
 - Embedding and hosting the data: [docs/embedding.md](docs/embedding.md)
 - Data format: [docs/data-format.md](docs/data-format.md)

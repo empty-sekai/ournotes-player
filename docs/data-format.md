@@ -35,6 +35,7 @@ Contents:
 <site>/
   charts.json                          chart index (for listings; the player does not need it)
   charts/<musicId>_<difficulty>.json   chart manifest, one per chart
+  charts/<region>/<id>.json            a region's own manifest of a chart (a site of several regions, see below)
   assets/<sha256>.<ext>                file contents, content-addressed
 ```
 
@@ -71,6 +72,31 @@ does not.
 | `charts[].title`, `bands`, `bandIds`, `stageBand`, `level`, `displayLevel`, `notes`, `fullComboCount`, `durationMs`, `sortOrder` | | The chart's facts; the same values as the manifest's `chart` object. |
 | `charts[].audio`, `audioFormat`, `flows` | | Copies of the manifest keys of the same name. |
 | `charts[].bytes` | integer | Sum of `size` over the manifest's `files` (the download size before shared assets are deduplicated). |
+| `charts[].regions` | string[] | Optional. The regions the manifest serves (the manifest's `regions`). An entry without it serves every region. |
+| `charts[].language`, `titles`, `bandNames` | | Optional. The language of `title` and `bands`, the title per language (`{ "<language>": "…" }`), the band names per language (`{ "<language>": ["…"] }`); the same values as the manifest's `chart` object. |
+| `language` | string | Optional. The default language of a listing (the language of most entries' `title`). |
+| `languages` | string[] | Optional. The languages the entries' `titles` are in. |
+| `regions` | object[] | Optional. The regions the site serves, the first one the default: `id`, `name` (a label), `languages` (optional: the languages a listing offers in that region). |
+
+Languages are the game's text languages: `ja`, `en`, `zh-Hant`, `zh-Hans`, `ko`.
+
+### Several regions
+
+A site can serve several game regions. Where the chart data of two regions is the same, they share one manifest,
+`charts/<id>.json`, whose `regions` lists both; a region whose chart differs has its own manifest
+`charts/<region>/<id>.json`. So an id can appear in `charts.json` several times, but at most once per region, and an
+entry without `regions` only once. A listing shows the entries whose `regions` include the chosen region (and those
+without `regions`), with `titles[language]` and `bandNames[language]` where present, else `title` and `bands`; it
+loads the manifest of the chosen region's entry. The chart list page of this repository
+([examples/chart-list](../examples/chart-list)) switches with `?region=<id>&lang=<language>`.
+
+```json
+{ "format": 2, "language": "zh-Hant", "languages": ["ja", "en", "zh-Hant", "zh-Hans", "ko"],
+  "regions": [ { "id": "tw", "name": "…", "languages": ["zh-Hant", "…"] }, { "id": "kr", "name": "…" } ],
+  "charts": [ { "id": "100001_expert", "manifest": "charts/100001_expert.json", "regions": ["tw", "kr"],
+                "title": "…", "titles": { "ja": "…", "en": "…", "…": "…" }, "bandNames": { "ja": ["…"], "…": "…" },
+                "…": "…" } ] }
+```
 
 ## Chart manifest
 
@@ -100,7 +126,8 @@ and where their bytes are.
 |---|---|---|---|
 | `format` | `2` | no | Version of this layout. |
 | `musicId`, `difficulty` | integer, string | no | The chart. |
-| `chart` | object | yes | The chart's facts (title, bands, level, note count, duration, …), handed to the page as they are (see [docs/api.md](api.md)). The player does not interpret them. |
+| `chart` | object | yes | The chart's facts (title, bands, level, note count, duration, …; on a site of several languages also `language`, `titles`, `bandNames` as in [charts.json](#chartsjson)), handed to the page as they are (see [docs/api.md](api.md)). The player does not interpret them. |
+| `regions` | string[] | no | Optional. The regions this manifest serves (see [Several regions](#several-regions)). |
 | `audio` | boolean | yes | `false`: the chart has no waveform files. The player then plays no sound and runs the chart clock from game time, as with the music switched off. |
 | `audioFormat` | `"aac"` \| `"flac"` | no | Format of the music file: AAC in an MP4 container (`.m4a`) or FLAC. Sound effects are FLAC. |
 | `flows` | string[] | no | Start flows the files support. The player uses the direct start (the chart starts at the end of the live's intro timeline), `"direct"`, which every chart supports; other values name start sequences this player does not use. |
