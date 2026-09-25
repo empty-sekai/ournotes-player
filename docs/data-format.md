@@ -4,7 +4,7 @@ The player does not ship any game data. It plays a chart from a set of **logical
 `live.json` or `livescene/scene.json`) that the embedding page supplies, usually as a static **site** served over
 HTTP. This document describes that data: the site layout, the chart manifest, and every logical file as far as the
 player reads it. Producing the data is outside this repository; the
-[nnnotes](https://github.com/empty-sekai/nnnotes) toolkit produces it from game files the user supplies.
+[nnnotes](https://github.com/MetaSekaiLab/nnnotes) toolkit produces it from game files the user supplies.
 
 Machine-readable schemas are in [`schema/`](../schema), and `node scripts/validate-data.mjs <site dir> [chart id ...]`
 checks a whole site (see [Validation](#validation)).

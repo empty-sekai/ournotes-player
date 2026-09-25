@@ -8,7 +8,7 @@ element `<ournotes-player>`, as a JavaScript module, or in an iframe.
 
 This is an unofficial fan project, not affiliated with the game's developer, publisher or operator. The repository
 and the npm package contain no game assets: the player reads chart data prepared in the
-[data format](docs/data-format.md), supplied by the user; the [nnnotes](https://github.com/empty-sekai/nnnotes)
+[data format](docs/data-format.md), supplied by the user; the [nnnotes](https://github.com/MetaSekaiLab/nnnotes)
 toolkit produces that data from the user's own game files. BanG Dream! and related names and trademarks belong to
 their respective owners.
 

@@ -4,7 +4,7 @@
 
 ournotes-player 是 BanG Dream! Our Notes 谱面的浏览器播放器。它用 WebGL2 和 WebAudio 在网页中重现游戏的 Live 画面，以自动演奏播放一张谱面，可以作为自定义元素 `<ournotes-player>`、JavaScript 模块或 iframe 嵌入其他网页。
 
-本项目为非官方爱好者项目，与游戏的开发、发行和运营方无关。仓库与 npm 包不包含任何游戏资源：播放器读取按[数据格式](docs/data-format.md)准备的谱面数据，数据由使用者自行提供；[nnnotes](https://github.com/empty-sekai/nnnotes) 工具包可以从使用者自己的游戏文件生成这种数据。BanG Dream! 及相关名称与商标归各自权利人所有。
+本项目为非官方爱好者项目，与游戏的开发、发行和运营方无关。仓库与 npm 包不包含任何游戏资源：播放器读取按[数据格式](docs/data-format.md)准备的谱面数据，数据由使用者自行提供；[nnnotes](https://github.com/MetaSekaiLab/nnnotes) 工具包可以从使用者自己的游戏文件生成这种数据。BanG Dream! 及相关名称与商标归各自权利人所有。
 
 ## 重现内容
 
