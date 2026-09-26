@@ -79,6 +79,7 @@ Chart list: [examples/chart-list](examples/chart-list) lists a site's `charts.js
 - API: [docs/api.md](docs/api.md)
 - Embedding and hosting the data: [docs/embedding.md](docs/embedding.md)
 - Data format: [docs/data-format.md](docs/data-format.md)
+- Performance: [docs/performance.md](docs/performance.md)
 
 ## Live2D models
 

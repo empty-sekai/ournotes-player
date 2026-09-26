@@ -64,6 +64,7 @@ iframe：[examples/iframe.html](examples/iframe.html) 是一个只含一个播�
 - 接口：[docs/api.md](docs/api.md)
 - 嵌入方式与数据托管：[docs/embedding.md](docs/embedding.md)
 - 数据格式：[docs/data-format.md](docs/data-format.md)
+- 性能：[docs/performance.md](docs/performance.md)
 
 ## Live2D 模型
 
