@@ -11,6 +11,8 @@ import { PlayerLoop } from "../../src/engine/loop.js";
 import { LIVE_LANE_EFFECT_SET, LiveLaneEffects } from "../../src/live/fx-effects.js";
 import { LiveJudgementViewCenter } from "../../src/live/fx-ui.js";
 import { NoteGeo } from "../../src/live/notegeo.js";
+import { ArrowGradient, LiveBarLines, LiveNotes, NoteHeadView, musicScorePosition } from "../../src/live/noteview.js";
+import { Prefab } from "../../src/engine/prefab.js";
 import { ChartSession } from "../../src/live/session.js";
 import { LIVE_OPTIONS, LIVE_OPTION_GROUPS, LiveOptionContext, LiveSettingsError, LiveSettingsMath, liveCategoryVolumes,
          liveDerived, liveNoteEffectName, liveNoteSeMaps, liveOptionItems, liveOptionsOf, liveSettingsChanges }
@@ -139,6 +141,149 @@ test("lane effects: always the effect001 set (LaneEffectLoadStep.GetAssetPath), 
   assert.throws(() => new LiveLaneEffects(null, { notes, score: { laneCount: 24, notes: [] },
                                                   sceneInfo: { laneWidth: 19.12, laneContainers: [] } }),
                 /LaneEffect\/effect001\/LiveLaneEffectAssetSettings not exported/);
+});
+
+// ---- note skins: flick arrows (LiveFlickNoteView / LiveDirectionFlickNoteView, ArrowGradientAnimator)
+const arrowSprite = (name, us) => ({ sprite: name, rect: { width: 20, height: 10 }, pixelsToUnits: 100, uv: us.map((u) => [u, 0.5]) });
+// a flick head without prefab / GL: the parts NoteHeadView's skin setup and UpdateView use
+const flickHead = (unit) => {
+  const v = Object.create(NoteHeadView.prototype);
+  const geo = Object.assign(Object.create(NoteGeo.prototype), { unit: F(0.5), headPlacement: () => ({ x: 0, y: 0 }) });
+  Object.assign(v, { owner: { geo, clip: (id) => ({ id }) }, unit, main: null, mark: null, left: null, right: null, subArrow: null,
+                     parts: null, p: { root: { t: {} } }, arrow: { sprite: null, size: { x: -1, y: -1 }, order: 0 } });
+  return v;
+};
+
+test("flick arrow: a width bracket without a sprite draws no arrow, keeps its size and stays dirty (as the game leaves it)", () => {
+  const a = arrowSprite("a", [0.1, 0.3]), c = arrowSprite("c", [0.5, 0.9]);
+  const unit = { _arrowAssets: [{ _maxWidth: 5, _sprite: a }, { _maxWidth: 13, _sprite: null }, { _maxWidth: 99, _sprite: c }],
+                 _arrowLoopAnimation: { clip: 7 }, _arrowTiltEnabled: 0, _arrowTiltMaterial: null, _gradientSettings: null };
+  const v = flickHead(unit);
+  v.setup(1, 10, 12, 1000, false);
+  assert.deepEqual(v.clip, { id: 7 });
+  assert.equal(v.gradient, undefined);                    // no gradient settings: the default material, no animator
+  v.setViewProgress(F(0.5)); v.updateView();
+  assert.equal(v.arrow.sprite, null);                     // no arrow
+  assert.deepEqual(v.arrow.size, { x: -1, y: -1 });       // size not set
+  assert.equal(v.dirty, true);                            // UpdateView did not finish
+  assert.ok(Number.isNaN(v._vw));                         // the width is not noted as applied: tried again next time
+  assert.equal(v.renderers().includes(v.arrow), false);
+  v.updateView();
+  assert.equal(v.arrow.sprite, null);
+  v.width = 3; v.updateView();                            // another width: a sprite again
+  assert.equal(v.arrow.sprite, a);
+  assert.deepEqual(v.arrow.size, NoteGeo.spriteSize(a));
+  assert.equal(v.dirty, false);
+  // the tilt: without a tilt material the game skips it; with one it is not implemented
+  assert.doesNotThrow(() => flickHead({ ...unit, _arrowTiltEnabled: 1 }).setupSkin());
+  assert.throws(() => flickHead({ ...unit, _arrowTiltEnabled: 1, _arrowTiltMaterial: { material: "tilt" } }).setupSkin(), /tilt/);
+});
+
+test("flick arrow gradient: the settings' material and the ArrowGradientAnimator block", () => {
+  const mat = { material: "arrow_gradient_center", shader: { shader: "Sirius/ArrowGradientCenter" } };
+  const settings = { _arrowGradientMaterial: mat, _gradientDuration: F(0.8), _gradientPauseDuration: F(0.4),
+                     _gradientBandWidth: F(0.3), _gradientMinAlpha: F(0.25) };
+  const s1 = arrowSprite("s1", [F(0.625), F(0.5), F(0.75)]);
+  const unit = { _arrowAssets: [{ _maxWidth: 99, _sprite: s1 }], _arrowLoopAnimation: null, _gradientSettings: settings,
+                 _directionalGradient: 1 };
+  const v = flickHead(unit);
+  v.setup(1, 3, 12, 1000, false);
+  assert.equal(v.arrow.material, mat);                    // Renderer.sharedMaterial
+  assert.ok(v.gradient instanceof ArrowGradient);
+  assert.equal(v.clip, null);
+  assert.equal(v.gradient.mpb, null);                     // no block before the first Update
+  v.setViewProgress(1); v.updateView();
+  const notes = Object.create(LiveNotes.prototype);
+  Object.assign(notes, { spawned: new Map([[1, v]]), held: new Map() });
+  const dt = F(1 / 60);
+  notes.updateGradients(dt);
+  let t = F(F(0 + dt) % F(F(0.8) + F(0.4)));
+  assert.deepEqual(v.gradient.mpb, { _GradientOffset: F(t / F(0.8)), _BandWidth: F(0.3), _MinAlpha: F(0.25),
+                                     _UvMin: F(0.5), _UvRange: F(F(0.75) - F(0.5)), _Directional: 1 });
+  for (let i = 0; i < 60; i++) { notes.updateGradients(dt); t = F(F(t + dt) % F(F(0.8) + F(0.4))); }
+  assert.equal(v.gradient.time, t);                       // fmodf over duration + pause
+  assert.equal(v.gradient.mpb._GradientOffset, 1);        // in the pause: clamped to 1 (61 frames > 0.8 s)
+  // a sprite change: the uv range again; no sprite: 0 and 1
+  v.arrow.sprite = null; notes.updateGradients(dt);
+  assert.equal(v.gradient.mpb._UvMin, 0); assert.equal(v.gradient.mpb._UvRange, 1);
+  // a new setup restarts the animator (Initialize: time 0)
+  v.setup(2, 3, 12, 2000, false);
+  assert.equal(v.gradient.time, 0);
+  // without settings the unit's getters give their defaults
+  const g = new ArrowGradient({ _gradientSettings: null });
+  assert.deepEqual([g.duration, g.pause, g.bandWidth, g.minAlpha, g.directional], [1, 0, 0.4, 0.5, false]);
+});
+
+// ---- bar lines (MeasureLineDisplay)
+test("music score position: bars from the last BPM / bar change in float32; zero before the first BPM change", () => {
+  const bpm = (bpm, bar, timeMs, barProgress = 0) => ({ bpm, bar, barProgress, timeMs });
+  const score = { bpmChanges: [bpm(190, 0, 0)], barChanges: [{ beatsPerBar: 4, bar: 0, barProgress: 0, timeMs: 0 }] };
+  // one bar of 4 beats at 190 BPM: 1263.157... ms; bar 7 starts at 8842.1 ms
+  assert.equal(musicScorePosition(score, 8842).bar, 6);
+  assert.equal(musicScorePosition(score, 8843).bar, 7);
+  const p = musicScorePosition(score, 1000);
+  const f = F(F(F(F(1000) / 1000) - 0) / F(F(4 * 60) / 190));
+  assert.deepEqual(p, { bar: 0, rhythm: Math.trunc(F(f * 8)) % 8, rhythmicUnit: 8, barProgress: f, timeMs: 1000 });
+  // a later bar change is the reference; its beats per bar
+  const s2 = { bpmChanges: [bpm(120, 0, 0)], barChanges: [{ beatsPerBar: 4, bar: 0, barProgress: 0, timeMs: 0 },
+                                                          { beatsPerBar: 3, bar: 4, barProgress: 0, timeMs: 8000 }] };
+  assert.equal(musicScorePosition(s2, 7999).bar, 3);
+  assert.equal(musicScorePosition(s2, 9500).bar, 5);                    // 1.5 s of 1.5 s bars after bar 4
+  assert.deepEqual(musicScorePosition({ bpmChanges: [bpm(120, 0, 500)], barChanges: [] }, 100),
+                   { bar: 0, rhythm: 0, rhythmicUnit: 0, barProgress: 0, timeMs: 0 });
+});
+
+const barLinePrefab = () => ({ key: "bar_line_view", nodes: [{
+  path: "LiveBarLineView", name: "LiveBarLineView", active: true, layer: 25,
+  localPosition: { x: 0, y: 0, z: 0 }, localRotation: { x: 0, y: 0, z: 0, w: 1 }, localScale: { x: 1, y: 1, z: 1 },
+  components: [{ type: "MonoBehaviour", class: "LiveBarLineView", _viewProgress: 0, _renderer: { gameObject: "LiveBarLineView" } },
+               { type: "SpriteRenderer", m_Enabled: 1, m_Sprite: { sprite: "bar", texture: { texture: "t" } }, m_Materials: [{ material: "m" }],
+                 m_Size: { x: 1, y: F(0.04) }, m_SortingOrder: 4999, m_Color: { r: 1, g: 1, b: 1, a: 1 } }] }] });
+
+test("bar lines: the bar lines after the position's bar within the display offset, views reused in order", () => {
+  const geo = Object.assign(Object.create(NoteGeo.prototype), { laneCount: 24, unit: F(0.5), headPlacement: (c, t) => ({ x: 7, y: F(10 * t) }) });
+  const score = { barLineTimeMs: [0, 1000, 2000, 3000, 4000, 5000], bpmChanges: [{ bpm: 240, bar: 0, barProgress: 0, timeMs: 0 }],
+                  barChanges: [{ beatsPerBar: 4, bar: 0, barProgress: 0, timeMs: 0 }] };             // one bar per second
+  const owner = { score, geo, displayOffsetMs: 1500 };
+  const bl = new LiveBarLines(owner, barLinePrefab(), null);
+  bl.update({ timeMs: 1200 });                        // bar 1: lines 2 (2000) within 1200 + 1500; 3 (3000) not
+  assert.equal(bl.active.length, 1);
+  const v = bl.active[0];
+  assert.equal(v.progress, NoteGeo.viewProgress(F(F(F(1500 + 1200) - 2000) / 1500)));
+  assert.deepEqual(v.p.root.t.localPosition, { x: 0, y: F(10 * v.progress), z: 0 });
+  assert.deepEqual(v.p.root.t.localScale, { x: v.progress, y: v.progress, z: v.progress });
+  assert.deepEqual(v.node.size, { x: 12, y: F(0.04) });           // LaneCount x unit
+  assert.equal(v.node.order, 4999);                               // the prefab's sorting order
+  bl.update({ timeMs: 1600 });                        // lines 2 and 3: the first view reused for line 2, one rented
+  assert.equal(bl.active.length, 2); assert.equal(bl.active[0], v);
+  bl.update({ timeMs: 2100 });                        // bar 2: lines 3 only; the second view returned
+  assert.equal(bl.active.length, 1); assert.equal(bl.pool.length, 1); assert.equal(bl.active[0], v);
+  assert.equal(bl.renderers().length, 1);
+  bl.update({ timeMs: 5100 });
+  assert.equal(bl.active.length, 0);
+  bl.reset();
+  assert.equal(bl.pool.length, 2);
+});
+
+test("bar lines: the container's element root relative to screen_root; offered only with the bar line prefab", () => {
+  const node = (path, pos = { x: 0, y: 0, z: 0 }, components = []) => ({ path, name: path.split("/").pop(), active: true, layer: 0,
+    localPosition: pos, localRotation: { x: 0, y: 0, z: 0, w: 1 }, localScale: { x: 1, y: 1, z: 1 }, components });
+  const base = "LiveGameView/LiveGameCamera/screen_root/LiveGameAllNoteView";
+  const scene = new Prefab({ key: "scene", nodes: [
+    node("LiveGameView"), node("LiveGameView/LiveGameCamera"), node("LiveGameView/LiveGameCamera/screen_root", { x: 0, y: 0, z: 10 }),
+    node(base, { x: 0, y: 0, z: 0 }, [{ type: "MonoBehaviour", class: "LiveAllNoteView", _barLineView: { gameObject: `${base}/LiveAllBarLineView` } }]),
+    node(`${base}/LiveAllBarLineView`, { x: 0, y: 1, z: 0 }, [{ type: "MonoBehaviour", class: "LiveAllBarLineView", _container: { gameObject: `${base}/LiveAllBarLineView/container` } }]),
+    node(`${base}/LiveAllBarLineView/container`, { x: 0, y: 0, z: 2 }, [{ type: "MonoBehaviour", class: "LiveBarLineViewContainer",
+      _elementRoot: { transform: `${base}/LiveAllBarLineView/container` }, _elementPrefab: { gameObject: "LiveBarLineView" } }]) ] });
+  const m = LiveBarLines.elementRoot(scene);
+  assert.deepEqual([m[12], m[13], m[14]], [0, 1, 2]);             // screen_root's own z not included
+  const item = LIVE_OPTIONS.find((o) => o.name === "MeasureLineDisplay");
+  assert.deepEqual(context().values(item), [false]);
+  assert.throws(() => context().resolve({ MeasureLineDisplay: true }), /this chart offers false/);
+  const withPrefab = context({ notes: { ...notesJson(), prefabs: { bar_line_view: barLinePrefab() } } });
+  assert.deepEqual(withPrefab.values(item), [false, true]);
+  assert.equal(withPrefab.resolve({ MeasureLineDisplay: true }).MeasureLineDisplay, true);
+  assert.deepEqual(liveSettingsChanges(withPrefab.resolve({}), withPrefab.resolve({ MeasureLineDisplay: true })).boot, ["MeasureLineDisplay"]);
 });
 
 test("changes are grouped by how they apply", () => {
@@ -370,7 +515,7 @@ test("catch-up: frames of the music the chart clock passed; none at the step int
       loop: { deltaTime: 1 / 60, tweens: { update() {} } }, lastSec, chartMs: lastMs,
       clock: { musicLengthMs: 1000, chartPositionMs: cp },
       exec: { update: (t) => { calls.push(t); return {}; }, resetFrame() {} },
-      notes: { update() {}, advanceGraph() {} },
+      notes: { update() {}, updateGradients() {}, advanceGraph() {} },
       fx: { update() {}, uiFrame() {}, clearEffects() {}, animation() {}, ui: { tweens() {} } },
     });
     s._catchUp(chartMs);

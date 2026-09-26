@@ -63,6 +63,7 @@ export const LIVE_OPTIONS = [
   { name: "SlideOpacity", id: 106, type: "int", section: "detailNote", apply: "boot", def: "60", range: [10, 100] },
   { name: "GuideOpacity", id: 107, type: "int", section: "detailNote", apply: "boot", def: "60", range: [10, 100] },
   { name: "SimultaneousLineDisplay", id: 108, type: "bool", section: "detailNote", apply: "boot", def: "TRUE" },
+  { name: "MeasureLineDisplay", id: 109, type: "bool", section: "detailNote", apply: "boot", def: "FALSE" },
   { name: "BackgroundBrightness", id: 201, type: "int", section: "display1Background", apply: "boot", def: "70", range: [30, 100] },
   { name: "ComboCountDisplay", id: 206, type: "bool", section: "display1Combo", apply: "boot", def: "TRUE" },
   { name: "ContinuationEffectDisplay", id: 208, type: "bool", section: "display1Combo", apply: "boot", def: "TRUE" },
@@ -105,7 +106,6 @@ export const LIVE_OPTIONS_NOT_REPRODUCED = {
   AssistMode: ["FALSE", "the assist mode badge is not drawn"],
   FcAcChallengeAssist: ["0", "the full combo / all perfect challenge label is not drawn"],
   JudgePositionDisplay: ["FALSE", "the judgement line is not drawn"],
-  MeasureLineDisplay: ["FALSE", "bar lines are not drawn"],
   FrameRate: ["0", "the player runs at 60 frames per second"],
   ScreenMode: ["3", "the player shows the LightWeight screen mode (3) only"],
   BackgroundSwitch: ["0", "the other LightWeight backgrounds show the deck's cards; the player has no deck"],
@@ -227,6 +227,8 @@ export class LiveOptionContext {
     const groupIds = groups ? Object.keys(groups).map(Number).sort((a, b) => a - b) : [this.defaults.NoteSePatternId];
     switch (o.name) {
       case "MirrorChart": return this.live && this.live.notesMirror ? [false, true] : [false];
+      // bar lines: the view prefab of the scene's LiveBarLineViewContainer (notes.json prefabs.bar_line_view)
+      case "MeasureLineDisplay": return this.notes && this.notes.prefabs && this.notes.prefabs.bar_line_view ? [false, true] : [false];
       case "LiveQuality": {
         const q = this.info && this.info.options && this.info.options.LiveQuality;
         return Array.isArray(q) && q.length ? q.slice() : [this.defaults.LiveQuality];

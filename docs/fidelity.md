@@ -52,7 +52,7 @@ decimals); the bar uses 0.1 and, with Shift, 1.
 | Group | Options | Where the game reads them |
 |---|---|---|
 | Basic | `NoteSpeed`, `NoteTiming`, `ChartPosition`, `MirrorChart`, `LiveQuality` | the display offset of the notes (`NoteBeforePlayingTimeGetter`), the input timing offset and the widened Miss window (`CreateTimingDictionary`), the chart clock offset and post-music lead, the mirrored score conversion, the quality settings and effect set |
-| Detail | `JudgeResultPositionType` (Center, None), `JudgePosition`, `SlideOpacity`, `GuideOpacity`, `SimultaneousLineDisplay` | `LiveJudgementView.ShowJudgement`, the 2D judgement positions and held heads (`viewProgressOffset`), the line alphas (`ComputeLineAlpha`), the pair lines |
+| Detail | `JudgeResultPositionType` (Center, None), `JudgePosition`, `SlideOpacity`, `GuideOpacity`, `SimultaneousLineDisplay`, `MeasureLineDisplay` | `LiveJudgementView.ShowJudgement`, the 2D judgement positions and held heads (`viewProgressOffset`), the line alphas (`ComputeLineAlpha`), the pair lines, the bar lines (`LiveAllBarLineView`, when the chart data carries the bar line view) |
 | Display 1 | `BackgroundBrightness`, `ComboCountDisplay`, `ContinuationEffectDisplay` | the LightWeight shadow image, the combo counter's active flag and tier sprites |
 | Display 2 | `LaneOpacity`, `GuidelineOpacity`, `GuidelineCount`, `NoteDesignId`, `NoteEffectId` | the lane base and lane lines, the note skin and note effect set |
 | Sound | `LiveMusicVolume`, `LiveNoteSeVolume`, `LiveSeVolume`, `LiveVoiceVolume` and their mutes; `NoteSePatternId`, `UseIndividualNoteSe`, the per-type sounds, volumes and mutes | the CRI live categories (`AppConfig.ApplyLive*Volume`), the note sound maps (`CreateSESettings`) |
@@ -108,12 +108,16 @@ These are not in the game; they are kept apart from the reproduced code and docu
 - Real input: there is no touch play and no judgement other than auto play's Perfect.
 - Background modes other than LightWeight, and skill and Gekisou effects.
 - Live options with parts the player does not draw: the judgement shown at the note's lane (`JudgeResultPositionType`
-  1), the judgement line (`JudgePositionDisplay`), bar lines (`MeasureLineDisplay`), skill lines, the judgement counter
+  1), the judgement line (`JudgePositionDisplay`), skill lines, the judgement counter
   (`JudgeDetailDisplay`), the lane mask of `NoteStartPosition`, the assist and challenge labels (`AssistMode`,
   `FcAcChallengeAssist`), 120 fps (`FrameRate`), the other screen modes and backgrounds (`ScreenMode`,
   `BackgroundSwitch`). They are accepted at their default values only (`ScreenMode` at 3, LightWeight).
 - The Bluetooth variants of the timing and volume options (the game uses them while a Bluetooth audio device is
   connected).
+- The game's exception on a missing flick arrow sprite: the right flick of note design 2 (`skin002`) has no arrow
+  sprite for widths from 10 to under 13 lanes. The game's `LiveDirectionFlickNoteView.OnSetViewWidth` then throws, and
+  the rest of that frame's note view, effect, UI and note sound update is skipped. The player draws no arrow and keeps
+  the arrow's size, as the game leaves them, and continues the frame.
 - Sound details: the CRI reverb bus is not rendered and cue pitch commands are not applied (see the `ENGINE:` notes of
   `src/live/sound.js`).
 - The HDR format of the camera target depends on a player setting of the game; RGBA16F is used.
@@ -348,6 +352,7 @@ Every `ENGINE:` note in `src/`, by file. `npm test` checks that this list matche
 - the SpriteRenderer mesh is native; rebuilt here from the sprite's mesh (Simple) or a 9-slice of its rect (Sliced).
 - Texture2D.SetPixels float -> RGBA32 conversion is native; rounded to nearest here.
 - the graph's time origin (first OnEnable) is taken as the first animation phase after a flick view is rented.
+- MonoBehaviour Update order is unspecified; a view set up in this frame's live update gets its first Update after it.
 
 **`src/live/renderer.js`**
 

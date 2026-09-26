@@ -8,7 +8,20 @@
   "properties": {
     "laneCount": { "type": "integer", "minimum": 2 },
     "notes": { "type": "array", "items": { "$ref": "#/$defs/note" } },
-    "lines": { "type": "array", "items": { "$ref": "#/$defs/line" } }
+    "lines": { "type": "array", "items": { "$ref": "#/$defs/line" } },
+    "barLineTimeMs": { "type": "array", "items": { "type": "integer" }, "description": "Optional: the chart time of each bar line, in bar order (read with MeasureLineDisplay)." },
+    "bpmChanges": {
+      "type": "array", "description": "Optional: BPM changes in time order (read with MeasureLineDisplay).",
+      "items": { "type": "object", "required": ["bpm", "bar", "barProgress", "timeMs"],
+                 "properties": { "bpm": { "type": "number", "exclusiveMinimum": 0 }, "bar": { "type": "integer" },
+                                 "barProgress": { "type": "number" }, "timeMs": { "type": "integer" } } }
+    },
+    "barChanges": {
+      "type": "array", "description": "Optional: time signature changes in time order (read with MeasureLineDisplay).",
+      "items": { "type": "object", "required": ["beatsPerBar", "bar", "barProgress", "timeMs"],
+                 "properties": { "beatsPerBar": { "type": "number", "exclusiveMinimum": 0 }, "bar": { "type": "integer" },
+                                 "barProgress": { "type": "number" }, "timeMs": { "type": "integer" } } }
+    }
   },
   "$defs": {
     "ease": { "enum": ["Linear", "EaseIn", "EaseOut"] },

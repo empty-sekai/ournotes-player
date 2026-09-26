@@ -227,6 +227,7 @@ Values are in the unit of the game's option screen: floats for `NoteSpeed` (1–
 | `JudgePosition` | −5–5 | 0 | Judgement line lower (−) or higher (+). |
 | `SlideOpacity`, `GuideOpacity` | 10–100 | 60 | Opacity of slide and guide lines. |
 | `SimultaneousLineDisplay` | `false`, `true` | `true` | Lines between simultaneous notes. |
+| `MeasureLineDisplay` | `false`, `true` | `false` | Bar lines (needs the bar line view in the chart data). |
 | `BackgroundBrightness` | 30–100 | 70 | Brightness of the background. |
 | `ComboCountDisplay`, `ContinuationEffectDisplay` | `false`, `true` | `true` | The combo counter; its full combo / all perfect colours. |
 | `LaneOpacity` | 0–100 | 80 | Opacity of the lane. |

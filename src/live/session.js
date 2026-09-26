@@ -145,7 +145,8 @@ export class ChartSession {
     // NoteDesignId (306): the note skin asset of MasterLiveNoteSkin (SoloLiveResourceLoadStateNode.CreateLoadParameter)
     const skin = s.NoteDesignId !== ctx.defaults.NoteDesignId
       ? noteAssets.noteSkins[noteAssets.settings.skins[String(s.NoteDesignId)]] : undefined;
-    this.notes = new LiveNotes(gl, noteAssets, score, { base: "livenotes", settings: s, displayOffsetMs: this.exec.D, skin });
+    this.notes = new LiveNotes(gl, noteAssets, score, { base: "livenotes", settings: s, displayOffsetMs: this.exec.D, skin,
+                                                        scene: renderer.prefab });
     await this.notes.load();
     this.fx = new LiveFx({ gl, loop, notes: noteAssets, score, scene, introStars: () => stage.intro.stars(),
                            seed: seed ?? (Date.now() >>> 0), settings: s, effect: liveNoteEffectName(ctx, s) });
@@ -180,6 +181,7 @@ export class ChartSession {
     this.disposed = false;
 
     loop.on("update", () => this._update());
+    loop.on("update", (l) => { if (!this.voidFrame) this.notes.updateGradients(l.deltaTime); });   // ArrowGradientAnimator
     loop.on("animation", (l) => { if (!this.voidFrame) this.notes.animate(l); });
     loop.on("render", () => { if (!this.skipRender && !this._noDraw && !this.voidFrame) this.render(); });
     stage.intro.onEnd = () => { this.state = "start"; };
@@ -259,6 +261,7 @@ export class ChartSession {
       const fr = this.exec.update(t, dt);
       this.frame = fr; this.chartMs = t; this.lastSec = n;
       this.notes.update(fr);
+      this.notes.updateGradients(dt);
       if (fx) {                                                    // update, DOTween, Animators and particles
         this.fx.update(fr);
         this.loop.tweens.update(dt);
@@ -463,6 +466,7 @@ export class ChartSession {
     if (has(["LaneOpacity", "GuidelineOpacity", "GuidelineCount"])) this.stage.lane.configure(next);
     if (has(["BackgroundBrightness"])) this.renderer.canvas.configure(next);
     if (has(["SlideOpacity", "GuideOpacity"])) this.notes.setLineOpacity(next);
+    if (has(["MeasureLineDisplay"]) && next.MeasureLineDisplay) await this.notes.loadBarLineTexture();
     if (ch.boot.some((n) => LIVE_RESTART.has(n))) await this._restart();
     if (this.paused && !this.disposed) this.render();              // the state the session stays at
     return changed;
@@ -561,6 +565,7 @@ export class ChartSession {
       this.frame = fr; this.chartMs = chartMs; this.lastSec = clk.sec;
       this.notes.update(fr);
     }
+    this.notes.updateGradients(dt);
     this.fx.uiFrame(fr, dt);
     this.notes.advanceGraph(dt);
   }
@@ -596,5 +601,6 @@ export class ChartSession {
 // boot options whose change restarts the chart state (read by the simulation, the note views' spawn state or the live
 // UI's state); the other boot options are constants of a draw
 const LIVE_RESTART = new Set(["NoteSpeed", "NoteTiming", "ChartPosition", "JudgePosition", "SimultaneousLineDisplay",
-                              "ComboCountDisplay", "ContinuationEffectDisplay", "JudgeResultPositionType"]);
+                              "MeasureLineDisplay", "ComboCountDisplay", "ContinuationEffectDisplay",
+                              "JudgeResultPositionType"]);
 for (const n of LIVE_RESTART) if (!LIVE_OPTION_BY_NAME.has(n)) throw new Error(`live option ${n} missing`);

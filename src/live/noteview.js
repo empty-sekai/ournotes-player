@@ -3,11 +3,12 @@ import { F } from "../engine/core.js";
 import { ShaderLib, applyState } from "../engine/glsl.js";
 import { Transform, mat4 } from "../engine/math.js";
 import { GLTex } from "../engine/texture.js";
+import { LiveLane } from "./lane.js";
 import { NoteGeo } from "./notegeo.js";
 import { LiveSettingsMath } from "./settings.js";
 
-// Live note views on WebGL2: the port of LiveAllNoteView and its note head, flick arrow, slide / guide body and
-// pair-line views with their per-frame view state. Geometry: NoteGeo (notegeo.js). Frame input: the frame result of
+// Live note views on WebGL2: the port of LiveAllNoteView and its note head, flick arrow, slide / guide body, pair-line
+// and bar-line views with their per-frame view state. Geometry: NoteGeo (notegeo.js). Frame input: the frame result of
 // LiveExecutor (simulator.js). Drawing goes through the renderer's submit("game", item).
 //
 // Every renderer here is a layer-25 SpriteRenderer or MeshRenderer of the in-game camera; its item carries the Unity
@@ -105,13 +106,14 @@ export class NoteGL {
     return [mat.floats, mat.colors, texST, this.lib.defaults(shader, this.defTex)];
   }
 
-  // one SpriteRenderer: sr = serialized component (material, flip, colour), sprite + mesh, world matrix M
-  drawSprite(ctx, sr, tex, mesh, M, color) {
+  // one SpriteRenderer: sr = serialized component (material, flip, colour), sprite + mesh, world matrix M; mpb: the
+  // renderer's MaterialPropertyBlock values (over the material's), or null
+  drawSprite(ctx, sr, tex, mesh, M, color, mpb = null) {
     const gl = this.gl, mat = sr.m_Materials[0], shader = mat.shader.shader;
     const prog = this.lib.program(shader, 0, mat.keywords);
     const c = color || sr.m_Color, fx = sr.m_FlipX ? -1 : 1, fy = sr.m_FlipY ? -1 : 1;
     prog.apply([{ _MainTex: tex, _RendererColor: [c.r, c.g, c.b, c.a], _Flip: [fx, fy],
-                  unity_SpriteColor: [c.r, c.g, c.b, c.a], unity_SpriteProps: [fx, fy, 0, 0] },
+                  unity_SpriteColor: [c.r, c.g, c.b, c.a], unity_SpriteProps: [fx, fy, 0, 0] }, mpb,
                 ctx.perObject(M), ...this._material(mat, shader), ctx.globals]);
     applyState(gl, this.lib.state(shader, 0, mat.floats));
     gl.bindVertexArray(this.vao);
@@ -227,6 +229,42 @@ export class NotePrefab {
   get(rel) { return this.nodes.get(rel ? `${this.root.path}/${rel}` : this.root.path) || null; }
 };
 
+// ------------------------------------------------------------------ ArrowGradientAnimator
+// The band of light of a flick arrow drawn with the skin's gradient material. Initialize (at each skin setup): time 0,
+// no cached sprite, _directional from the skin unit. Update (every frame the view is active): the uv x range of the
+// renderer's sprite when the sprite changed (UpdateUvRangeIfSpriteChanged; none: 0 and 1), then
+// time = fmodf(time + deltaTime, duration + pause) and the block _GradientOffset = clamp01(time / duration),
+// _BandWidth, _MinAlpha, _UvMin, _UvRange, _Directional. The settings come through the skin unit's getters, which give
+// 1, 0, 0.4 and 0.5 without settings.
+export class ArrowGradient {
+  constructor(unit) {
+    const g = unit._gradientSettings || null;
+    this.duration = g ? g._gradientDuration : 1;
+    this.pause = g ? g._gradientPauseDuration : 0;
+    this.bandWidth = g ? g._gradientBandWidth : 0.4;
+    this.minAlpha = g ? g._gradientMinAlpha : 0.5;
+    this.directional = !!unit._directionalGradient;
+    this.time = 0; this.sprite = undefined; this.uvMin = 0; this.uvRange = 1;
+    this.mpb = null;                              // the block set on the renderer (none before the first Update)
+  }
+
+  update(sprite, dt) {
+    if (sprite !== this.sprite) {
+      this.sprite = sprite;
+      if (!sprite) { this.uvMin = 0; this.uvRange = 1; }
+      else {
+        let lo = F(3.4028235e38), hi = F(-3.4028235e38);
+        for (const uv of sprite.uv) { if (uv[0] < lo) lo = uv[0]; if (uv[0] > hi) hi = uv[0]; }
+        this.uvMin = lo; this.uvRange = F(hi - lo);
+      }
+    }
+    this.time = F(F(this.time + F(dt)) % F(this.duration + this.pause));
+    const o = F(this.time / this.duration);
+    this.mpb = { _GradientOffset: o <= 1 ? (o >= 0 ? o : 0) : (o >= 0 ? 1 : 0), _BandWidth: this.bandWidth,
+                 _MinAlpha: this.minAlpha, _UvMin: this.uvMin, _UvRange: this.uvRange, _Directional: this.directional ? 1 : 0 };
+  }
+};
+
 // ------------------------------------------------------------------ note head view (LiveSpritePartsNoteViewBase family)
 export class NoteHeadView {
   constructor(owner, type) {
@@ -251,10 +289,18 @@ export class NoteHeadView {
     if (!u) return;
     if (this.main) this.main.sprite = u._mainSprite;
     if (this.mark) this.mark.sprite = u._centerMarkSprite;
-    if (this.arrow) {
-      if (u._arrowTiltEnabled) throw new Error("flick arrow tilt path not implemented (skin _arrowTiltEnabled)");
-      if (u._gradientSettings) throw new Error("flick arrow gradient path not implemented (skin _gradientSettings)");
-      this.clip = this.owner.clip(u._arrowLoopAnimation.clip);
+    if (this.arrow) {                             // LiveFlickNoteView / LiveDirectionFlickNoteView.OnSetupNoteSkin
+      this.clip = u._arrowLoopAnimation ? this.owner.clip(u._arrowLoopAnimation.clip) : null;   // OverrideLoopAnimation
+      // the tilt (the tilt material and its _Slope / _Center / _HalfScale block) only with _arrowTiltEnabled and a tilt
+      // material; without the material the game skips it (and so does LateUpdate)
+      if (u._arrowTiltEnabled && u._arrowTiltMaterial) throw new Error("flick arrow tilt path not implemented (skin _arrowTiltEnabled)");
+      // ArrowGradientMaterial (the gradient settings' material, null without settings): the arrow draws with it, animated
+      // by an ArrowGradientAnimator (GetComponent ?? AddComponent, then Initialize)
+      const gm = u._gradientSettings ? u._gradientSettings._arrowGradientMaterial || null : null;
+      if (gm) {
+        this.arrow.material = gm;                 // Renderer.sharedMaterial
+        this.gradient = new ArrowGradient(u);
+      }
     }
     if (this.subArrow) {
       if (u._subArrowSprite) throw new Error("flick sub arrow sprite not implemented");
@@ -286,7 +332,7 @@ export class NoteHeadView {
     if (this.parts) this.parts.order = order + 1;
     const vw = F(this.width * geo.unit);
     if (vw !== this._vw || this.laneCenter !== this._lc) {
-      this._vw = vw; this._lc = this.laneCenter;
+      let applied = true;
       if (this.unit && this.left) {
         const lay = geo.partsLayout(this.unit, this.laneCenter, this.width, vw);
         for (const [node, e] of [[this.left, lay.left], [this.right, lay.right]]) {
@@ -298,8 +344,14 @@ export class NoteHeadView {
       }
       if (this.arrow) {                                       // LiveFlickNoteView.OnSetViewWidth
         const sp = geo.arrowSprite(this.unit, vw);
-        this.arrow.sprite = sp; this.arrow.size = G.spriteSize(sp);
+        this.arrow.sprite = sp;
+        // a width bracket without a sprite: the renderer gets none (no arrow) and keeps its size; the game then throws
+        // reading the sprite's bounds, before UpdateView notes the applied width and lane centre and clears _dirty
+        // (the rest of the frame the exception skips is not reproduced; docs/fidelity.md)
+        if (sp) this.arrow.size = G.spriteSize(sp);
+        else applied = false;
       }
+      if (applied) { this._vw = vw; this._lc = this.laneCenter; } else this.dirty = true;
     }
   }
 
@@ -366,6 +418,109 @@ export class NoteLineView {
   }
 };
 
+// ------------------------------------------------------------------ bar lines (MeasureLineDisplay 109)
+// MusicScore.GetMusicScorePositionFromTimeMs: the last BPM change at or before timeMs, the last bar (time signature)
+// change at or before it (none: 4 beats per bar), the later of the two as the reference position; then in float32
+// bars = (timeMs / 1000 - reference.TimeMs / 1000) / (beats x 60 / bpm) + reference.BarProgress, Bar = reference.Bar +
+// (int)bars, BarProgress = bars - (int)bars, Rhythm = (int)(bars x 8) % 8 of RhythmicUnit 8. Before the first BPM
+// change: a zero position (TimeMs 0 too). The simulation's frame position (ILiveSimulateFrameResult.SimulatePosition)
+// is this position of the simulate time.
+export const musicScorePosition = (score, timeMs) => {
+  const bpms = score.bpmChanges || [], bars = score.barChanges || [];
+  let i = bpms.length, b = null;
+  do {
+    if (--i < 0) return { bar: 0, rhythm: 0, rhythmicUnit: 0, barProgress: 0, timeMs: 0 };
+    b = bpms[i];
+  } while (timeMs < b.timeMs);
+  let ref = b, beats = 4;
+  for (let j = bars.length - 1; j >= 0; j--) {
+    const c = bars[j];
+    if (timeMs < c.timeMs) continue;
+    beats = F(c.beatsPerBar);
+    if (b.timeMs < c.timeMs) ref = c;
+    break;
+  }
+  const d = F(F(F(timeMs) / 1000) - F(F(ref.timeMs) / 1000));
+  const f = F(F(d / F(F(beats * 60) / F(b.bpm))) + F(ref.barProgress));
+  const n = Math.trunc(f);
+  return { bar: ref.bar + n, rhythm: Math.trunc(F(f * 8)) % 8, rhythmicUnit: 8, barProgress: F(f - n), timeMs };
+};
+
+// LiveAllBarLineView with its LiveBarLineViewContainer and LiveBarLineView (the view prefab: prefabs.bar_line_view).
+// Initialize: the score's BarLineTimeMsList and _beforePlayingTimeMs = (float) the display offset; each view rented
+// from the container gets SpriteRenderer.size.x = LaneCount x the lane unit and is parented to the container's
+// _elementRoot. UpdateFrame (at the top of UpdateNoteView): from the bar after the frame position's Bar, every bar
+// line whose time is within the display offset of the position's TimeMs, each on a view (the active views reused in
+// order, then new ones rented), view progress ConvertNoteViewProgress(max(0, (D + now - t) / D)); the active views not
+// reused are returned. LiveBarLineView.UpdateView: localPosition (0, y of the lerp from the spawn root to
+// GetNoteJudgementPosition(_laneCenter 0), 0), localScale the view progress. The sprite keeps its prefab sorting order.
+export class LiveBarLines {
+  constructor(owner, prefab, root) {
+    this.owner = owner; this.prefab = prefab; this.root = root;
+    this.times = owner.score.barLineTimeMs || [];
+    const mb = prefab.nodes[0].components.find((c) => c.type === "MonoBehaviour" && c._renderer);
+    if (!mb || !mb._renderer.gameObject) throw new Error("bar line prefab: LiveBarLineView._renderer missing");
+    this.rendererPath = mb._renderer.gameObject;
+    const sr = prefab.nodes.find((n) => n.path === this.rendererPath).components.find((c) => c.type === "SpriteRenderer");
+    this.sprite = sr.m_Sprite; this.material = sr.m_Materials[0];
+    this.active = []; this.pool = [];
+  }
+
+  // the container's _elementRoot relative to screen_root, from the live scene
+  static elementRoot(scene) {
+    const nv = scene.component("LiveGameView/LiveGameCamera/screen_root/LiveGameAllNoteView", "LiveAllNoteView");
+    const bl = scene.component(nv._barLineView.gameObject, "LiveAllBarLineView");
+    const ct = scene.component(bl._container.gameObject, "LiveBarLineViewContainer");
+    const top = scene.transform("LiveGameView/LiveGameCamera/screen_root");
+    let m = mat4.identity();
+    for (let t = scene.transform(ct._elementRoot.transform); t !== top; t = t.parent) {
+      if (!t) throw new Error("bar line container: not under screen_root");
+      m = mat4.mul(t.localMatrix(), m);
+    }
+    return m;
+  }
+
+  _rent() {
+    const v = this.pool.pop();
+    if (v) return v;
+    const p = new NotePrefab(this.prefab), node = p.nodes.get(this.rendererPath), geo = this.owner.geo;
+    node.sprite = this.sprite;
+    node.size = { x: F(F(geo.laneCount) * geo.unit), y: node.size.y };             // LiveBarLineView.Initialize
+    return { p, node, progress: 0, dirty: false };
+  }
+
+  update(fr) {
+    const pos = musicScorePosition(this.owner.score, fr.timeMs), now = F(pos.timeMs), D = F(this.owner.displayOffsetMs);
+    const n = this.active.length, head = F(D + now);
+    let k = 0;
+    for (let i = pos.bar + 1; i < this.times.length; i++) {
+      const t = this.times[i];
+      if (head < t) break;
+      let v;
+      if (k < n) v = this.active[k++];
+      else { v = this._rent(); this.active.push(v); }
+      const p = F(F(head - t) / D);
+      v.progress = NoteGeo.viewProgress(p <= 0 ? 0 : p);
+      v.dirty = true;
+      this._updateView(v);
+    }
+    for (let j = n - 1; j >= k; j--) this.pool.push(...this.active.splice(j, 1));
+  }
+
+  _updateView(v) {
+    if (!v.dirty) return;
+    const t = v.progress, r = v.p.root.t, pl = this.owner.geo.headPlacement(0, t);
+    r.localPosition = { x: 0, y: pl.y, z: 0 };
+    r.localScale = { x: t, y: t, z: t };
+    v.dirty = false;
+  }
+
+  // ReturnAllActiveBarLines
+  reset() { while (this.active.length) this.pool.push(this.active.pop()); }
+
+  renderers() { return this.active.map((v) => v.node).filter((n) => n.active && n.enabled && n.sprite); }
+};
+
 // ------------------------------------------------------------------ LiveAllNoteView (container of all views)
 export class LiveNotes {
   // ln = livenotes/notes.json, score = score/<chart>.notes.json, opts.base = packed livenotes directory,
@@ -378,6 +533,8 @@ export class LiveNotes {
     this.lines = new Map(score.lines.map((l) => [l.lineId, l]));
     this._clips = new Map();
     this.gl_ = gl ? new NoteGL(gl, this.base) : null;
+    // the bar line views' _elementRoot relative to screen_root (opts.scene: the live scene's Prefab)
+    this.barLineRoot = opts.scene && ln.prefabs.bar_line_view ? LiveBarLines.elementRoot(opts.scene) : null;
     this.configure(opts.settings, opts.displayOffsetMs);
   }
 
@@ -393,10 +550,16 @@ export class LiveNotes {
     this.geo = new NoteGeo(s, this.viewProgressOffset);
     this.noteSpeed = F(val("NoteSpeed") ?? parseFloat(od.NoteSpeed));    // IReadOnlyNoteSettings slot 0 (line body LOD)
     this.showPairLines = val("SimultaneousLineDisplay") ?? od.SimultaneousLineDisplay === "TRUE";   // option 108
-    this.showBarLines = od.MeasureLineDisplay === "TRUE";                // option 109 (default FALSE: not drawn)
+    this.showBarLines = val("MeasureLineDisplay") ?? od.MeasureLineDisplay === "TRUE";   // option 109
     this.showSkillLines = od.LiveSkillActivationPositionDisplay === "TRUE"; // option 309 (default FALSE: not drawn)
-    if (this.showBarLines || this.showSkillLines) throw new Error("bar / skill lines are hidden by default and not implemented");
+    if (this.showSkillLines) throw new Error("skill lines are hidden by default and not implemented");
     this.displayOffsetMs = displayOffsetMs ?? s.noteDisplayTimeMs;
+    // LiveAllBarLineView.Initialize runs always; with the option off (SetEnabled false) UpdateFrame does nothing
+    if (this.showBarLines) {
+      if (!ln.prefabs.bar_line_view) throw new Error("MeasureLineDisplay: the bar line prefab (prefabs.bar_line_view) is not in the chart data");
+      if (!this.barLineRoot) throw new Error("MeasureLineDisplay: the bar line container of the live scene is needed");
+      this.barLines = new LiveBarLines(this, ln.prefabs.bar_line_view, this.barLineRoot);
+    } else this.barLines = null;
     // line kinds: skin + container values
     const sk = this.skin;
     const normal = new Gradient(sk.SlideLineGradient), pressed = new Gradient(sk.SlideLinePressedGradient),
@@ -443,8 +606,18 @@ export class LiveNotes {
   // every view released and the flick graph unstarted: the state after load (the loaded textures are kept)
   reset() {
     this.spawned.clear(); this.held.clear(); this.lineViews.clear(); this.pairs.clear();
+    if (this.barLines) this.barLines.reset();
     this.graphTime = undefined; this._flickSeen = false;
     this.t = 0; this.D = this.displayOffsetMs; this.fr = undefined;
+  }
+
+  // the bar line sprite's texture (MeasureLineDisplay turned on after load)
+  async loadBarLineTexture() {
+    const pf = this.ln.prefabs.bar_line_view;
+    if (!this.gl_ || !pf) return;
+    for (const n of pf.nodes) for (const c of n.components) {
+      if (c.type === "SpriteRenderer" && c.m_Sprite && c.m_Sprite.texture) await this.gl_.texture(c.m_Sprite.texture);
+    }
   }
 
   clip(id) {
@@ -460,6 +633,7 @@ export class LiveNotes {
                           for (const v of Array.isArray(x) ? x : Object.values(x)) walk(v); };
     walk(this.skin);
     add(this.ln.prefabs.pair_note_line.nodes.flatMap((n) => n.components).find((c) => c.type === "SpriteRenderer").m_Sprite);
+    if (this.barLines) add(this.barLines.sprite);
     for (const d of want.values()) await g.texture(d);
     this._lineTex = {};
     for (const k of ["slide", "guide"]) this.lineKinds[k].tex = this._lineTex[k] = g.gradientTexture(this.lineKinds[k].rows);
@@ -470,6 +644,13 @@ export class LiveNotes {
   // ENGINE: the graph's time origin (first OnEnable) is taken as the first animation phase after a flick view is rented.
   animate(loop) {
     if (this.advanceGraph(loop.deltaTime)) this.sampleArrows();
+  }
+
+  // the ArrowGradientAnimator.Update of every active flick view with a gradient arrow (update phase, after the live
+  // update)
+  // ENGINE: MonoBehaviour Update order is unspecified; a view set up in this frame's live update gets its first Update after it.
+  updateGradients(dt) {
+    for (const v of this._heads()) if (v.gradient && v.arrow) v.gradient.update(v.arrow.sprite, dt);
   }
 
   // the graph time step of animate(); false while the graph has not started
@@ -515,7 +696,7 @@ export class LiveNotes {
       view.setup(note.id, cw.width, cw.center, note.timeMs, note.critical);
       view.setViewProgress(1);
       view.updateView();
-      for (const n of view.renderers()) out.add(n.comp.m_Materials[0]);
+      for (const n of view.renderers()) out.add(n.material || n.comp.m_Materials[0]);
       if (this.showPairLines && note.pairNoteId && this.notes.has(note.pairNoteId)) pair = true;
       if (T.isLineBegin(note.op) && note.lineIds.length) body = true;
     }
@@ -524,6 +705,7 @@ export class LiveNotes {
       if (pl.r.enabled && pl.r.active) out.add(pl.r.comp.m_Materials[0]);
     }
     if (body) out.add(this.material);
+    if (this.barLines && this.barLines.times.length) out.add(this.barLines.material);
     return [...out];
   }
 
@@ -544,16 +726,33 @@ export class LiveNotes {
     const g = this.gl_, fr = renderer.frames.game, SR = fr.screenRoot, C = fr.cameraToWorld;
     const cam = { x: C[12], y: C[13], z: C[14] };
     const at = (M, c) => { const p = mat4.transformPoint(M, c); return { p, d: Math.hypot(p.x - cam.x, p.y - cam.y, p.z - cam.z) }; };
-    const sprite = (node) => {
+    const sprite = (node, mpb = null) => {
       const comp = node.comp, M = mat4.mul(SR, node.t.localToWorld());
       const mesh = g.spriteMesh(node.sprite, comp.m_DrawMode, node.size.x, node.size.y), tex = g.tex.get(node.sprite.texture.texture);
       if (!tex) throw new Error(`texture not loaded: ${node.sprite.texture.texture}`);
-      const { p, d } = at(M, mesh.center), sr = { m_Materials: comp.m_Materials, m_FlipX: node.flipX, m_FlipY: comp.m_FlipY };
-      renderer.submit("game", { sortingLayer: comp.m_SortingLayer, sortingOrder: node.order, queue: 3000, distance: d,
-                                center: p, draw: (ctx) => g.drawSprite(ctx, sr, tex, mesh, M, node.color) });
+      const mats = node.material ? [node.material] : comp.m_Materials;               // sharedMaterial set by the view
+      const { p, d } = at(M, mesh.center), sr = { m_Materials: mats, m_FlipX: node.flipX, m_FlipY: comp.m_FlipY };
+      const queue = node.material ? LiveLane.queue(g.lib, node.material) : 3000;
+      renderer.submit("game", { sortingLayer: comp.m_SortingLayer, sortingOrder: node.order, queue, distance: d,
+                                center: p, draw: (ctx) => g.drawSprite(ctx, sr, tex, mesh, M, node.color, mpb) });
     };
-    for (const v of this._heads()) if (v.visible !== false) for (const n of v.renderers()) sprite(n);
+    for (const v of this._heads()) {
+      if (v.visible === false) continue;
+      for (const n of v.renderers()) sprite(n, n === v.arrow && v.gradient ? v.gradient.mpb : null);
+    }
     for (const pl of new Set(this.pairs.values())) if (pl.r.enabled && pl.r.active) sprite(pl.r);
+    if (this.barLines) {
+      const BR = mat4.mul(SR, this.barLines.root);
+      for (const n of this.barLines.renderers()) {
+        const comp = n.comp, M = mat4.mul(BR, n.t.localToWorld());
+        const mesh = g.spriteMesh(n.sprite, comp.m_DrawMode, n.size.x, n.size.y), tex = g.tex.get(n.sprite.texture.texture);
+        if (!tex) throw new Error(`texture not loaded: ${n.sprite.texture.texture}`);
+        const { p, d } = at(M, mesh.center), mat = comp.m_Materials[0];
+        const sr = { m_Materials: comp.m_Materials, m_FlipX: n.flipX, m_FlipY: comp.m_FlipY };
+        renderer.submit("game", { sortingLayer: comp.m_SortingLayer, sortingOrder: n.order, queue: LiveLane.queue(g.lib, mat),
+                                  distance: d, center: p, draw: (ctx) => g.drawSprite(ctx, sr, tex, mesh, M, n.color) });
+      }
+    }
     for (const lv of this.lineViews.values()) {
       const m = lv.mesh;
       if (!m || !m.quads) continue;
@@ -574,6 +773,7 @@ export class LiveNotes {
   update(fr) {
     const T = NoteViewType, G = NoteGeo, t = fr.timeMs, D = fr.displayOffsetMs;
     this.t = t; this.D = D; this.fr = fr;
+    if (this.barLines) this.barLines.update(fr);                      // LiveAllBarLineView.UpdateFrame
     // CleanupNoteView, phase 1 (update-note list)
     for (const id of fr.updateNoteIds) {
       const r = fr.noteResult(id);

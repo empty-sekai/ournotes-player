@@ -247,7 +247,10 @@ A line:
 | `type` | `"long"` \| `"guide"` | A hold (slide) line, or a guide line. |
 | `noteIds` | integer[] | The notes of the line, in time order. |
 
-Other keys of the score (bar lines, BPM changes, fever and skill ranges, …) are not read.
+With `MeasureLineDisplay` on, the player also reads `barLineTimeMs` (the chart time of each bar line, in bar order),
+`bpmChanges` (`{ bpm, bar, barProgress, timeMs }`) and `barChanges` (`{ beatsPerBar, bar, barProgress, timeMs }`),
+from which it finds the bar of each frame as the game does. Other keys of the score (fever and skill ranges, …) are
+not read.
 
 ## Sounds (`audio/live-audio.json`)
 
@@ -350,7 +353,7 @@ split JSON object. Keys read:
 | Key | Content |
 |---|---|
 | `settings` | Lane and option settings (below). |
-| `prefabs` | Name → node list: the note views (`tap_note_view`, `flick_note_view`, `flick_left_note_view`, `flick_right_note_view`, `slide_note_view`, `slide_end_note_view`, `connection_note_view`, `none_note_view`), `slide_line_view`, `pair_note_line`, `judge_effect_view`. |
+| `prefabs` | Name → node list: the note views (`tap_note_view`, `flick_note_view`, `flick_left_note_view`, `flick_right_note_view`, `slide_note_view`, `slide_end_note_view`, `connection_note_view`, `none_note_view`), `slide_line_view`, `pair_note_line`, `judge_effect_view`; optional `bar_line_view`, the bar line view (the `LiveBarLineViewContainer` element prefab of the live scene), which offers `MeasureLineDisplay`. |
 | `noteSkin` | The note skin asset: its serialized fields (`TapNoteAsset`, `FlickNoteAsset`, `SlideLineGradient`, …) with referenced assets, sprites and materials inline. |
 | `noteSkins` | Optional. Skin asset name → a record like `noteSkin`, for the other note designs (`settings.skins`). |
 | `assets` | Asset key (the game's asset path, e.g. `Effect/Live/NoteEffect/effect001/note_normal`) → a node list (effect prefabs), a ScriptableObject's serialized fields (effect and sprite settings), or `{ key, controller }`. |
