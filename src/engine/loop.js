@@ -32,6 +32,18 @@ export const drain = () => new Promise((res) => {
   ch.port2.postMessage(0);
 });
 
+// (float)TimeSpan.FromSeconds(sec).TotalSeconds: TimeSpan.Interval(sec, 1000) rounds to whole milliseconds (half away
+// from zero, then truncated), TotalSeconds = ticks x 1e-7 in double. NaN (ArgumentException) and a value outside
+// Int64.MaxValue / 10000 milliseconds (OverflowException) throw.
+export const uniTaskDelaySeconds = (sec) => {
+  if (typeof sec !== "number") throw new TypeError(`delay seconds must be a number (got ${sec})`);
+  if (Number.isNaN(sec)) throw new RangeError("TimeSpan does not accept floating point Not-a-Number values.");
+  const millis = 1000 * sec + (0 <= sec ? 0.5 : -0.5);
+  if (!(millis <= 922337203685477 && -922337203685477 <= millis))
+    throw new RangeError("TimeSpan overflowed because the duration is too long.");
+  return Math.fround(Math.trunc(millis) * 10000 * 1e-7);
+};
+
 export class PlayerLoop {
   constructor(frameRate = 30) {
     this.fixedDelta = 1 / frameRate;
@@ -48,13 +60,21 @@ export class PlayerLoop {
 
   on(phase, fn) { this.hooks[phase].push(fn); }
 
-  // UniTask.Delay(sec) (scaled delta time): the frame it is created in does not
-  // count; each later Update tick adds deltaTime until elapsed >= sec.
-  // Resolves true on completion, false when cancelled.
+  // UniTask.Delay(TimeSpan.FromSeconds(sec)) (DelayType.DeltaTime, PlayerLoopTiming.Update; DelayPromise): the wait is
+  // (float)TimeSpan.FromSeconds(sec).TotalSeconds, i.e. whole milliseconds (uniTaskDelaySeconds); the frame it is
+  // created in does not count (elapsed still 0 in that frame); each later Update tick adds Time.deltaTime to a float32
+  // elapsed until wait <= elapsed. A zero wait has no shortcut: it completes at the first Update tick after the
+  // creating frame. A negative wait throws (ArgumentOutOfRangeException). Resolves true on completion, false when
+  // cancelled.
   delay(sec) {
-    if (!(sec > 0)) return Promise.resolve(true);
-    return new Promise((res) => this._delays.push({ sec, elapsed: 0, created: this.frameCount, res }));
+    if (uniTaskDelaySeconds(sec) < 0)
+      throw new RangeError(`Delay does not allow minus delayTimeSpan. delayTimeSpan:${sec} s`);
+    return new Promise((res) => this._delays.push(this._delayEntry(sec, res)));
   }
+
+  // an entry of the delay queue ({sec, elapsed, created, res}); queued by delay(), or by a caller that cancels its
+  // own entries
+  _delayEntry(sec, res) { return { sec, elapsed: 0, created: this.frameCount, res }; }
 
   delayFrame(n) {
     return new Promise((res) => this._frameWaits.push({ target: this.frameCount + n, res }));
@@ -72,9 +92,9 @@ export class PlayerLoop {
     for (const r of ys) r();
     const keep = [];                                                 // UniTaskLoopRunnerUpdate
     for (const d of this._delays) {
-      if (d.created === this.frameCount) { keep.push(d); continue; }
-      d.elapsed += this.deltaTime;
-      if (d.elapsed >= d.sec) d.res(true); else keep.push(d);
+      if (d.elapsed === 0 && d.created === this.frameCount) { keep.push(d); continue; }
+      d.elapsed = Math.fround(d.elapsed + Math.fround(this.deltaTime));
+      if (uniTaskDelaySeconds(d.sec) <= d.elapsed) d.res(true); else keep.push(d);
     }
     this._delays = keep;
     const fw = [];

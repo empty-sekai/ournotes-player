@@ -2,8 +2,8 @@
 // "ournotes-player/live2d/element" resolve through package.json "exports", and typical uses type-check. Nothing here runs.
 import {
   AssetStore, MODEL_FRAME_RATE, ModelPlayer, ModelSession, OurnotesLive2DElement, defineOurnotesLive2D,
-  type ExpressionOptions, type ManifestInfo, type ModelInfo, type ModelPlayerEventMap, type ModelSessionOptions,
-  type MotionOptions,
+  type ExpressionOptions, type ManifestInfo, type ModelInfo, type ModelMotionCallback, type ModelPlayerEventMap,
+  type ModelSessionOptions, type MotionEndDetail, type MotionOptions, type MotionStartDetail,
 } from "ournotes-player/live2d";
 import * as element from "ournotes-player/live2d/element";
 
@@ -65,4 +65,25 @@ export function useModelElement(): void {
   void el.playMotion("mtn_idle", { fade: 0 }).then(() => el.setExpression("exp_smile01"));
   const events: (keyof ModelPlayerEventMap)[] = ["ready", "play", "pause", "error", "progress"];
   console.log(cls, typed.player, typed.info, events, element.ModelPlayer === ModelPlayer, element.AssetStore === AssetStore);
+}
+
+export function useMotionEvents(player: ModelPlayer, session: ModelSession, el: OurnotesLive2DElement): string[] {
+  const seen: string[] = [];
+  player.addEventListener("motionstart", (e) => seen.push(`${e.detail.name} ${e.detail.loop}`));
+  player.addEventListener("motionend", (e: CustomEvent<MotionEndDetail>) => seen.push(e.detail.name));
+  const onEnd = (e: CustomEvent<MotionEndDetail>) => seen.push(e.detail.name);
+  el.addEventListener("motionend", onEnd);
+  el.removeEventListener("motionend", onEnd);
+  el.addEventListener("motionstart", (e) => seen.push(`${e.detail.name} ${e.detail.loop}`));
+  el.addEventListener("click", (e: MouseEvent) => seen.push(String(e.button)));
+  const state: [string, boolean, boolean, number, number | null] = [el.name, el.motionPlaying, el.looping, el.time, el.seed];
+  const playerState: [boolean, number, number | null] = [player.looping, player.time, player.seed];
+  console.log(state, playerState);
+  const cb: ModelMotionCallback = (type, detail) => seen.push(`${type} ${detail.name}`);
+  session.onmotion = cb;
+  session.onmotion = null;
+  const start: MotionStartDetail = { name: "mtn_idle", loop: true };
+  const opts: Partial<ModelSessionOptions> = { onMotion: cb };
+  console.log(start, opts);
+  return seen;
 }

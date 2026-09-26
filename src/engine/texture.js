@@ -29,8 +29,10 @@ export class GLTex {
   }
 
   // An exported texture descriptor ({texture, width, height, mipCount, settings}).
+  // ENGINE: a mipmapped texture samples the mip chain stored in the asset; the data holds its base level only, so the
+  // other levels are generated from it (glGenerateMipmap) and filtered as the texture's FilterMode asks.
   static async load(gl, base, desc, assets = assetsOf(gl)) {
-    if (desc.mipCount > 1) throw new Error(`${desc.name}: mipmapped textures not implemented`);
+    const mips = desc.mipCount > 1 ? desc.mipCount : 1;
     const bmp = await assets.image(join(base, desc.texture));
     if (bmp.width !== desc.width || bmp.height !== desc.height) throw new Error(`${desc.name}: size mismatch`);
     const t = gl.createTexture();
@@ -38,7 +40,11 @@ export class GLTex {
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
     gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, bmp);
-    GLTex.sampler(gl, desc.settings, 1);
+    if (mips > 1) {
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAX_LEVEL, mips - 1);
+      gl.generateMipmap(gl.TEXTURE_2D);
+    }
+    GLTex.sampler(gl, desc.settings, mips);
     bmp.close();
     return new GLTex(gl, t, desc.width, desc.height, desc.name);
   }

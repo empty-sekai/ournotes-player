@@ -72,8 +72,10 @@ export class Live2DClip {
 export class Live2DFadeMotion {
   constructor(m, params) {
     this.name = m.MotionName;
+    this.objectName = m.m_Name ?? m.name ?? null;          // UnityEngine.Object.name ("<motion>.fade")
     this.fadeInTime = m.FadeInTime; this.fadeOutTime = m.FadeOutTime;
     this.length = m.MotionLength;
+    this.parameterIds = m.ParameterIds;
     this.pfit = m.ParameterFadeInTimes; this.pfot = m.ParameterFadeOutTimes;
     this.curveOf = new Map();
     m.ParameterIds.forEach((id, k) => {

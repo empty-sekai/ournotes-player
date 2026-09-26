@@ -1,10 +1,12 @@
 import { F } from "./core.js";
 import { applyState } from "./glsl.js";
-import { ease } from "./tween.js";
+import { AnimClip, Animator } from "./anim.js";
+import { easeF } from "./tween.js";
 
 // uGUI subset on WebGL2 with the game's UI shaders, for the live UI canvases (judgement text, combo counter,
-// canvas.js): RectTransform layout, Image simple / sliced meshes, sprites, CanvasGroup, CanvasScaler, layout groups,
-// canvas drawing, DOTween UI sequences, clip targets. uGUI behaviour follows the game's build
+// canvas.js) and the story's front canvas: RectTransform layout, Image simple / sliced meshes, sprites, CanvasGroup,
+// CanvasScaler, layout groups, canvas drawing, Animator clips of UI nodes (UIClip, UIAnimator), DOTween UI tweens
+// (UITween) and sequences, clip targets. uGUI behaviour follows the game's build
 // (uGUI 2.0) where it is managed code, else the uGUI reference sources; `ENGINE:` marks Unity's native parts.
 //
 // Coordinates: a canvas is laid out in its own units, y up (Unity). A node's rect is in its own local space with the
@@ -54,6 +56,49 @@ export const UI_CLIP_TARGET = {
   "Transform.localEulerAngles.y": (n, v) => { n.setEuler("y", v); },
   "Transform.localEulerAngles.z": (n, v) => { n.setEuler("z", v); },
 };
+
+// An Animator clip of the UI data (per-property curves on the animated node, AnimClip.fromCurves). Every property must
+// have a setter in UI_CLIP_TARGET; clips with a start time or animation events are not implemented.
+export class UIClip extends AnimClip {
+  constructor(clip) {
+    if (clip.startTime !== 0) throw new UIError(`clip ${clip.name}: start time ${clip.startTime}`);
+    if (clip.events && clip.events.length) throw new UIError(`clip ${clip.name}: animation events not implemented`);
+    for (const prop of Object.keys(clip.curves))
+      if (!UI_CLIP_TARGET[prop]) throw new UIError(`clip ${clip.name}: property ${prop} not implemented`);
+    super(AnimClip.fromCurves(clip));
+  }
+}
+
+// The Animator of a UI node: a one-layer AnimatorController without transitions or parameters (the story's front
+// canvas views) on Animator. ctrl = {name, defaultState, states: [{name, speed, clip, cycleOffset}]} with `clip` the
+// clip's name; clips: "<controller>/<clip>" -> UIClip. A state whose clip is not in `clips` is only allowed for the
+// empty "Idle" clips (AdvLocation / AdvTitle); such a state writes nothing.
+// ENGINE: what an empty state writes with Write Defaults is native; the states here write nothing (Write Defaults off).
+export class UIAnimator extends Animator {
+  constructor(node, ctrl, clips) {
+    const states = ctrl.states.map((s) => {
+      const key = `${ctrl.name}/${s.clip}`;
+      let clip = null;
+      if (s.clip && clips[key]) clip = clips[key];
+      else if (s.clip && s.clip !== "Idle") throw new UIError(`${node.path}: clip ${key} not in the data`);
+      if (s.cycleOffset) throw new UIError(`${ctrl.name}.${s.name}: cycle offset not implemented`);
+      return { name: s.name, speed: s.speed, clip, writeDefaults: false, transitions: [] };
+    });
+    const defaultState = states.findIndex((s) => s.name === ctrl.defaultState);
+    if (defaultState < 0) throw new UIError(`${ctrl.name}: no default state ${ctrl.defaultState}`);
+    super({ name: ctrl.name, states, defaultState, anyState: [], parameters: new Map() },
+          (b) => { const set = UI_CLIP_TARGET[b.prop]; return { set: (v) => set(node, v) }; });
+    this.node = node;
+    // Animator.speed starts at 1 (the Location / Title views' SetPlaybackSpeed changes it)
+  }
+
+  // SimpleAnimationTrigger.PlayAnimation -> Animator.CrossFade(state, _blendTime 0, layer 0, normalizedTimeOffset 0):
+  // an immediate switch (Animator.play)
+  play(name) {
+    if (!this.ctrl.states.some((s) => s.name === name)) throw new UIError(`${this.name}: no state ${name}`);
+    super.play(name);
+  }
+}
 
 // UnityEngine.Color -> Color32 (inlined in the game code): round half to even of clamp01(c) * 255 (float32 multiply)
 export const uiColor32 = (c) => [c.r, c.g, c.b, c.a].map((v) => {
@@ -462,6 +507,56 @@ export const UIDraw = {
   },
 };
 
+// ------------------------------------------------------------------- DOTween tweens and sequences of the story UI
+// One class for CanvasGroup.DOFade (a value tween, default ease) and a DOTweenSequence of callbacks only. Stepped by
+// the UI's own runner in the loop's "tweens" phase (DOTweenComponent.Update): UniTask's Update runner is injected first
+// in Unity's Update phase (PlayerLoopHelper.Initialize -> InsertRunner with injectOnFirst), so a tween started by a
+// command continuation gets its first DOTween update later in the same frame.
+// The position accumulates the scaled delta in float32 (DOTween keeps float positions) and completes when position >=
+// duration. Callbacks at position 0 fire on the first update after Play (Sequence.ApplyInternalCycle); the start value
+// of a value tween is read on that first update (startup).
+// runner: {active: Set} (stepped by its owner: for (const t of [...runner.active]) t.step(dt)).
+export class UITween {
+  constructor(runner, { duration, timeScale = 1, getFrom = null, to = 0, ease: easeId = 6, apply = null, at0 = [],
+                        onComplete = null }) {
+    this.runner = runner;
+    this.duration = F(duration); this.timeScale = timeScale;
+    this.getFrom = getFrom; this.from = 0; this.change = 0; this.to = to; this.ease = easeId; this.apply = apply; this.at0 = at0;
+    this.onComplete = onComplete;
+    this.position = 0; this.started = false; this.done = false;
+    this.promise = new Promise((res) => { this._resolve = res; });
+    runner.active.add(this);
+  }
+
+  get isActive() { return !this.done; }
+
+  step(dt) {
+    if (this.done) return;
+    const first = !this.started;
+    this.started = true;
+    if (first && this.getFrom) this.from = this.getFrom();
+    if (first) { this.from = F(this.from); this.change = F(F(this.to) - this.from); }     // SetChangeValue
+    this.position = F(this.position + F(F(dt) * this.timeScale));
+    const complete = this.position >= this.duration;
+    if (complete) this.position = this.duration;
+    if (first) for (const cb of this.at0) cb();
+    if (this.apply) {                                        // FloatPlugin: start + change x ease, INTERNAL_Zero for 0
+      const k = this.duration > 0 ? easeF(this.ease, this.position, this.duration) : 1;
+      this.apply(F(this.from + F(this.change * k)));
+    }
+    if (complete) { if (this.onComplete) this.onComplete(); this.finish(true); }
+  }
+
+  finish(completed) {
+    if (this.done) return;
+    this.done = true;
+    this.runner.active.delete(this);
+    this._resolve(completed);
+  }
+
+  kill() { this.finish(false); }
+}
+
 // =================================================================== live UI canvas
 // Scale clip targets, uncontrolled layout groups and the DOTween Sequence / Tweener model used by the judgement text
 // and the combo counter.
@@ -565,17 +660,9 @@ UILayout.rebuildUncontrolled = (n) => {
 // INTERNAL_Zero (value = end) for duration <= 0), Sequence.DoStartup / DoApplyTween, EaseManager formulas.
 export const DOT = { UPDATE: 0, GOTO: 1, EASE_ZERO: -1 };
 
-// DG.Tweening.Core.Easing.EaseManager.Evaluate for the eases used (float32), INTERNAL_Zero = 1
-export const dotEase = (id, time, duration, overshoot = 1.70158) => {
-  if (id === DOT.EASE_ZERO) return 1;
-  if (id === 1) return F(time / duration);
-  if (id === 6) { const t = F(time / duration); return F(-t * F(t - 2)); }                        // OutQuad
-  if (id === 27) {                                                                                 // OutBack
-    const t = F(F(time / duration) - 1);
-    return F(F(F(t * t) * F(F(F(overshoot + 1) * t) + overshoot)) + 1);
-  }
-  throw new UIError(`DOTween ease ${id} not implemented`);
-};
+// DG.Tweening.Core.Easing.EaseManager.Evaluate (float32; tween.js easeF), INTERNAL_Zero (DOT.EASE_ZERO) = 1
+export const dotEase = (id, time, duration, overshoot = 1.70158) =>
+  (id === DOT.EASE_ZERO ? 1 : easeF(id, time, duration, overshoot));
 
 export class DOTTween {                     // fields shared by Tweener and Sequence (DG.Tweening.Tween)
   constructor(duration) {

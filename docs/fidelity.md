@@ -180,6 +180,7 @@ Every `ENGINE:` note in `src/`, by file. `npm test` checks that this list matche
 **`src/engine/anim.js`**
 
 - Mecanim samples streamed clips natively; this is the cubic form of the stored keys.
+- Mecanim evaluates discrete curves natively; the step on the stored keys is the documented behaviour of
 - Mecanim's wrap of negative state time is native; positive modulo is the documented looping behaviour.
 - AnimationEvent dispatch is native; (prev, cur] window, fired after the frame's pose (documented).
 - the Animator update is native; advance-then-sample is the order assumed here.
@@ -253,14 +254,29 @@ Every `ENGINE:` note in `src/`, by file. `npm test` checks that this list matche
 
 **`src/engine/postfx.js`**
 
+- Matrix4x4.Inverse is native; here the cofactor inverse in double precision, stored as float32.
+- Texture2D.SetPixels / Apply convert the curve to half floats natively; here the GL upload converts them.
+- Mathf.GammaToLinearSpace is native: sRGB curve below 1, exactly 1 at 1, powf(c, 2.2) above 1.
+- Mathf.Cos / Sin / Pow / Sqrt / Tan use the device's libm; here double precision rounded to float32.
+- GL.GetGPUProjectionMatrix leaves an OpenGL ES projection unchanged.
 - Unity's Random is native (see random.js); the offsets match the game's only in distribution.
+- Application.isPlaying is true (motion blur runs).
 
 **`src/engine/random.js`**
 
 - Rand is native; this is the generator family and float mapping Unity is known to use.
 
+**`src/engine/texture.js`**
+
+- a mipmapped texture samples the mip chain stored in the asset; the data holds its base level only, so the
+
+**`src/engine/timestretch.js`**
+
+- CRI's time-stretch DSP is native; WSOLA (waveform-similarity overlap-add) stands in for it: 40 ms Hann
+
 **`src/engine/ugui.js`**
 
+- what an empty state writes with Write Defaults is native; the states here write nothing (Write Defaults off).
 - Sprites.DataUtility.GetOuterUV / GetInnerUV / GetPadding are native; these are Unity's sprite data formulas.
 - DataUtility.GetMinSize is native; taken as border.x + border.z (Unity's definition for bordered sprites).
 - CanvasRenderer applies the inherited CanvasGroup alpha natively; here a float multiply of Color32 alpha / 255.
@@ -357,6 +373,10 @@ Every `ENGINE:` note in `src/`, by file. `npm test` checks that this list matche
 - the mask RenderTexture's filter and wrap modes are never set (engine defaults); bilinear and clamped here.
 - _ProjectionParams while a command buffer draws into a render texture is set natively; x = 1 here.
 
+**`src/live2d/lipsync.js`**
+
+- Fwk AppTimeManager.GetSystemDeltaTime is Time.deltaTime; the timers here use the loop's deltaTime.
+
 **`src/live2d/math.js`**
 
 - AnimationCurve.Evaluate is native; Unity's documented Hermite form, float32 in source order.
@@ -366,6 +386,11 @@ Every `ENGINE:` note in `src/`, by file. `npm test` checks that this list matche
 - Mecanim samples streamed clips natively; this is the cubic form of the stored keys, float32 in source order.
 - the Animator leaves a binding without a transform at its path unbound.
 - what the Animator samples past a clip playable's duration is native; wrapped around the length here.
+
+**`src/live2d/motionsync.js`**
+
+- CRI's capture callback delivers the output in the audio thread's blocks; the voice source's pull() gives
+- the game runs the native build of the Core, the page its WebAssembly build of the same version; the two
 
 **`src/live2d/physics.js`**
 

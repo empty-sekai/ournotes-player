@@ -1,4 +1,3 @@
-import { join } from "../engine/core.js";
 import { applyState } from "../engine/glsl.js";
 import { GLTarget, GLTex } from "../engine/texture.js";
 
@@ -16,23 +15,8 @@ export const LIT_SHADER = "Live2D Cubism/Lit-URP-ADV-optimize";
 export const MASK_SHADER = "Live2D Cubism/Mask";
 export const MASK_SIZE = 1024;
 
-// A drawable's main texture. A mipmapped texture (mipCount > 1) is uploaded at level 0 and its other levels are
-// generated from it: the data holds the base level of the game's stored mip chain only.
-const loadTexture = async (gl, dir, d, assets) => {
-  if (!(d.mipCount > 1)) return GLTex.load(gl, dir, d, assets);
-  const bmp = await assets.image(join(dir, d.texture));
-  if (bmp.width !== d.width || bmp.height !== d.height) throw new Error(`${d.name}: size mismatch`);
-  const t = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, t);
-  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-  gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, bmp);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAX_LEVEL, d.mipCount - 1);
-  gl.generateMipmap(gl.TEXTURE_2D);
-  GLTex.sampler(gl, d.settings, d.mipCount);
-  bmp.close();
-  return new GLTex(gl, t, d.width, d.height, d.name);
-};
+// A drawable's main texture (a mipmapped one as GLTex.load describes).
+const loadTexture = (gl, dir, d, assets) => GLTex.load(gl, dir, d, assets);
 
 export class Live2DDrawing {
   // lib: the ShaderLib of the model's shaders; resources: {cubismMask, cubismMaskCulling} materials;
@@ -140,8 +124,9 @@ export class Live2DDrawing {
       }
   }
 
-  // the MaterialPropertyBlock of a renderer. _RimIntensity is 0.9: Live2DCharacter.Init sets the rim intensity (0.2)
-  // and then the rim threshold (0.9), and SetRimLightThreshold passes its value to CubismRenderController.SetRimIntensity.
+  // the MaterialPropertyBlock of a renderer. The rim and shadow values are the character's (character.js rim,
+  // shadowIntensity): _RimIntensity is the rim threshold, as SetRimLightThreshold passes its value to
+  // CubismRenderController.SetRimIntensity after the intensity; _RimColor is set once SetRimLightColor ran.
   _mpb(r) {
     const ch = this.ch, mt = ch.multiplyTexture;
     const sheet = {
@@ -150,11 +135,13 @@ export class Live2DDrawing {
       cubism_MultiplyColor: r.multiplyColor,
       cubism_ScreenColor: r.screenColor,
       _LightingEnabled: r.lightingEnabled,
-      _RimLightingEnabled: 0, _RimIntensity: 0.9, _RimSmooth: 0.05, _ShadowIntensity: 0,
+      _RimLightingEnabled: ch.rim.enabled ? 1 : 0, _RimIntensity: ch.rim.threshold, _RimSmooth: ch.rim.smoothness,
+      _ShadowIntensity: ch.shadowIntensity,
       _UseMultiplyTex: 1, _MultiplyTex: mt.texture || this.white,
       _MultiplyUV: [mt.uv.x, mt.uv.y, mt.uv.z, mt.uv.w], _MultiplyTexIntensity: mt.intensity,
       _MultiplyTexAmplitude: [mt.amplitude.x, mt.amplitude.y, 0, 0], _MultiplyTexFrequency: mt.frequency,
     };
+    if (ch.rim.color) sheet._RimColor = ch.rim.color;
     if (r.maskTile) {
       sheet.cubism_MaskTexture = this.maskRT;
       sheet.cubism_MaskTile = r.maskTile;

@@ -2,9 +2,13 @@ import { F } from "../engine/core.js";
 import { quat } from "../engine/math.js";
 import { Prefab } from "../engine/prefab.js";
 import { UnityRandom } from "../engine/random.js";
+import { EASE } from "../engine/tween.js";
 import { CUBISM, CubismModel } from "./cubism.js";
+import { Live2DLipSyncController, lipSyncProfile } from "./lipsync.js";
 import { Live2DParameterStore, Live2DParameters, clampF, easeSine, hermite } from "./math.js";
 import { Live2DClip, Live2DFadeMotion } from "./motion.js";
+import { CubismMotionSyncController } from "./motionsync.js";
+import { Live2DParameterLoopController } from "./paramloop.js";
 import { Live2DPhysics } from "./physics.js";
 
 // Live2DCharacter: one Live2D model as the game's ADV runs it. The game layer (Live2DAnimation.Live2DCharacter and
@@ -13,23 +17,31 @@ import { Live2DPhysics } from "./physics.js";
 // double-buffered meshes, sorting, colours and the mask layout. Simulation only; drawing is in drawing.js.
 //
 // One frame, driven by the owner through a PlayerLoop (hooks in Unity phase order):
-//   update       update()          Live2DCharacterController.OnUpdate: motion end, model read-back, idle replay
+//   update       update()          Live2DCharacterController.OnUpdate: parameter loop time, eye-blink stop transition,
+//                                  motion end, model read-back, voice PCM for lip sync, idle replay
 //   animation    animatorUpdate()  the PlayableGraph (DirectorUpdateAnimation) writes the newest clip's values
-//   lateUpdate   lateUpdate()      Live2DCharacter.OnLateUpdate: the CubismUpdateController chain, auto eye blink
+//   lateUpdate   lateUpdate()      Live2DCharacter.OnLateUpdate: the CubismUpdateController chain, auto eye blink,
+//                                  lip sync, the angle and look overrides
 //   preLateEnd   modelUpdate()     CubismModel.OnModelUpdate: parameters to the Core, csmUpdateModel
 // A frame displays the Core result of the parameters finished two LateUpdates earlier (the game's latency).
 //
-// Lip sync and MotionSync (voice-driven mouth), the look / angle overrides and the eye-blink stop override are not
-// part of this runtime; ParamMouthOpenY follows CubismMouthController.MouthOpening as it does without lip sync.
+// The story's calls into the game layer are here too: lip sync (lipsync.js; voice MotionSync through motionsync.js,
+// timed pseudo lip sync, CRI Lips, manual mouth opening), the angle and look overrides with their tweens, the
+// eye-blink stop override, the parameter loop (paramloop.js), pause / resume with the requests made while paused,
+// motion speed, seeking the playing motion, sorting order, layer, parent and brightness. Each is inert until called:
+// the model viewer calls none of them.
 //
 // The managed math is float32 without FMA; F (Math.fround) is applied in source order.
 
 export class Live2DCharacter {
   // prefab: the exported model prefab; mocBytes: the moc3 (ArrayBuffer); loop: the PlayerLoop that drives the model.
-  // opts.random: the UnityRandom stream of the auto eye blink (default: a stream seeded from the clock).
-  constructor(prefab, mocBytes, loop, { random = null } = {}) {
+  // opts.random: the UnityRandom stream (UnityEngine.Random) of the auto eye blink and the pseudo lip sync (default:
+  // a stream seeded from the clock). opts.motionSync: the MotionSync Core (motionsync.js motionSyncCore()) for voice
+  // lip sync, or null.
+  constructor(prefab, mocBytes, loop, { random = null, motionSync = null } = {}) {
     this.loop = loop;
     this.random = random || new UnityRandom(Date.now() >>> 0);
+    this.motionSyncCore = motionSync;
     this.name = prefab.nodes[0].name;
     this.core = new CubismModel(mocBytes);
     try {
@@ -96,7 +108,9 @@ export class Live2DCharacter {
     this.harmonicTimescales = hc.ChannelTimescales.slice();
 
     const blink = comp("CubismAutoEyeBlinkInput");
+    // baseTimescale: the Timescale that SetBlinkingSpeed scales
     this.blink = { mean: blink.Mean, dev: blink.MaximumDeviation, timescale: blink.Timescale,
+                   baseTimescale: blink.Timescale,
                    isBlinking: true, phase: 0, nbt: 0, closing: 1.0, closed: 0.5, opening: 1.5, ut: 0, ss: 0 };
     if (comp("CubismEyeBlinkController").BlendMode !== 2) throw new Error("eye blink blend mode not implemented");
     this.eyeOpening = comp("CubismEyeBlinkController").EyeOpening;
@@ -104,6 +118,12 @@ export class Live2DCharacter {
     if (mouth.BlendMode !== 0) throw new Error("mouth blend mode not implemented");
     this.mouthOpening = mouth.MouthOpening;
     this.mouthOpenY = this.params.index.has("ParamMouthOpenY") ? this.params.idx("ParamMouthOpenY") : -1;
+    // CubismMouthController.Destinations (Refresh: the parameters tagged CubismMouthParameter) once
+    // Live2DCharacter.Init ran RemoveMouthParametersExceptMouthOpenY, which destroys the tag on every other parameter:
+    // ParamMouthOpenY when it carries the tag, else none. (EnsureMouthParameter, which adds the tag, is called by the
+    // live stage's background characters only.)
+    this.mouthDestinations = tagged("CubismMouthParameter").filter((x) => x.id === "ParamMouthOpenY")
+      .map((x) => this.params.idx(x.id));
     if ([...this.prefab.nodes.values()].some((e) => e.node.components.some((c) => c.class === "CubismPosePart")))
       throw new Error("pose parts not implemented");
 
@@ -116,6 +136,8 @@ export class Live2DCharacter {
     this.showing = false; this.pausing = false; this.ignoreAllUpdate = false;
     this.warmupState = 0; this.initialized = false;
     this.motionSpeed = 1; this.isAutoEyeBlinking = true; this.isCurrentMotionDefault = false;
+    // the viewer's motion notifications: onMotion("start", {name, loop}) / onMotion("end", {name}) (_motionEvent)
+    this.onMotion = null;
     this.lightingEnabled = false; this.disableLightingForMultiply = false; this.postCompositeBrightness = false;
     this.brightness = 1;
     this.maskEnabled = true;
@@ -132,6 +154,52 @@ export class Live2DCharacter {
     this.model = { ignore: false, wasJustEnabled: false, lastTick: -1, didExecute: false, dyn: null };
     this._initRender(comp("CubismRenderController"));
     this._initMasks();
+    this._initGameLayer(rootPath, tagged, fl, ch);
+  }
+
+  // The rest of Live2DCharacter.Init: the override parameters (a parameter the model lacks is skipped wherever it
+  // would be written), the lip sync controller over the model's MotionSync controller, the eye-blink stop targets,
+  // the parameter loop controller, the rim light and shadow values and the state of the game layer's overrides.
+  _initGameLayer(rootPath, tagged, fadeList, ch) {
+    const opt = (id) => (this.params.index.has(id) ? this.params.idx(id) : -1);
+    this.mouthForm = opt("ParamMouthForm");
+    this.angleXParam = opt("ParamAngleX");
+    this.bodyAngleXParam = opt("ParamBodyAngleX");
+    this.bodyAngleXAddParam = opt("ParamBodyAngleXAdd");
+    this.eyeBallXParam = opt("ParamEyeBallX");
+    this.eyeBallYParam = opt("ParamEyeBallY");
+    const head = `${rootPath}/Anchors/Head`;
+    this.headAnchor = this.prefab.nodes.has(head) ? this.prefab.transform(head) : null;
+    this.mouthControllerEnabled = true;            // CubismMouthController.enabled
+    this.motionSync = CubismMotionSyncController.fromPrefab((cls) => this.prefab.components(rootPath, cls), this.params,
+                                                            this.loop, this.motionSyncCore);
+    // ResolveAdvLipSyncPresentationProfile counts the CubismMouthParameter components before
+    // RemoveMouthParametersExceptMouthOpenY keeps the one on ParamMouthOpenY
+    this.lip = new Live2DLipSyncController(this, lipSyncProfile(tagged("CubismMouthParameter").length));
+    this.lip.initMotionSync();                     // SetMotionSyncController
+    // CollectEyeBlinkStopNeutralizeTargets: the eye-blink parameters, then ParamEyeLOpen and ParamEyeROpen, once each
+    const eb = [...this.eyeBlinkParams, opt("ParamEyeLOpen"), opt("ParamEyeROpen")].filter((i) => i >= 0);
+    this.eyeBlinkStop = { stopped: false, wasAuto: false, start: 0, elapsed: 0, duration: 0, targets: [...new Set(eb)] };
+    this.defaultFadeMotionName = `${this.defaultMotionName}.fade`;
+    this.paramLoop = new Live2DParameterLoopController(fadeList.CubismFadeMotionObjects, this.params, this.store);
+    this.breathEnabled = true;                     // _playingHarmonicMotion
+    // Live2DCharacter _isOverrideRotate, _isAdditiveOverrideRotate, _angleX, _bodyAngleX and the additive amounts
+    // applied last (_appliedAdditiveAngleX, _appliedAdditiveBodyAngleX); the controller's angle tweens
+    this.angle = { override: false, additive: false, x: 0, bodyX: 0, appliedX: 0, appliedBodyX: 0, tweens: [] };
+    // _isLookEnabled, _lookX, _lookY, _originalLookX, _originalLookY; the controller's look tweens
+    this.look = { enabled: false, x: 0, y: 0, ox: 0, oy: 0, tweens: [] };
+    // SetPendingMotion / SetPendingExpression / SetPendingParameterLoop: requests made while paused
+    this.pending = { motion: null, expression: null, paramLoop: null };
+    this.active = this.root.activeSelf !== false;  // the GameObject's activeSelf (Show / Hide)
+    this.alive = true;
+    // Init: SetRimLightEnabled, SetRimLightIntensity, SetRimLightThreshold, SetRimLightSmoothness and
+    // SetShadowIntensity with the component's values (each clamped to [0, 1]). The intensity and the threshold both
+    // go to CubismRenderController.SetRimIntensity, so the renderers keep the threshold. _RimColor stays the
+    // material's until SetRimLightColor.
+    this.rim = { enabled: !!ch._isRimLightEnabled, intensity: clamp01(F(ch._rimLightIntensity ?? 0)),
+                 threshold: clamp01(F(ch._rimLightThreshold ?? 0)), smoothness: clamp01(F(ch._rimLightSmoothness ?? 0)),
+                 color: null };
+    this.shadowIntensity = clamp01(F(ch._shadowIntensity ?? 0));   // not serialised: 0
   }
 
   // ------------------------------------------------------------------------------------------------ CubismModel
@@ -395,23 +463,37 @@ export class Live2DCharacter {
     }
   }
 
-  // Live2DCharacter.PlayMotion
+  // Live2DCharacter.PlayMotion (a request while paused is kept and played by Resume)
   _charPlayMotion(name, fade) {
     const clip = this.clips.get(name);
     if (!clip || !this.showing) return;
-    if (this.pausing) throw new Error("a motion while paused is not implemented");
+    if (this.pausing) { this.pending.motion = { name, fade }; return; }
+    if (this.angle.override && this.angle.additive) this._restoreAdditiveOverrideAngles();
     this._playAnimation(clip, fade);
     this.isCurrentMotionDefault = name === this.defaultMotionName;
     this.blink.isBlinking = false;
+    this._motionEvent("start", name);
   }
 
   // Live2DCharacter.Idle
   _idle(fade) {
     const clip = this.clips.get(this.defaultMotionName);
     if (!clip || !this.showing) return;
+    if (this.angle.override && this.angle.additive) this._restoreAdditiveOverrideAngles();
     this._playAnimation(clip, fade);
     this.isCurrentMotionDefault = true;
     this.blink.isBlinking = this.isAutoEyeBlinking;
+    this._motionEvent("start", this.defaultMotionName);
+  }
+
+  // A motion started on the motion layer (Live2DCharacter.PlayMotion / Idle; a request made while paused starts on
+  // resume), and a playing motion reached its end time (CubismMotionLayer.Update -> OnPlayMotionFinished: its length,
+  // or the end of its fade-out under a newer motion). `loop`: it is replayed when it ends (LoopMotion, or the default
+  // motion, which HandlingLoopMotion replays).
+  _motionEvent(type, name) {
+    if (!this.onMotion) return;
+    if (type === "start") this.onMotion(type, { name, loop: name === this.defaultMotionName || this.ctl.loopMotion });
+    else this.onMotion(type, { name });
   }
 
   // CubismMotionLayer.Update: motion end (Time.time > EndTime) -> Live2DCharacter.OnPlayMotionFinished
@@ -423,6 +505,7 @@ export class Live2DCharacter {
       if (this.loop.time > pm.endTime) {
         pm.endInvoked = true;
         this.blink.isBlinking = this.isAutoEyeBlinking;
+        this._motionEvent("end", pm.clip.name);
       } else all = false;
     }
     if (all) this.layer.finished = true;
@@ -438,6 +521,62 @@ export class Live2DCharacter {
     const a = this.anim;
     if (!this.layer.paused) a.time += this.loop.deltaTime * a.speed;
     a.clip.write(a.time, this.params.value, this);
+  }
+
+  // Live2DCharacter.ForceEvaluateMotionGraph: PlayableGraph.Evaluate() writes the newest clip at its current time
+  _forceEvaluateMotionGraph() {
+    if (this.anim) this.anim.clip.write(this.anim.time, this.params.value, this);
+  }
+
+  // Live2DCharacter.SeekPlayingMotion: the newest clip playable moves forward to min(seconds, length - 0.0001) (never
+  // back), and AdvanceMotionFadeElapsedTime moves the newest fade motion's fade-in start back to match
+  _seekPlayingMotion(seconds) {
+    if (!(0 < seconds) || !this.anim) return;
+    const a = this.anim, end = F(a.clip.length + F(-0.0001));
+    const s = end <= seconds ? end : seconds;
+    if (!(a.time < s)) return;
+    a.time = s;
+    const L = this.layer.list;
+    if (!L.length) return;
+    const pm = L[L.length - 1];
+    const v = F(this.loop.time - F(s / (pm.speed <= 0 ? 1 : pm.speed)));
+    if (v < pm.fadeInStartTime) pm.fadeInStartTime = v;
+  }
+
+  // CubismMotionLayer.PauseAnimation (Time.time kept; the root playable's speed 0)
+  _pauseLayer() {
+    const Y = this.layer;
+    if (Y.paused || Y.finished) return;
+    Y.paused = true;
+    Y.pauseTime = this.loop.time;
+  }
+
+  // CubismMotionLayer.ResumeAnimation: every playing motion's times move by the paused time
+  _resumeLayer() {
+    const Y = this.layer;
+    if (!Y.paused || Y.finished) return;
+    const d = F(this.loop.time - Y.pauseTime);
+    for (const pm of Y.list) {
+      pm.startTime = F(d + pm.startTime);
+      pm.endTime = F(d + pm.endTime);
+      pm.fadeInStartTime = F(d + pm.fadeInStartTime);
+    }
+    Y.paused = false;
+  }
+
+  // CubismMotionLayer.SetStateSpeed for every playing motion (CubismMotionController.SetAnimationSpeed): end and
+  // fade-in start rescaled around Time.time, unless the motion has run its length; the newest state plays at the
+  // new speed
+  _setLayerSpeed(speed) {
+    const t = this.loop.time;
+    for (const pm of this.layer.list) {
+      const M = pm.motion, old = pm.speed;
+      if (0 < M.length && M.length <= F(old * F(t - pm.startTime))) continue;
+      pm.endTime = F(t + F(F(old * F(pm.endTime - t)) / speed));
+      pm.fadeInStartTime = F(t - F(F(old * F(t - pm.fadeInStartTime)) / speed));
+      pm.speed = speed;
+      if (this.anim) this.anim.speed = speed;
+    }
   }
 
   // CubismFadeController.OnLateUpdate (order 100): while the newest motion fades in, every motion's curves are
@@ -531,11 +670,11 @@ export class Live2DCharacter {
     this.store.save();
   }
 
-  // Live2DCharacter.PlayExpression
+  // Live2DCharacter.PlayExpression (a request while paused is kept and played by Resume)
   _charPlayExpression(name, fade) {
     const idx = this.expressionIndex.get(name);
     if (idx === undefined || !this.showing) return;
-    if (this.pausing) throw new Error("an expression while paused is not implemented");
+    if (this.pausing) { this.pending.expression = { name, fade }; return; }
     this._resetExpressionParameters();
     this.expr.fadeIn = fade;
     this.expr.current = idx;
@@ -584,26 +723,181 @@ export class Live2DCharacter {
     }
   }
 
+  // --------------------------------------------------------------------------------------------- eye-blink stop
+  // The eye-blink stop override: the auto eye blink off, EyeOpening eased from its value at the stop to open over the
+  // transition, and (order 149) the eye parameters pulled to their defaults while only the default motion plays.
+  _eyeBlinkStopRate() {
+    const S = this.eyeBlinkStop;
+    if (!(0 < S.duration)) return 1;
+    const r = F(S.elapsed / S.duration);
+    return 0 <= r ? (r <= 1 ? r : 1) : 0;
+  }
+
+  _advanceEyeBlinkStopTransition() {    // Live2DCharacter.AdvanceEyeBlinkStopTransition
+    const S = this.eyeBlinkStop;
+    if (S.stopped && S.elapsed < S.duration) S.elapsed = F(S.elapsed + F(this.loop.deltaTime * this.motionSpeed));
+  }
+
+  _applyEyeBlinkStopOverride() {        // Live2DCharacter.ApplyEyeBlinkStopOverride
+    const S = this.eyeBlinkStop;
+    if (!S.stopped) return;
+    const a = this._eyeBlinkStopRate(), w = 0 <= a ? a : 0;
+    this.eyeOpening = F(S.start + F(w * F(1 - S.start)));
+  }
+
+  _clearEyeBlinkStopOverride() {        // Live2DCharacter.ClearEyeBlinkStopOverride
+    const S = this.eyeBlinkStop;
+    if (!S.stopped) return;
+    S.stopped = false; S.elapsed = 0; S.duration = 0;
+    this.isAutoEyeBlinking = S.wasAuto;
+    this.blink.isBlinking = (this.anyMotionPlaying() && !this.isCurrentMotionDefault) ? false : this.isAutoEyeBlinking;
+  }
+
+  // Live2DCharacter.IsDefaultFadeMotion: the fade motion object named DefaultMotionName + ".fade" (ordinal)
+  _isDefaultFadeMotion(M) { return !!M && M.objectName === this.defaultFadeMotionName; }
+
+  // Live2DCharacter.HasLatestDefaultMotionOverriddenNeutralizeTargets: the newest motion is the default one and
+  // every neutralize target has finished its fade-in and is not fading out
+  _latestDefaultOverridesTargets(latest) {
+    const M = latest.motion;
+    if (!this._isDefaultFadeMotion(M)) return false;
+    const pfit = M.pfit, pfot = M.pfot;
+    if (!pfit || !pfot) return false;
+    const t = this.loop.time;
+    const el = F(F(t - latest.fadeInStartTime) * latest.speed), fin = latest.fadeInTime;
+    const outDone = (M.fadeOutTime <= 0 || latest.endTime < 0) ? true : M.fadeOutTime <= F(latest.endTime - t);
+    for (const i of this.eyeBlinkStop.targets) {
+      const k = M.parameterIds.indexOf(this.params.ids[i]);     // CubismFadeMotionData.GetParameterIdIndex
+      if (k < 0 || k >= pfit.length || k >= pfot.length) return false;
+      const pf = pfit[k];
+      let lim = fin;
+      if ((pf < 0 || ((lim = pf), 1.4e-45 <= pf)) && el < lim) return false;
+      const po = pfot[k];
+      if (0 <= po) {
+        if (1.4e-45 <= po) { const d = F(latest.endTime - el); if (0 <= d && d < po) return false; }
+      } else if (!outDone) return false;
+    }
+    return true;
+  }
+
+  // Live2DCharacter.HasNonDefaultMotionFadeContribution
+  _hasNonDefaultMotionFadeContribution() {
+    const L = this.layer.list;
+    if (!L.length || this._latestDefaultOverridesTargets(L[L.length - 1])) return false;
+    return L.some((pm) => pm.motion && !this._isDefaultFadeMotion(pm.motion));
+  }
+
+  _neutralizeDefaultMotionEyeBlink() {  // Live2DCharacter.NeutralizeDefaultMotionEyeBlink (order 149)
+    const S = this.eyeBlinkStop;
+    if (!S.stopped || !this.isCurrentMotionDefault || !S.targets.length || this._hasNonDefaultMotionFadeContribution()) return;
+    const a = this._eyeBlinkStopRate(), w = 0 <= a ? a : 0, P = this.params;
+    for (const i of S.targets) { const v = P.value[i]; P.override(i, F(v + F(w * F(P.def[i] - v))), 1); }
+  }
+
+  // ------------------------------------------------------------------------------------------ angle and look
+  // Live2DCharacter.ClampParameter after a raw Value write (a parameter the model lacks is skipped)
+  _setParam(i, v) {
+    const P = this.params;
+    P.value[i] = v;
+    P.value[i] = clampF(P.value[i], P.min[i], P.max[i]);
+  }
+
+  // Live2DCharacter.RestoreAdditiveOverrideAngles: the additive amounts applied last are taken back
+  _restoreAdditiveOverrideAngles() {
+    const A = this.angle, v = this.params.value, ax = this.angleXParam, bx = this.bodyAngleXParam;
+    if (A.appliedX !== 0 && ax >= 0) { this._setParam(ax, F(v[ax] - A.appliedX)); A.appliedX = 0; }
+    if (this.bodyAngleXAddParam < 0) {
+      if (A.appliedBodyX === 0 || bx < 0) return;
+      this._setParam(bx, F(v[bx] - A.appliedBodyX));
+    }
+    A.appliedBodyX = 0;
+  }
+
+  _updateAngle() {                      // Live2DCharacter.OnUpdateAngle
+    const A = this.angle, v = this.params.value;
+    const ax = this.angleXParam, bx = this.bodyAngleXParam, add = this.bodyAngleXAddParam;
+    if (!A.override) return;
+    if (!A.additive) {
+      if (ax >= 0) this._setParam(ax, A.x);
+      if (bx >= 0) this._setParam(bx, A.bodyX);
+      if (add >= 0) this._setParam(add, A.bodyX);
+      return;
+    }
+    this._restoreAdditiveOverrideAngles();
+    if (ax >= 0) { A.appliedX = A.x; this._setParam(ax, F(A.x + v[ax])); }
+    if (add < 0) {
+      if (bx < 0) return;
+      A.appliedBodyX = A.bodyX;
+      this._setParam(bx, F(A.bodyX + v[bx]));
+    } else {
+      A.appliedBodyX = 0;
+      this._setParam(add, A.bodyX);
+    }
+  }
+
+  _updateLook() {                       // Live2DCharacter.OnUpdateLook
+    const L = this.look;
+    if (!L.enabled) return;
+    if (this.eyeBallXParam >= 0) this._setParam(this.eyeBallXParam, L.x);
+    if (this.eyeBallYParam >= 0) this._setParam(this.eyeBallYParam, L.y);
+  }
+
+  _setOverrideRotate(value) {           // Live2DCharacter.set_IsOverrideRotate
+    const A = this.angle;
+    if (A.override === value) return;
+    if (!value) {
+      if (A.additive) this._restoreAdditiveOverrideAngles();
+      A.appliedX = 0; A.appliedBodyX = 0;
+    }
+    A.override = value;
+  }
+
+  // the controller's angle / look cancellation token: a new request or a reset kills the running tweens
+  // (TweenCancelBehaviour.KillAndCancelAwait)
+  _killTweens(s) { const ts = s.tweens; s.tweens = []; for (const t of ts) t.kill(); }
+
+  // the controller's angle / look tweens: DOTween.To on the float fields (FloatPlugin)
+  _tweenPair(state, [getA, setA, toA], [getB, setB, toB], duration, ease) {
+    const tw = this.loop.tweens;
+    const a = tw.toFloat(getA, toA, duration, ease, setA), b = tw.toFloat(getB, toB, duration, ease, setB);
+    state.tweens = [a, b].filter((t) => !t.done);
+    return Promise.all([a.promise, b.promise]).then(([x, y]) => x && y);
+  }
+
   // ------------------------------------------------------------------------------------------------- frame phases
   _gate() { return !(this.ignoreAllUpdate || this.pausing || !this.showing || this.warmupState <= 1); }
 
   _onUpdateInternal() {                 // Live2DCharacter.OnUpdateInternal
+    if (this.angle.override && this.angle.additive) this._restoreAdditiveOverrideAngles();
     this._layerUpdate();
     this._modelOnUpdate();
+    this.lip.onUpdate();
   }
 
-  _onLateUpdateInternal() {             // Live2DCharacter.OnLateUpdateInternal: the CubismUpdateController chain
+  _onLateUpdateInternal() {             // Live2DCharacter.OnLateUpdateInternal
     const P = this.params;
+    this.lip.onPreUpdate();
+    this._applyEyeBlinkStopOverride();
+    // the CubismUpdateController chain in execution order
     this._fade();                                                  // 100
+    this._neutralizeDefaultMotionEyeBlink();                       // 149 (eye-blink stop neutralizer)
     this.store.save();                                             // 150
     this._expressionUpdate();                                      // 300
+    this.paramLoop.lateUpdate();                                   // 350
     for (const i of this.eyeBlinkParams) P.multiply(i, this.eyeOpening, 1);   // 400
-    if (this.mouthOpenY >= 0) P.override(this.mouthOpenY, this.mouthOpening, 1);  // 500
+    if (this.mouthControllerEnabled) for (const i of this.mouthDestinations) P.override(i, this.mouthOpening, 1);   // 500
+    if (this.motionSync) this.motionSync.lateUpdate();             // 501
     this._harmonicUpdate();                                        // 600
+    if (!this.pausing) this.lip.managedLateUpdate(P, this.mouthOpenY, this.mouthForm);   // 799 (AdvLipSyncLateApplier)
     if (this.physics) this.physics.evaluate(this.loop.deltaTime); // 800
     this._renderLateUpdate();                                      // 10000
     this._maskLateUpdate();                                        // 10100
-    if (!this.pausing) this._blinkUpdate();                        // CubismAutoEyeBlinkInput.OnLateUpdate
+    if (!this.pausing) {
+      this._blinkUpdate();                                         // CubismAutoEyeBlinkInput.OnLateUpdate
+      this.lip.lateUpdate();                                       // Live2DLipSyncController.OnLateUpdate
+    }
+    this._updateAngle();
+    this._updateLook();
   }
 
   _renderLateUpdate() {                 // _LightingEnabled per renderer (ApplyLightingState)
@@ -617,10 +911,12 @@ export class Live2DCharacter {
     }
   }
 
-  // Live2DCharacterController.OnUpdate (Update phase)
+  // Live2DCharacterController.OnUpdate (Update phase) with Live2DCharacter.OnUpdate
   update() {
     if (!this.initialized || !this.showing) return;
     if (!this._gate()) return;
+    this.paramLoop.advanceTime(F(this.loop.deltaTime * this.motionSpeed));
+    this._advanceEyeBlinkStopTransition();
     this.model.ignore = false;
     this._onUpdateInternal();
     if (!this.anyMotionPlaying()) this._handlingLoopMotion();
@@ -648,7 +944,7 @@ export class Live2DCharacter {
     this.root.localRotation = quat.identity();
     this.setUsePostCompositeBrightness(false);
     this.blink.nbt = F(this.blink.mean + this.random.range(-this.blink.dev, this.blink.dev));   // Start
-    this.harmonicTimescales[0] = 1;
+    this.setBreathMotionEnabled(true);
     // Warmup
     this.warmupState = 1;
     this._show(); this._idle(-1); this._charPlayExpression(this.defaultExpressionName, -1);
@@ -666,10 +962,23 @@ export class Live2DCharacter {
     this.setIgnoreAllUpdate(true);
   }
 
-  _show() {                             // Live2DCharacter.Show (the components' OnEnable rebuild the motion graph)
-    this.showing = true; this.pausing = false;
-    this.layer = { list: [], finished: true, paused: false };
-    this.anim = null;
+  // Live2DCharacter.Show: ShowRenderer, the GameObject activated (the components' OnEnable rebuild the motion graph
+  // when it was inactive), ClearPauseState(true)
+  _show() {
+    this.showing = true;
+    if (!this.active) { this.layer = { list: [], finished: true, paused: false }; this.anim = null; this.active = true; }
+    this._clearPauseState(true);
+  }
+
+  // Live2DCharacter.ClearPauseState: a pause ends without playing the requests made during it
+  _clearPauseState(resumeHarmonicMotion) {
+    if (this.pausing) {
+      this.pausing = false;
+      this._resumeLayer();
+      this.model.ignore = this.ignoreAllUpdate;
+    }
+    if (resumeHarmonicMotion && this.breathEnabled) this.harmonicTimescales[0] = 1;
+    this.pending = { motion: null, expression: null, paramLoop: null };
   }
 
   // Live2DCharacterController.Show: the motion (default if empty) and the expression (default if empty)
@@ -680,14 +989,16 @@ export class Live2DCharacter {
   }
 
   hide() {                              // Live2DCharacterController.Hide -> Live2DCharacter.Hide
-    this.pausing = false;
-    this.blink.isBlinking = (this.anyMotionPlaying() && !this.isCurrentMotionDefault) ? false : this.isAutoEyeBlinking;
+    this._clearPauseState(false);
+    this.paramLoop.stopImmediately();
+    this._clearEyeBlinkStopOverride();
     this.isCurrentMotionDefault = false;
     this._resetExpressionParameters();
-    const ig = this.model.ignore;
+    const ig = this.model.ignore;       // FlushExpressionResetToDrawableState
     this.forceModelUpdate();
     this.model.ignore = ig;
-    this.showing = false;
+    this.showing = false;               // HideRenderer
+    this.active = false;                // SetActive(false): OnDisable destroys the motion graph
     this.layer = { list: [], finished: true, paused: false };
     this.anim = null;
     this.ctl.hasAppliedExpression = false;
@@ -727,10 +1038,284 @@ export class Live2DCharacter {
   setLightingEnabled(flag) { this.lightingEnabled = flag; this._renderLateUpdate(); }
   setDisableLightingForMultiplyBlendDrawables(flag) { this.disableLightingForMultiply = flag; this._renderLateUpdate(); }
   setPhysicsEnabled(flag) { if (this.physics) this.physics.allow = flag; }   // CubismPhysicsController.enabled
-  setBreathMotionEnabled(flag) { this.harmonicTimescales[0] = flag ? 1 : 0; }   // ChannelTimescales[0]
+  // Live2DCharacter.SetBreathMotionEnabled: CubismHarmonicMotionController.Play(0) / Stop(0) (ChannelTimescales[0])
+  setBreathMotionEnabled(flag) { this.breathEnabled = flag; this.harmonicTimescales[0] = flag ? 1 : 0; }
   get physicsEnabled() { return !!this.physics && this.physics.allow; }
   get hasPhysics() { return !!this.physics; }
   get breathMotionEnabled() { return this.harmonicTimescales[0] !== 0; }
 
-  release() { this.core.release(); }
+  // ------------------------------------------------------------------------------------------ story (ADV) calls
+  // Live2DCharacterController.get_IsAlive: the character exists (false after release())
+  get isAlive() { return this.alive; }
+  // Live2DCharacter.DrawablePartsCount: CubismRenderController.Renderers.Length (0 without a model)
+  get drawablePartsCount() { return this.core ? this.core.drawables.count : 0; }
+
+  // Live2DCharacterController.SetBrightness(float): clamped to [0, 1]; the colour is applied unless the brightness
+  // is composited after drawing
+  setBrightness(brightness) {
+    const b = 0 <= brightness ? (brightness <= 1 ? brightness : 1) : 0;
+    this.brightness = b;
+    if (!this.postCompositeBrightness) this._applyBrightness();
+  }
+
+  // rim light: Live2DCharacter.SetRimLightEnabled (CubismRenderController.Enable/DisableRimLighting), the controller's
+  // SetRimLightColor (CubismRenderController.SetRimColor -> CubismRenderer.SetRimColor: MaterialPropertyBlock.SetColor
+  // of _RimColor on every renderer, the value as given: the project uses the gamma colour space, so no conversion) and
+  // SetShadowIntensity (clamped to [0, 1]: every renderer's _ShadowIntensity). Before the first SetRimLightColor the
+  // renderers draw with their material's _RimColor.
+  get isRimLightingEnabled() { return this.rim.enabled; }
+  setRimLightEnabled(flag) { this.rim.enabled = !!flag; }
+  setRimLightColor(color) { this.rim.color = { r: color.r, g: color.g, b: color.b, a: color.a }; }
+  setShadowIntensity(intensity) { this.shadowIntensity = clamp01(F(intensity)); }
+
+  // Live2DCharacterController.SetMultiplyTexture: a stage's shadow {texture, uv, intensity, amplitude, frequency},
+  // or null for SetMultiplyTexture(null, 0.3) (the white texture with uv (1, 1, 0, 0), amplitude 0, frequency 0.5)
+  setMultiplyTexture(shadow) {
+    this.multiplyTexture = shadow
+      ? { texture: shadow.texture, uv: shadow.uv, intensity: shadow.intensity, amplitude: shadow.amplitude,
+          frequency: shadow.frequency }
+      : { texture: null, uv: { x: 1, y: 1, z: 0, w: 0 }, intensity: 0.3, amplitude: { x: 0, y: 0 }, frequency: 0.5 };
+  }
+
+  // Live2DCharacterController.SetSortingOrder(n): CubismRenderController.SortingOrder = n x SortingOrderRate (1000)
+  setSortingOrder(sortingOrder) {
+    const v = Math.imul(sortingOrder, 1000);
+    if (this.rc.sortingOrder === v) return;
+    this.rc.sortingOrder = v;
+    for (const r of this.renderers) this._applySorting(r);
+  }
+
+  // Live2DCharacter.SetLayer(int): GameObjectExtension.SetLayerRecursively on the model's GameObject
+  setLayer(layer) { for (const e of this.prefab.nodes.values()) e.transform.layer = layer; }
+  getLayer() { return this.root.layer ?? 0; }                // Live2DCharacter.GetLayer
+  get gameObjectLayer() { return this.getLayer(); }
+
+  // Live2DCharacterController.SetParent(parent, worldPositionStays = false): the local position, rotation and scale
+  // are kept
+  setParent(parent) { this.root.setParent(parent); }
+
+  // Live2DCharacter.GetHeadPosition: the world position of Anchors/Head (Vector3.zero without the anchor)
+  headPosition() { return this.headAnchor ? this.headAnchor.worldPosition() : { x: 0, y: 0, z: 0 }; }
+
+  // Live2DCharacter.Pause: the motion layer paused at Time.time, the model's update skipped, breath stopped
+  pause() {
+    this.pausing = true;
+    this._pauseLayer();
+    this.model.ignore = true;
+    if (this.breathEnabled) this.harmonicTimescales[0] = 0;
+  }
+
+  // Live2DCharacter.Resume: the layer resumed (its times moved by the pause), breath restarted, the expression
+  // parameters reset and the motion, expression and parameter loop requested while paused played
+  resume() {
+    this.pausing = false;
+    this._resumeLayer();
+    this.model.ignore = this.ignoreAllUpdate;
+    if (this.breathEnabled) this.harmonicTimescales[0] = 1;
+    this._resetExpressionParameters();
+    const q = this.pending;                                  // PlayPendingMotionAndExpression
+    if (q.motion) { const m = q.motion; q.motion = null; this._charPlayMotion(m.name, m.fade); }
+    if (q.expression) { const e = q.expression; q.expression = null; this._charPlayExpression(e.name, e.fade); }
+    if (q.paramLoop) {                                       // PlayPendingParameterLoop
+      const l = q.paramLoop; q.paramLoop = null;
+      if (!l.name) this.paramLoop.stop(l.fade); else this.paramLoop.play(l.name, l.fade);
+    }
+  }
+
+  // Live2DCharacter.SetMotionSpeed: the auto eye blink's speed (SetBlinkingSpeed) and, while showing, every playing
+  // motion's speed
+  setMotionSpeed(speed) {
+    this.motionSpeed = speed;
+    this.blink.timescale = F(this.blink.baseTimescale * speed);
+    if (!this.showing || !this.anyMotionPlaying()) return;
+    this._setLayerSpeed(speed);
+  }
+
+  // Live2DCharacter.CanApplyStateImmediately / ApplyCurrentStateImmediately: one update and late update outside the
+  // frame (the motion graph evaluated at its current time), then the model updated at once
+  get canApplyStateImmediately() { return this._gate(); }
+
+  applyCurrentStateImmediately() {
+    if (!this._gate()) return;
+    this._onUpdateInternal();
+    this._forceEvaluateMotionGraph();
+    this._onLateUpdateInternal();
+    this.forceModelUpdate();
+  }
+
+  // Live2DCharacter.ApplyStateAtMotionTime: the playing motion sought to `seconds`, then the state applied twice
+  applyStateAtMotionTime(seconds) {
+    if (!this._gate()) return;
+    this._seekPlayingMotion(seconds);
+    this.applyCurrentStateImmediately();
+    this.applyCurrentStateImmediately();
+  }
+
+  // Live2DCharacterController.PlayParameterLoop / StopParameterLoop (Live2DParameterLoopController); requests while
+  // paused are played by Resume; a request while hidden is dropped
+  playParameterLoop(motionName, fadeInTime) {
+    if (!motionName) { this.paramLoop.warnings.push(`${this.name}: loop motion name is empty`); return; }
+    if (!this.showing) return;
+    if (this.pausing) { this.pending.paramLoop = { name: motionName, fade: fadeInTime }; return; }
+    this.paramLoop.play(motionName, fadeInTime);
+  }
+
+  stopParameterLoop(fadeOutTime) {
+    if (this.pausing) { this.pending.paramLoop = { name: null, fade: fadeOutTime }; return; }
+    this.paramLoop.stop(fadeOutTime);
+  }
+
+  // Live2DCharacter.SetEyeBlinkStopped(stopped, transitionDuration)
+  setEyeBlinkStopped(stopped, transitionDuration = 0) {
+    const S = this.eyeBlinkStop;
+    if (!stopped) { this._clearEyeBlinkStopOverride(); return; }
+    if (!S.stopped) {
+      S.wasAuto = this.isAutoEyeBlinking;
+      this.isAutoEyeBlinking = false;
+      this.blink.isBlinking = false;
+      S.stopped = true;
+      S.start = this.eyeOpening;                           // CubismEyeBlinkController.EyeOpening
+      S.elapsed = 0;
+      S.duration = transitionDuration;
+    } else {
+      if (transitionDuration <= 0) { S.elapsed = 0; S.duration = 0; }
+      this.blink.isBlinking = false;
+    }
+  }
+
+  // Live2DCharacter.SetEyeBlinkEnabled (while stopped, the state restored by the stop's end)
+  setEyeBlinkEnabled(flag) {
+    if (this.eyeBlinkStop.stopped) { this.eyeBlinkStop.wasAuto = flag; return; }
+    this.isAutoEyeBlinking = flag;
+    this.blink.isBlinking = flag;
+  }
+
+  get isEyeBlinkStopped() { return this.eyeBlinkStop.stopped; }
+
+  // angle override: Live2DCharacterController.SetOverrideAngleEnabled(flag, isAdditive)
+  setOverrideAngleEnabled(flag, isAdditive = false) {
+    const A = this.angle;
+    if (A.additive !== isAdditive) {
+      if (A.additive) this._restoreAdditiveOverrideAngles();
+      A.appliedX = 0; A.appliedBodyX = 0;
+      A.additive = isAdditive;
+    }
+    this._setOverrideRotate(flag);
+  }
+
+  get angleX() { return this.angle.x; }
+  get bodyAngleX() { return this.angle.bodyX; }
+  setAngleX(v) { this.angle.x = F(v); }
+  setBodyAngleX(v) { this.angle.bodyX = F(v); }
+
+  // Live2DCharacterController.SmoothRotateToAngle: DOTween.To on the angle and body angle (from their values when
+  // the tweens start) with the ease; a running rotation is killed first (RefreshAngleCancellationToken). Resolves
+  // true when both finish, false when killed.
+  smoothRotateToAngle(angle, bodyAngle, duration, ease = EASE.InOutQuad) {
+    const A = this.angle;
+    this._killTweens(A);
+    return this._tweenPair(A, [() => A.x, (v) => { A.x = F(v); }, angle],
+                           [() => A.bodyX, (v) => { A.bodyX = F(v); }, bodyAngle], duration, ease);
+  }
+
+  // look override: Live2DCharacter.SetLookEnabled (turning it on takes the eye ball parameters' current values)
+  setLookEnabled(flag) {
+    const L = this.look, v = this.params.value;
+    if (flag) {
+      if (!L.enabled) {
+        if (this.eyeBallXParam >= 0) L.ox = L.x = v[this.eyeBallXParam];
+        if (this.eyeBallYParam >= 0) L.oy = L.y = v[this.eyeBallYParam];
+      }
+    } else { L.ox = 0; L.oy = 0; }
+    L.enabled = flag;
+  }
+
+  get lookEnabled() { return this.look.enabled; }
+  get lookX() { return this.look.x; }
+  get lookY() { return this.look.y; }
+  get originalLookX() { return this.look.ox; }
+  get originalLookY() { return this.look.oy; }
+  setLookX(v) { this.look.x = F(v); }
+  setLookY(v) { this.look.y = F(v); }
+
+  // Live2DCharacterController.SmoothChangeToLook: a running look tween is killed; duration <= 0 sets the look and
+  // applies the state at once, otherwise DOTween.To on x and y (InOutSine). Resolves true when finished, false when
+  // killed.
+  smoothChangeToLook(x, y, duration) {
+    const L = this.look;
+    this._killTweens(L);
+    if (duration <= 0) {
+      L.x = F(x); L.y = F(y);
+      this.applyCurrentStateImmediately();
+      return Promise.resolve(true);
+    }
+    return this._tweenPair(L, [() => L.x, (v) => { L.x = F(v); }, x], [() => L.y, (v) => { L.y = F(v); }, y],
+                           duration, EASE.InOutSine);
+  }
+
+  // Live2DCharacterController.ResetAngleLook: both token sources cancelled (running tweens killed), then
+  // Live2DCharacter.ResetAngleLook
+  resetAngleLook() {
+    this._killTweens(this.angle);
+    this._killTweens(this.look);
+    const A = this.angle, L = this.look;
+    if (A.override) {
+      if (A.additive) this._restoreAdditiveOverrideAngles();
+      A.appliedX = 0; A.appliedBodyX = 0;
+      A.override = false;
+    }
+    if (A.additive) {
+      this._restoreAdditiveOverrideAngles();
+      A.appliedX = 0; A.appliedBodyX = 0;
+      A.additive = false;
+    }
+    A.x = 0; A.bodyX = 0; A.appliedX = 0; A.appliedBodyX = 0;
+    L.x = 0; L.y = 0; L.ox = 0; L.oy = 0; L.enabled = false;
+  }
+
+  // lip sync (Live2DLipSyncController through Live2DCharacterController)
+  // Live2DCharacterController.get_IsMotionSyncEnabled: the model has a MotionSync controller (with its audio input)
+  get isMotionSyncEnabled() { return !!this.motionSync; }
+  get isLipSyncEnabled() { return this.lip.enabled; }
+  get lipSyncMode() { return this.lip.mode; }
+  // what a requested lip-sync path needed and did not have (the MotionSync Core, the CRI Lips analysis), or null
+  get lipSyncMissing() { return this.lip.missing || (this.motionSync && this.motionSync.missing) || null; }
+
+  setLipSyncEnabled(flag, usePseudo = false) { this.lip.setEnabled(flag, usePseudo); }
+  setLipSyncPresentationMode(mode) { this.lip.setPresentationMode(mode); }
+  setLipSyncParameter(defaultMouthOpening = 0, scale = 1) { this.lip.setLipSyncParameter(defaultMouthOpening, scale); }
+  // the playing voice's PCM for the MotionSync audio input ({pull(): Float32Array, sampleRate}; engine/audio.js
+  // pcmSource), or null
+  setMotionSyncSource(source) { if (this.motionSync) this.motionSync.setSource(source); }
+  clearMotionSyncSource() { if (this.motionSync) this.motionSync.setSource(null); }
+  // Live2DCharacterController.SetMouthOpening -> Live2DLipSyncController.MoveLipManual
+  setMouthOpening(mouthOpening) { this.lip.moveLipManual(mouthOpening); }
+  // SetCriLipsAtomAnalyzer: the CRI Lips analysis of a playing voice, or null (ClearCriLipsAtomAnalyzer)
+  setLipsAnalyzer(analyzer) { this.lip.setLipsAnalyzer(analyzer); }
+
+  // Live2DCharacterController.StartTimedPseudoLipSync(talkLength, speed, multiplier): the time is
+  // _pseudoLipSyncUnitTime (0.14) x talkLength
+  startTimedPseudoLipSync(talkLength, speed = 1, multiplier = 1) {
+    this.lip.startTimed(F(PSEUDO_LIP_SYNC_UNIT_TIME * talkLength), speed, multiplier);
+  }
+
+  startTimedHoldOpenPseudoLipSync(mouthOpening, talkLength, speed = 1) {
+    this.lip.startTimedHoldOpen(mouthOpening, F(PSEUDO_LIP_SYNC_UNIT_TIME * talkLength), speed);
+  }
+
+  stopTimedPseudoLipSync() { this.lip.stopTimed(); }
+  setPseudoLipSyncSpeed(speed) { this.lip.setPseudoSpeed(speed); }
+
+  release() {
+    this._killTweens(this.angle);
+    this._killTweens(this.look);
+    this.alive = false;
+    this.core.release();
+  }
 }
+
+// Live2DCharacterController._pseudoLipSyncUnitTime
+const PSEUDO_LIP_SYNC_UNIT_TIME = F(0.14);
+
+// Mathf.Clamp01 as compiled (NaN -> 0)
+const clamp01 = (x) => (0 <= x ? (x <= 1 ? x : 1) : 0);

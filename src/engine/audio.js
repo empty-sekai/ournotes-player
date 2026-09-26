@@ -2,12 +2,16 @@
 // (audio/<cueSheet>/<cue>.flac + cues.json), and SoundCategoryVolumes (the CRI category volumes).
 //
 // A master sound id resolves to {sheet, cue, category, row} through the resolver
-// passed to the constructor (LiveSoundManager: the sounds of live-audio.json). The row
-// is a MasterSound record ({_category, _soundCueSheetID, _cueName, ...}).
+// passed to the constructor (LiveSoundManager: the sounds of live-audio.json; a story: Audio.episodeResolver over
+// the episode's -Sound / -SoundCueSheet rows). The row is a MasterSound record ({_category, _soundCueSheetID,
+// _cueName, ...}).
 // Fades are linear on the source volume and advanced once per
-// frame from the player loop's time (SoundPlayer.UpdateSound / UpdateFade).
+// frame from the player loop's time (SoundPlayer.UpdateSound / UpdateFade). A playback speed other than 1 plays the
+// cue time-stretched (timestretch.js; the pitch is kept).
 // Category bus gains are SoundVolumeSettings.DefaultVolume x option volume
 // (Bgm 0.7, Se 1.0, Voice 1.0 with default options).
+
+import { timeStretch } from "./timestretch.js";
 
 export const SOUND_CATEGORY = { Bgm: 0, Se: 1, Voice: 2, NotesSe: 3, All: 9999 };
 
@@ -28,6 +32,8 @@ export const SOUND_BUS_GAIN = { 0: 0.7, 1: 1.0, 2: 1.0 };
 // ENGINE: CriAtomExCategory keeps its volumes in the native CRI library; GetVolume returns the float last set.
 // The bus of a category plays at category volume x the option volume ("<Cat>Config", 1.0 with default options).
 // ENGINE: CRI combines the category and option volumes natively; they are multiplied here.
+//   ChangeConfigVolume (the app's volume options): "All" -> every settings name's "<name>Config" = DefaultVolume x v;
+//     any other name -> CriAtomExCategory.SetVolume(name + "Config", v); RestoreConfigVolume = ChangeConfigVolume(1).
 export const SOUND_VOLUME_SETTINGS = { Bgm: 0.7, Se: 1.0, Voice: 1.0, LiveBgm: 1.0, LiveSe: 1.0, LiveNotesSe: 1.0, LiveVoice: 1.0 };
 export const SOUND_CATEGORY_NAME = { 0: "Bgm", 1: "Se", 2: "Voice" };        // SoundCategory enum names
 export class SoundCategoryVolumes {
@@ -75,11 +81,44 @@ export class Audio {
     this.nextId = 1;
     this.playing = new Map();         // uniqueSoundId -> info
     this.lastBgmOrSeFrame = -1;
-    this.categoryVolumes = new SoundCategoryVolumes((name, v) => {
-      const cat = Object.keys(SOUND_CATEGORY_NAME).find((k) => SOUND_CATEGORY_NAME[k] === name);
-      if (cat !== undefined && this.buses[cat]) this.buses[cat].gain.setValueAtTime(v, this.ctx.currentTime);
-    });
+    this.configVolumes = {};                 // "<name>Config" (the option volumes), 1.0 with default options
+    for (const name of Object.keys(SOUND_VOLUME_SETTINGS)) this.configVolumes[name] = 1;
+    this.stretched = new Map();              // time-stretched buffers by cue and speed
+    this.categoryVolumes = new SoundCategoryVolumes((name) => this._applyBus(name));
   }
+
+  // the bus of a category at its category volume x its option volume
+  _applyBus(name) {
+    const cat = Object.keys(SOUND_CATEGORY_NAME).find((k) => SOUND_CATEGORY_NAME[k] === name);
+    if (cat === undefined || !this.buses[cat]) return;
+    const c = this.configVolumes[name];
+    const v = this.categoryVolumes.get(name);
+    this.buses[cat].gain.setValueAtTime(c === 1 ? v : Math.fround(v * c), this.ctx.currentTime);
+  }
+
+  // SoundVolume.ChangeConfigVolume / GetConfigVolume / RestoreConfigVolume (the app's Bgm / Se / Voice options)
+  setOptionVolume(name, v) {
+    const f = Math.fround;
+    if (name === "All") {
+      for (const n of Object.keys(SOUND_VOLUME_SETTINGS)) {
+        this.configVolumes[n] = f(f(SOUND_VOLUME_SETTINGS[n]) * f(v));
+        this._applyBus(n);
+      }
+      return;
+    }
+    if (!Object.prototype.hasOwnProperty.call(SOUND_VOLUME_SETTINGS, name)) {
+      console.warn(`Sound category ${name}Config not found`);
+      return;
+    }
+    this.configVolumes[name] = f(v);
+    this._applyBus(name);
+  }
+
+  getOptionVolume(name) {
+    return Object.prototype.hasOwnProperty.call(this.configVolumes, name) ? this.configVolumes[name] : NaN;
+  }
+
+  restoreOptionVolume(name) { this.setOptionVolume(name, 1); }
 
   // ISoundVolumeManager slots 0 / 1 / 2 (SoundManager.GetVolume, ChangeVolume, RestoreVolume)
   getVolume(name) { return this.categoryVolumes.get(name); }
@@ -94,6 +133,19 @@ export class Audio {
 
   // AudioContext.suspend: every source and the context clock stop together (the player's pause)
   async suspend() { if (this.ctx.state === "running") await this.ctx.suspend(); }
+
+  // The resolver of a story episode: sound id -> its -Sound row (episode.sounds) -> the row's -SoundCueSheet row
+  // (episode.cuesheets) -> {sheet: _cueSheetName, cue: _cueName, category: _category, row}; the cue's waveform is
+  // audio/<sheet>/<file of the cue in audio/<sheet>/cues.json>.
+  static episodeResolver(episode) {
+    return (soundId) => {
+      const s = episode.sounds[String(soundId)];
+      if (!s) throw new Error(`sound ${soundId} not in the episode's -Sound rows`);
+      const sheet = episode.cuesheets[String(s._soundCueSheetID)];
+      if (!sheet) throw new Error(`cue sheet ${s._soundCueSheetID} not in the episode's -SoundCueSheet rows`);
+      return { sheet: sheet._cueSheetName, cue: s._cueName, category: s._category, row: s };
+    };
+  }
 
   cueOf(soundId) {
     const c = this.resolve(soundId);
@@ -119,7 +171,7 @@ export class Audio {
     const c = this.cueOf(soundId);
     const entry = this.buffers.get(`${c.sheet}/${c.cue}`);
     if (!entry) throw new Error(`cue ${c.cue} not preloaded`);
-    if (speed !== 1) throw new Error("playback speed other than 1 not implemented");
+    const rate = playbackSpeed(speed);
     if (isAutoCrossFade && c.category === SOUND_CATEGORY.Bgm) {
       forceFadeIn = true;
       for (const i of [...this.playing.values()]) if (i.category === SOUND_CATEGORY.Bgm) this._stopInfo(i, true, crossFade);
@@ -128,12 +180,17 @@ export class Audio {
     if (!bus) throw new Error(`sound category ${c.category}`);
     const info = { id: this.nextId++, soundId, category: c.category, cue: c, meta: entry.meta, buf: entry.buf,
                    fade: 0, fadeStart: 0, fadeDur: 0, finished: false, stopped: false, onFinished: [],
-                   gain: this.ctx.createGain(), src: null, startCtx: 0, startSample: 0, startOffsetSec: 0 };
+                   gain: this.ctx.createGain(), src: null, startCtx: 0, startSample: 0, startOffsetSec: 0,
+                   rate, playBuf: entry.buf, playStart: 0 };
     if (crossFade > 0 && forceFadeIn) { info.fade = 1; info.fadeStart = this.loop.time; info.fadeDur = crossFade; }
     if (onPlayStart) onPlayStart(info);
     // SoundInfo.Play -> ChangeVolume(volume) -> SoundSource.Play(start ms truncated)
     const src = this.ctx.createBufferSource();
-    src.buffer = entry.buf;
+    if (rate !== 1) {
+      if (loop) throw new Error(`${c.cue}: a looped cue at playback speed ${speed} is not implemented`);
+      info.playBuf = this._stretched(`${c.sheet}/${c.cue}`, entry.buf, rate);
+    }
+    src.buffer = info.playBuf;
     if (loop) {                         // FORCE_LOOP: the waveform's loop region, else the whole waveform
       src.loop = true;
       if (entry.meta.loopStart != null) {
@@ -148,10 +205,27 @@ export class Audio {
     info.startCtx = this.ctx.currentTime;
     info.startSample = Math.round(start * entry.meta.sampleRate);   // in frames at the cue's own rate
     info.startOffsetSec = start;
-    src.start(info.startCtx, start);
+    // the position in the buffer played (a time-stretched buffer runs 1 / rate as long)
+    info.playStart = rate === 1 ? framesAt(info.startSample, entry.meta.sampleRate, entry.buf.sampleRate)
+      : Math.round((start / rate) * info.playBuf.sampleRate);
+    src.start(info.startCtx, rate === 1 ? start : start / rate);
     info.src = src;
     this.playing.set(info.id, info);
     return info.id;
+  }
+
+  // the cue's buffer time-stretched to a playback speed (made once per cue and speed)
+  _stretched(key, buf, rate) {
+    const k = `${key}@${rate}`;
+    let b = this.stretched.get(k);
+    if (b) return b;
+    const chs = [];
+    for (let i = 0; i < buf.numberOfChannels; i++) chs.push(buf.getChannelData(i));
+    const out = timeStretch(chs, buf.sampleRate, rate);
+    b = this.ctx.createBuffer(buf.numberOfChannels, Math.max(1, out[0].length), buf.sampleRate);
+    out.forEach((x, i) => b.copyToChannel(x, i));
+    this.stretched.set(k, b);
+    return b;
   }
 
   get(id) { return this.playing.get(id) || null; }
@@ -211,4 +285,43 @@ export class Audio {
       }
     }
   }
+
+  // The PCM of a playing cue for lip-sync analysis (Live2DMotionSyncCriAudioInput, ListeningChannel 0): pull() returns
+  // the channel-0 samples of the buffer played (time-stretched at a playback speed) since the previous pull, on the
+  // AudioContext clock (the first pull starts at the play position); sampleRate is the buffer's rate (the context's).
+  pcmSource(info) {
+    const buf = info.playBuf || info.buf;
+    const data = buf.getChannelData(0), sr = buf.sampleRate;
+    const start = info.playBuf ? info.playStart : framesAt(info.startSample, info.meta.sampleRate, sr);
+    let last = null;
+    const ctx = this.ctx;
+    const pos = () => Math.min(data.length, start + Math.floor((ctx.currentTime - info.startCtx) * sr));
+    return {
+      sampleRate: sr,
+      pull: () => {
+        if (last === null) last = start;
+        const cur = pos();
+        const out = cur > last ? data.subarray(last, cur) : new Float32Array(0);
+        last = Math.max(last, cur);
+        return out;
+      },
+      // the last n samples output (zeros before the start; CriAtomExOutputAnalyzer.GetPcmData)
+      latest: (n) => {
+        const out = new Float32Array(n), cur = pos(), from = cur - n;
+        for (let i = Math.max(0, -from); i < n; i++) if (from + i >= start) out[i] = data[from + i];
+        return out;
+      },
+      // the output is paused (the context suspended; CriAtomExPlayer.IsPaused)
+      get paused() { return ctx.state === "suspended"; },
+    };
+  }
+};
+
+// SoundSource.ApplyPlaybackSpeedVoicePool / SetPlaybackSpeed: a speed in [0.25, 3] that differs from 1 by more than
+// max(|speed|, 1) x 1e-6 plays time-stretched; a speed within that of 1 plays as is
+export const playbackSpeed = (speed) => {
+  const f = Math.fround, s = f(speed);
+  if (!(s <= 3) || s < 0.25) throw new Error(`playback speed ${speed} outside [0.25, 3] not implemented`);
+  const tol = Math.max(f(Math.max(Math.abs(s), 1) * f(1e-6)), f(1.4e-45 * 8));
+  return tol <= Math.abs(f(1 - s)) ? s : 1;
 };

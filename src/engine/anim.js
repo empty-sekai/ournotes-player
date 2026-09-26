@@ -4,13 +4,19 @@ import { F } from "./core.js";
 // accessors, UnityEngine.Gradient and AnimationCurve evaluation: used by the note effects, the combo counter, the flick
 // arrows and the start timeline.
 //
-// Clip data (raw Mecanim clips): `streamed` {curveCount, frames: [[time, [[curve, c0, c1, c2, c3], ...]]]},
-// `dense`, `constant`, `bindings` [{path, typeID, class, attribute, curves}] (a binding with `curves` n covers n
-// consecutive curves: position / scale / euler x, y, z; rotation x, y, z, w). Curve order = streamed, dense,
-// constant (the order of the clip's binding constant).
+// Clip data (raw Mecanim clips): `streamed` {curveCount, discreteCurveCount, frames: [[time, [[curve, c0, c1, c2, c3],
+// ...]]]}, `dense`, `constant`, `bindings` [{path, typeID, class, attribute, curves, pptr}] (a binding with `curves` n
+// covers n consecutive curves: position / scale / euler x, y, z; rotation x, y, z, w), `pptrCurveMapping`. Curve order
+// = streamed, dense, constant (the order of the clip's binding constant); the streamed clip holds curveCount float
+// curves and discreteCurveCount discrete ones, in binding order.
 // Streamed keys are sampled in float32 (last key with time <= t, first key at -FLT_MAX):
 // value = ((c0 x + c1) x + c2) x + c3, x = t - key time.
 // ENGINE: Mecanim samples streamed clips natively; this is the cubic form of the stored keys.
+// A discrete curve steps: its value is the stored value (c3) of the last key at or before t. A PPtr curve (binding
+// `pptr`) is discrete with integer values that index pptrCurveMapping; the sample is that entry (a negative index:
+// null).
+// ENGINE: Mecanim evaluates discrete curves natively; the step on the stored keys is the documented behaviour of
+// object reference curves.
 //
 // Targets: an Animator binds each distinct binding (path, class, attribute) once through a host callback
 // bind(binding) -> {set(v), get()} | null (null = no such object / property: Unity skips the curve). AnimTargets
@@ -24,6 +30,17 @@ export const animEval = (ts, k, t) => {
   while (lo < hi) { const m = (lo + hi + 1) >> 1; if (ts[m] <= t) lo = m; else hi = m - 1; }
   const x = F(t - ts[lo]), i = lo * 4;
   return F(F(F(F(F(F(k[i] * x) + k[i + 1]) * x) + k[i + 2]) * x) + k[i + 3]);
+};
+
+// one discrete PPtr curve at local time t: the pptrCurveMapping entry of the last key at or before t
+export const animDiscrete = (c, t) => {
+  const ts = c.t;
+  let lo = 0, hi = ts.length - 1;
+  while (lo < hi) { const m = (lo + hi + 1) >> 1; if (ts[m] <= t) lo = m; else hi = m - 1; }
+  const i = Math.trunc(c.v[lo]);
+  if (i < 0) return null;
+  if (i >= c.objects.length) throw new AnimError(`PPtr index ${i} outside pptrCurveMapping (${c.objects.length})`);
+  return c.objects[i];
 };
 
 export const ANIM_COMPONENTS = { 1: [""], 3: [".x", ".y", ".z"], 4: [".x", ".y", ".z", ".w"] };
@@ -40,31 +57,59 @@ export class AnimClip {
     this.events = (desc.events || []).map((e) => ({ ...e, time: F(e.time) }));
   }
 
-  // raw Mecanim clip. Dense and discrete / PPtr curves are not implemented (no live clip has any; raising
-  // keeps other data from being sampled wrongly).
+  // raw Mecanim clip. The discrete curves supported are PPtr curves on SpriteRenderer.m_Sprite (the SpriteRenderer
+  // binding with attribute 0) in the streamed clip. Dense curves, other discrete curves and discrete curves outside
+  // the streamed clip are not implemented (raising keeps other data from being sampled wrongly).
   static fromMecanim(clip, key = clip.name) {
     const name = key;
     if (clip.startTime !== 0 || clip.cycleOffset) throw new AnimError(`clip ${name}: start time / cycle offset`);
-    if (clip.dense.curveCount || clip.discreteCurveCount || (clip.pptrCurveMapping && clip.pptrCurveMapping.length))
-      throw new AnimError(`clip ${name}: dense / discrete / PPtr curves not implemented`);
+    if (clip.dense.curveCount) throw new AnimError(`clip ${name}: dense curves not implemented`);
+    if (clip.discreteCurveCount) throw new AnimError(`clip ${name}: discrete curves outside the streamed clip`);
+    const nD = clip.streamed.discreteCurveCount || 0, objects = clip.pptrCurveMapping || [];
     const bindings = [];
     for (const b of clip.bindings) {
+      if (b.pptr) {
+        if (b.typeID !== 212 || b.attribute != null || b.attributeCrc)
+          throw new AnimError(`clip ${name}: PPtr curve ${b.class}.${b.attribute ?? b.attributeCrc} not implemented`);
+        bindings.push({ path: b.path, cls: b.class, typeID: b.typeID, attr: "m_Sprite", pptr: true });
+        continue;
+      }
       const comps = ANIM_COMPONENTS[b.curves || 1];
       if (!comps) throw new AnimError(`clip ${name}: binding with ${b.curves} curves`);
       for (const c of comps)
         bindings.push({ path: b.path, cls: b.class, typeID: b.typeID, attr: `${b.attribute}${c}` });
     }
-    const nS = clip.streamed.curveCount;
+    const nS = clip.streamed.curveCount + nD;
     if (bindings.length !== nS + clip.constant.length) throw new AnimError(`clip ${name}: binding count`);
+    if (bindings.slice(0, nS).filter((b) => b.pptr).length !== nD || bindings.slice(nS).some((b) => b.pptr))
+      throw new AnimError(`clip ${name}: discrete curves other than streamed PPtr curves not implemented`);
     const curves = [];
-    for (let c = 0; c < nS; c++) curves.push({ binding: bindings[c], t: [], k: [] });
+    for (let c = 0; c < nS; c++) {
+      const binding = bindings[c];
+      curves.push(binding.pptr ? { binding, t: [], v: [], objects } : { binding, t: [], k: [] });
+    }
     for (const [time, keys] of clip.streamed.frames)
       for (const [c, c0, c1, c2, c3] of keys) {
         const s = curves[c];
-        s.t.push(F(time)); s.k.push(F(c0), F(c1), F(c2), F(c3));
+        s.t.push(F(time));
+        if (s.v) s.v.push(F(c3)); else s.k.push(F(c0), F(c1), F(c2), F(c3));
       }
     clip.constant.forEach((v, j) => curves.push({ binding: bindings[nS + j], constant: F(v) }));
     return new AnimClip({ name, length: clip.stopTime, loopTime: clip.loopTime, curves, events: clip.events });
+  }
+
+  // A clip in the per-property form of the UI data: `curves` {"<Class>.<attribute>": {keys: [[time, c0, c1, c2, c3]]}
+  // | {constant}} on the animated object itself (path ""), in data order; each binding keeps its property name `prop`.
+  static fromCurves(clip) {
+    const curves = Object.entries(clip.curves).map(([prop, c]) => {
+      const cut = prop.indexOf(".");
+      const binding = { path: "", cls: prop.slice(0, cut), attr: prop.slice(cut + 1), prop };
+      if ("constant" in c) return { binding, constant: F(c.constant) };
+      const t = [], k = [];
+      for (const [time, c0, c1, c2, c3] of c.keys) { t.push(F(time)); k.push(F(c0), F(c1), F(c2), F(c3)); }
+      return { binding, t, k };
+    });
+    return new AnimClip({ name: clip.name, length: clip.stopTime, loopTime: clip.loopTime, curves, events: clip.events });
   }
 
   // Looping clips wrap with a positive modulo (a state playing at speed -1 runs its time below 0), others clamp.
@@ -76,12 +121,12 @@ export class AnimClip {
     return Math.min(Math.max(t, 0), L);
   }
 
-  // out(curveIndex, value) for every curve in curve order, at state time `time`
+  // out(curveIndex, value) for every curve in curve order, at state time `time` (a PPtr curve: its object)
   sample(time, out) {
     const t = F(this.localTime(time));
     for (let i = 0; i < this.curves.length; i++) {
       const c = this.curves[i];
-      out(i, c.t === undefined ? c.constant : animEval(c.t, c.k, t));
+      out(i, c.t === undefined ? c.constant : c.v ? animDiscrete(c, t) : animEval(c.t, c.k, t));
     }
   }
 
@@ -304,6 +349,8 @@ export class Animator {
       return;
     }
     const f = this.fade, fs = this.ctrl.states[f.from], w = Math.min(Math.max(f.elapsed / f.duration, 0), 1);
+    for (const s of [fs, st]) if (s.clip && s.clip.curves.some((c) => c.v))
+      throw new AnimError(`${this.name}: a cross-fade over a discrete (PPtr) curve is not implemented`);
     const vals = new Map();
     const collect = (s, time, k) => {
       if (!s.clip) return;

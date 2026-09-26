@@ -55,6 +55,8 @@ export class ModelSession {
     this.disposed = false;
     this.character = null; this.drawing = null; this.loop = null; this.gl = null; this.assets = null;
     this._gl = null; this._stepping = null; this._pending = []; this._noDraw = false;
+    // onmotion(type, detail): "motionstart" {name, loop} when a motion starts, "motionend" {name} when one ends
+    this.onmotion = null;
   }
 
   // opts:
@@ -64,6 +66,7 @@ export class ModelSession {
   //   physics, breath      CubismPhysicsController and the harmonic breath on (default true)
   //   seed         seed of the auto eye blink's random intervals (default: from the clock)
   //   width, height  drawing buffer size in pixels (default: the canvas size)
+  //   onMotion     the `onmotion` callback, set before the model is shown (so the first motion's start is reported)
   // Resolves once the model is loaded and shown (one frame stepped after the load).
   static async create(opts = {}) {
     const s = new ModelSession();
@@ -77,7 +80,7 @@ export class ModelSession {
   }
 
   async _load({ gl, assets, motion = "", expression = "", loop: loopMotion = false, physics = true, breath = true, seed,
-                width, height } = {}) {
+                width, height, onMotion = null } = {}) {
     if (!gl) throw new Error("ModelSession: a WebGL2 context is required");
     if (!assets) throw new Error("ModelSession: an AssetStore is required");
     await cubismCore();
@@ -132,6 +135,9 @@ export class ModelSession {
       await loop.step();
     }
     if (error) throw error;
+    // motion notifications from the In on (the warmup's motions are not reported)
+    this.onmotion = onMotion;
+    ch.onMotion = (type, detail) => { if (this.onmotion) this.onmotion(type === "start" ? "motionstart" : "motionend", detail); };
     // In
     this._pending.push(() => {
       ch.show(motion, expression, 0);
@@ -155,7 +161,8 @@ export class ModelSession {
   get motion() { return this.character.ctl.currentMotion; }
   get expression() { return this.character.ctl.currentExpression; }
   get looping() { return this.character.ctl.loopMotion; }
-  // a motion other than the default one is playing (the controller's current motion has not ended)
+  // a motion other than the default one is playing (the controller's current motion has not ended); onmotion reports
+  // each start and end as it happens
   get motionPlaying() { return this.character.anyMotionPlaying() && !this.character.isCurrentMotionDefault; }
   get physics() { return this.character.physicsEnabled; }
   // the model has physics (a CubismPhysicsController); without it the physics switch has no effect

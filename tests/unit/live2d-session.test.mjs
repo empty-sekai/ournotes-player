@@ -386,3 +386,70 @@ test("a session creates no AudioContext and deletes the GL objects it created on
       if (v) globalThis[k] = v; else delete globalThis[k];
   }
 }));
+
+test("motion notifications: the first motion's start, the ends, the default motion's return and loop replays", () => withCore(async () => {
+  const events = [];
+  const { gl } = open();
+  let s = null;
+  const log = (type, detail) => events.push([type, detail.name, detail.loop, s ? s.motion : null]);
+  s = await ModelSession.create({ gl, assets: modelFiles(), seed: 1, onMotion: log });
+  assert.deepEqual(events, [["motionstart", "mtn_idle", true, null]]);     // the In's motion; the warmup is not reported
+  events.length = 0;
+  s.playMotion("mtn_turn");
+  for (let i = 0; i < 3 * MODEL_FRAME_RATE && events.length < 4; i++) await s.step();
+  // the request starts mtn_turn; the idle fades out under it and ends with it; the default motion follows
+  assert.deepEqual(events, [["motionstart", "mtn_turn", false, "mtn_turn"], ["motionend", "mtn_idle", undefined, "mtn_turn"],
+                            ["motionend", "mtn_turn", undefined, "mtn_turn"], ["motionstart", "mtn_idle", true, "mtn_idle"]]);
+  assert.equal(s.motionPlaying, false);
+  events.length = 0;
+  s.playMotion("mtn_turn", { loop: true });
+  for (let i = 0; i < 4 * MODEL_FRAME_RATE; i++) await s.step();
+  const turns = events.filter(([t, n]) => t === "motionstart" && n === "mtn_turn");
+  assert.ok(turns.length >= 3 && turns.every(([, , loop]) => loop === true), `loop starts ${turns.length}`);
+  const i2 = events.findIndex((e, i) => i > 0 && e[0] === "motionstart");
+  assert.deepEqual(events[i2 - 1].slice(0, 2), ["motionend", "mtn_turn"]);  // a replay follows the end of the last run
+  // the callback can be replaced or removed
+  const other = [];
+  s.onmotion = (type, detail) => other.push([type, detail.name]);
+  s.playMotion("mtn_idle");
+  await s.step();
+  assert.deepEqual(other[other.length - 1], ["motionstart", "mtn_idle"]);
+  s.onmotion = null;
+  const n = other.length;
+  s.playMotion("mtn_turn");
+  await s.step();
+  assert.equal(other.length, n);
+  await s.dispose();
+}));
+
+test("ModelPlayer: motionstart comes before ready, then motionstart / motionend follow the motions", () => withCore(async () => {
+  const { ModelPlayer } = await import("../../src/live2d/player.js");
+  const doc = { defaultView: { devicePixelRatio: 1 } };
+  const el = (tag) => ({
+    tagName: tag.toUpperCase(), style: {}, className: "", textContent: "", hidden: false, clientHeight: 300, children: [],
+    ownerDocument: doc, append(...c) { this.children.push(...c); }, remove() {}, addEventListener() {}, removeEventListener() {},
+    attachShadow() { return el("#shadow-root"); }, getBoundingClientRect: () => ({ width: 200, height: 300 }),
+    getContext: () => headlessGL({ width: 200, height: 300 }),
+  });
+  doc.createElement = el;
+  const frames = [], saved = { raf: globalThis.requestAnimationFrame, caf: globalThis.cancelAnimationFrame };
+  globalThis.requestAnimationFrame = (f) => frames.push(f);
+  globalThis.cancelAnimationFrame = () => {};
+  try {
+    const events = [];
+    const on = Object.fromEntries(["ready", "motionstart", "motionend"].map((t) => [t, (e) => events.push([t, e.detail && e.detail.name])]));
+    const p = await ModelPlayer.create(el("div"), { assets: modelFiles(), seed: 1, on });
+    assert.deepEqual(events, [["motionstart", "mtn_idle"], ["ready", null]]);
+    assert.deepEqual([p.looping, p.seed, p.time], [false, 1, p.session.time]);
+    assert.ok(p.time > 0);
+    p.playMotion("mtn_turn");
+    let now = performance.now();                                       // the player's clock
+    for (let i = 0; i < 3 * MODEL_FRAME_RATE && frames.length; i++) { now += 1000 / MODEL_FRAME_RATE; await frames.shift()(now); }
+    assert.deepEqual(events.slice(2, 6), [["motionstart", "mtn_turn"], ["motionend", "mtn_idle"], ["motionend", "mtn_turn"],
+                                          ["motionstart", "mtn_idle"]]);
+    await p.dispose();
+  } finally {
+    for (const [k, v] of [["requestAnimationFrame", saved.raf], ["cancelAnimationFrame", saved.caf]])
+      if (v) globalThis[k] = v; else delete globalThis[k];
+  }
+}));

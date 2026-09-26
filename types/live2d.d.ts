@@ -43,6 +43,21 @@ export interface ExpressionOptions {
   fade?: number;
 }
 
+/** `motionstart`: a motion started (a request, a replay, or the default motion returning). */
+export interface MotionStartDetail {
+  name: string;
+  /** The motion is replayed when it ends: a `loop` request, or the default motion. */
+  loop: boolean;
+}
+
+/** `motionend`: a playing motion reached its end (its length, or the end of its fade-out under a newer motion). */
+export interface MotionEndDetail {
+  name: string;
+}
+
+/** Receives the session's motion notifications. */
+export type ModelMotionCallback = (type: "motionstart" | "motionend", detail: MotionStartDetail | MotionEndDetail) => void;
+
 export interface ModelSessionOptions {
   /** The context to draw into; used by this session alone while it lives. */
   gl: WebGL2RenderingContext;
@@ -63,6 +78,8 @@ export interface ModelSessionOptions {
   /** Drawing buffer size in pixels (default: the canvas size). */
   width?: number;
   height?: number;
+  /** The `onmotion` callback, set before the model is shown, so that the first motion's start is reported too. */
+  onMotion?: ModelMotionCallback | null;
 }
 
 /** The DOM-free model session: step it at 30 steps per second of game time and render it. */
@@ -98,6 +115,8 @@ export class ModelSession {
   readonly busy: boolean;
   readonly seed: number;
   readonly disposed: boolean;
+  /** Called during step() whenever a motion starts or ends (null: none). */
+  onmotion: ModelMotionCallback | null;
   /** Plays a motion at the next step. Throws for an unknown name. */
   playMotion(name: string, options?: MotionOptions): void;
   /** Sets an expression at the next step. Throws for an unknown name. */
@@ -139,6 +158,9 @@ export interface ModelPlayerEventMap {
   pause: CustomEvent<null>;
   error: CustomEvent<{ error: unknown }>;
   progress: CustomEvent<{ loaded: number; total: number }>;
+  /** A motion started; the first one (the motion shown on load) fires before `ready`. */
+  motionstart: CustomEvent<MotionStartDetail>;
+  motionend: CustomEvent<MotionEndDetail>;
 }
 
 /** A model in a host element: canvas, WebGL2 context, requestAnimationFrame and events. */
@@ -159,6 +181,12 @@ export class ModelPlayer extends EventTarget {
   readonly motion: string;
   readonly expression: string;
   readonly motionPlaying: boolean;
+  /** The current motion is replayed when it ends. */
+  readonly looping: boolean;
+  /** Game time in seconds since the model was loaded (0 without a session). */
+  readonly time: number;
+  /** The seed of the eye blink intervals (null without a session). */
+  readonly seed: number | null;
   physics: boolean;
   readonly hasPhysics: boolean;
   breath: boolean;
@@ -195,6 +223,13 @@ export class OurnotesLive2DElement extends HTMLElement {
   /** The model has physics (false until loaded). */
   readonly hasPhysics: boolean;
   readonly info: ModelInfo | null;
+  /** As on ModelPlayer, once loaded ("" / false / 0 before). */
+  readonly name: string;
+  readonly motionPlaying: boolean;
+  readonly looping: boolean;
+  readonly time: number;
+  /** The seed in use once loaded; before, the `seed` attribute's value or null. */
+  readonly seed: number | null;
   /** The player of the current `src` (null until loaded). */
   readonly player: ModelPlayer | null;
   /** Resolves to the player of the current `src`. */
@@ -205,7 +240,14 @@ export class OurnotesLive2DElement extends HTMLElement {
   pause(): void;
   addEventListener<K extends keyof ModelPlayerEventMap>(type: K, listener: (this: OurnotesLive2DElement, event: ModelPlayerEventMap[K]) => void,
                                                         options?: boolean | AddEventListenerOptions): void;
+  addEventListener<K extends keyof HTMLElementEventMap>(type: K, listener: (this: OurnotesLive2DElement, event: HTMLElementEventMap[K]) => void,
+                                                        options?: boolean | AddEventListenerOptions): void;
   addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
+  removeEventListener<K extends keyof ModelPlayerEventMap>(type: K, listener: (this: OurnotesLive2DElement, event: ModelPlayerEventMap[K]) => void,
+                                                           options?: boolean | EventListenerOptions): void;
+  removeEventListener<K extends keyof HTMLElementEventMap>(type: K, listener: (this: OurnotesLive2DElement, event: HTMLElementEventMap[K]) => void,
+                                                           options?: boolean | EventListenerOptions): void;
+  removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void;
 }
 
 /** Defines the element under `tagName` (default "ournotes-live2d"); returns its class. */

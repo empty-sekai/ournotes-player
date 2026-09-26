@@ -13,13 +13,14 @@ import { ModelPlayer } from "./player.js";
 //   paused       no frame advances (boolean attribute)
 //   physics, breath   "off" (or "false", "0") switches the physics / the breath motion off; absent: on
 //   seed         seed of the eye blink intervals, read when the model loads
-// Properties and methods as ModelPlayer: motions, expressions, defaultMotion, defaultExpression, info, playMotion(name,
-// opts), setExpression(name, opts), play(), pause(), plus `player` (the ModelPlayer, null until loaded) and `ready` (a
-// promise of the ModelPlayer of the current src). The `motion` / `expression` properties read the current motion /
-// expression once loaded. Events (not bubbling): ready, error, progress, play, pause; `detail` as ModelPlayer's.
+// Properties and methods as ModelPlayer: motions, expressions, defaultMotion, defaultExpression, info, name,
+// motionPlaying, looping, time, seed (read only), playMotion(name, opts), setExpression(name, opts), play(), pause(),
+// plus `player` (the ModelPlayer, null until loaded) and `ready` (a promise of the ModelPlayer of the current src). The `motion` / `expression` properties read the current motion /
+// expression once loaded. Events (not bubbling): ready, error, progress, play, pause, motionstart, motionend; `detail`
+// as ModelPlayer's.
 // The element is display: block, transparent, and 2:3 at its width unless given a height (CSS aspect-ratio).
 
-const EVENTS = ["ready", "error", "progress", "play", "pause"];
+const EVENTS = ["ready", "error", "progress", "play", "pause", "motionstart", "motionend"];
 const OFF = new Set(["off", "false", "0", "no"]);
 const ELEMENT_CSS = `:host { display: block; position: relative; aspect-ratio: 2 / 3; contain: content; }
 :host([hidden]) { display: none; }`;
@@ -63,6 +64,15 @@ export class OurnotesLive2DElement extends Base {
   get defaultExpression() { return this.player ? this.player.defaultExpression : ""; }
   get hasPhysics() { return !!this.player && this.player.hasPhysics; }
   get info() { return this.player ? this.player.info : null; }
+  get name() { return this.player ? this.player.name : ""; }
+  get motionPlaying() { return !!this.player && this.player.motionPlaying; }
+  get looping() { return !!this.player && this.player.looping; }
+  get time() { return this.player ? this.player.time : 0; }
+  // the seed in use once loaded, else the attribute's (null without one)
+  get seed() {
+    if (this.player) return this.player.seed;
+    return this.hasAttribute("seed") ? Number(this.getAttribute("seed")) : null;
+  }
   get ready() { return this._ready; }
 
   async playMotion(name, opts) { (await this._ready).playMotion(name, opts); }

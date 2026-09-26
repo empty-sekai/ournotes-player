@@ -50,7 +50,12 @@ test("UniTask.Delay: the creating frame does not count, later frames add deltaTi
   for (let i = 0; i < 4 && !done; i++) await loop.step();
   assert.deepEqual(done, [3, true]);                        // created in frame 1; frames 2 and 3 add 2 / 60
 
-  assert.equal(await loop.delay(0), true);                  // no wait
+  let zero = null;                                          // no shortcut: the first Update tick after this frame
+  const f0 = loop.frameCount;
+  loop.delay(0).then((ok) => { zero = [loop.frameCount - f0, ok]; });
+  await loop.step();
+  assert.deepEqual(zero, [1, true]);
+  assert.throws(() => loop.delay(-1), RangeError);          // ArgumentOutOfRangeException
   const cancelled = loop.delay(1);
   loop.cancelDelays();
   assert.equal(await cancelled, false);

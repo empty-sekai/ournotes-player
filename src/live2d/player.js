@@ -13,7 +13,8 @@ import { MODEL_FRAME_RATE, ModelSession } from "./session.js";
 //   player.setExpression("exp_smile01");
 //
 // Events (CustomEvent, `detail` as noted): progress {loaded, total} (bytes, while loading), ready, play, pause,
-// error {error}.
+// error {error}, motionstart {name, loop} and motionend {name} (ModelSession's onmotion; the first motionstart comes
+// before ready).
 
 const MAX_STEPS = 4;              // steps per animation frame at most (a late frame catches up to 4 frames of game time)
 
@@ -95,7 +96,7 @@ export class ModelPlayer extends EventTarget {
     const [w, h] = this._pixelSize();
     const session = await ModelSession.create({ gl, assets, motion: o.motion, expression: o.expression, loop: o.loop,
                                                 physics: o.physics !== false, breath: o.breath !== false, seed: o.seed,
-                                                width: w, height: h });
+                                                width: w, height: h, onMotion: (type, detail) => this._emit(type, detail) });
     if (this.disposed) { await session.dispose(); throw abortError(); }
     this.session = session;
     if (this._autoHeight) {                                        // the box takes the model canvas' proportions
@@ -119,6 +120,10 @@ export class ModelPlayer extends EventTarget {
   get motion() { return this.session ? this.session.motion : ""; }
   get expression() { return this.session ? this.session.expression : ""; }
   get motionPlaying() { return !!this.session && this.session.motionPlaying; }
+  get looping() { return !!this.session && this.session.looping; }
+  // game time in seconds since the session was created; the seed of the eye blink intervals
+  get time() { return this.session ? this.session.time : 0; }
+  get seed() { return this.session ? this.session.seed : null; }
   get physics() { return !!this.session && this.session.physics; }
   set physics(on) { this._need().setPhysics(!!on); }
   get hasPhysics() { return !!this.session && this.session.hasPhysics; }
