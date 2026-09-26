@@ -1,7 +1,8 @@
 // The read-set tool (scripts/read-set.mjs) and its headless harness (scripts/lib/headless.mjs): the plan of the note
 // views' materials (LiveNotes.plannedMaterials, NoteGL.prepare) over a synthetic score and prefabs, the command line
-// (--features, option errors), the plain-object WebGL2 stub and the on-demand directory store. The equality of the
-// plan with the full simulation over real charts is an opt-in data check (CONTRIBUTING.md).
+// (--features, option errors, the --serve protocol), the plain-object WebGL2 stub and the on-demand directory store.
+// The equality of the plan with the full simulation over real charts, and of the served read sets with those of one
+// process per chart, is an opt-in data check (CONTRIBUTING.md).
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -89,15 +90,38 @@ test("plan: a planned material makes the shader library requests of its draw", (
 // ---- command line
 const run = (...args) => spawnSync(process.execPath, [script, ...args], { encoding: "utf8" });
 
-test("read-set --features names the plan mode; option errors exit 2", () => {
+test("read-set --features names the plan and serve modes; option errors exit 2", () => {
   const f = run("--features");
   assert.equal(f.status, 0);
-  assert.deepEqual(JSON.parse(f.stdout), { features: ["plan"] });
-  assert.equal(f.stdout.trim(), '{"features":["plan"]}');
+  assert.deepEqual(JSON.parse(f.stdout), { features: ["plan", "serve"] });
+  assert.equal(f.stdout.trim(), '{"features":["plan","serve"]}');
   assert.equal(run().status, 2);
   const r = run("some/chart", "--plan", "--frames=10");
   assert.equal(r.status, 2);
   assert.match(r.stderr, /--frames has no meaning with --plan/);
+});
+
+test("read-set --serve answers each request line in order, one JSON line each, until the end of stdin", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ournotes-serve-"));
+  try {
+    fs.writeFileSync(path.join(dir, "live.json"), "{}");               // a live directory without a scene: load fails
+    const requests = ["", "not json", JSON.stringify({ plan: true }), JSON.stringify({ chart: dir, plan: true, frames: 3 }),
+                      JSON.stringify({ chart: path.join(dir, "missing") }), JSON.stringify({ chart: dir, plan: true })];
+    const r = spawnSync(process.execPath, [script, "--serve"], { encoding: "utf8", input: `${requests.join("\n")}\n` });
+    assert.equal(r.status, 0);
+    const answers = r.stdout.trimEnd().split("\n").map((l) => JSON.parse(l));
+    assert.equal(answers.length, 5, "blank lines are skipped, every other line is answered");
+    for (const a of answers) {
+      assert.equal(a.ok, false);
+      assert.equal(typeof a.error, "string");
+      assert.ok(a.cpuSeconds >= 0);
+    }
+    assert.match(answers[0].error, /JSON/);
+    assert.match(answers[1].error, /chart path/);
+    assert.match(answers[2].error, /--frames has no meaning with --plan/);
+    assert.match(answers[3].error, /ENOENT|no such file/);
+    assert.ok(answers[4].error.length > 0);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 // ---- headless WebGL2

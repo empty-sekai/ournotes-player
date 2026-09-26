@@ -40,8 +40,9 @@ public API changes, and document it in [docs/api.md](docs/api.md).
   ```
 
   The same run checks that the read-set plan (`node scripts/read-set.mjs <chart> --plan`, which lists the files a chart
-  reads without stepping it) equals the full simulation's read set; `OURNOTES_READSET_CHARTS=all OURNOTES_JOBS=<n>`
-  checks every chart of the site, `n` at a time.
+  reads without stepping it) equals the full simulation's read set, and that `node scripts/read-set.mjs --serve` (one
+  process for many charts) answers every chart in both modes as the chart's own process does;
+  `OURNOTES_READSET_CHARTS=all OURNOTES_JOBS=<n>` checks every chart of the site, `n` at a time.
 
 - `npm run validate-data -- <site dir> [chart id ...]` checks a site against the data format and the schemas in
   `schema/`.
