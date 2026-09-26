@@ -217,6 +217,7 @@ Every `ENGINE:` note in `src/`, by file. `npm test` checks that this list matche
 - Unity derives these from the particle's randomSeed with module offsets; separate factors per axis here.
 - stream packing follows the renderer inspector ("UV (TEXCOORD0.xy)", "Custom1.x (TEXCOORD0.z)").
 - isPlaying stays true while a stopped system still has live particles (observed engine behaviour).
+- a sub-emitter advances by its parent's simulated time (its own simulationSpeed is not applied).
 - Play on a playing system does nothing; on a stopping / finished one it restarts at time 0, keeping particles.
 - startDelay is counted in simulated time (dt * simulationSpeed) and drawn once per Play.
 - prewarm simulates one full loop in 60 equal steps before the first frame (native step size not known).
@@ -224,18 +225,25 @@ Every `ENGINE:` note in `src/`, by file. `npm test` checks that this list matche
 - deactivation removes the particles and resets the system to stopped without a stop action.
 - the lossy-scale extraction ignores shear from non-uniform parent scale under rotation.
 - the order inside a step follows the documented module order (native order not visible):
+- Simulate advances t * simulationSpeed, as the player-loop update (manual: the speed of the whole system).
+- native Simulate step size unknown; t over duration / 60 runs in equal steps of at most duration / 60.
+- Simulate(0) only records the emitter position (rate over distance); no particle update, no emission.
+- a system that dies inside Simulate (stopping, last particle gone) ends stopped with its stop action, not paused.
 - noise scroll: the offset advances by scrollSpeed (at the normalized system time) per simulated second
 - dead particles are swap-removed (buffer order)
+- Birth sub-emitters emit at the parent's position after its update; the timeline does not loop.
 - the stop action runs inside the update in which the system is found dead (no live particles, not emitting).
 - rate over distance uses the world displacement since the last update, not scaled by simulationSpeed.
 - a burst fires in the step whose time window contains it (start inclusive), aged by the rest of the step.
 - the native sampling point of the rate curve, the carry across Play / loops and float precision are not known.
 - the shape sampling formulas below follow the manual (the native sampling is not visible):
 - disabled shape module: emit at origin along +Z
+- mesh shape: Vertex uniform, Edge by length, Triangle by area (uniform on the surface), along the normal.
 - the order of random draws at emission is native and not known; the order below is this port's.
 - randomizeRotationDirection: the fraction of particles whose rotation (and spin) is mirrored
 - world-space sub-frame emission: emitter position interpolated linearly between the last and this update
 - start velocity = shape direction (rotated, not scaled) x speed, into World space by system rotation and scale.
+- frame = floor((frameOverTime(frac(t cycles)) + startFrame) x frames) wrapped; start frame at time 0.
 - velocity over lifetime, limit, drag, dampen and gravity follow the manual; the native forms are not visible:
 - module vectors in local space enter a World-space simulation through R S v; world vectors a Local one via S^-1 R^T.
 - drag by size uses the largest size axis
@@ -246,12 +254,15 @@ Every `ENGINE:` note in `src/`, by file. `npm test` checks that this list matche
 - constant tangent (1, 0, 0, 1)
 - tie order and the native sort keys (e.g. whether Distance uses the camera position or plane) are not known.
 - non-uniform transform scale on billboards / World-space particles is undocumented; extents scale along system axes.
+- submeshes beyond the material count are not drawn (MeshRenderer rule)
+- World-space particles keep their world position under BakeRotationAndScale (inferred: UIParticle's World matrix is a scale).
 - vertex colour Color32 rounding
+- stretched billboard uv orientation (u along the stretch, head at u = 0) follows the billboard corner order.
+- camera velocity (Camera Scale) comes from camera.velocity (world units / s) when given, else zero.
 - horizontal billboard: u +X, v +Z
 - rotation sign (positive = clockwise on screen) and normalDirection blend are native conventions
 - which viewport dimension, and whether Horizontal / Vertical billboards are included, is native.
 - mesh particles with View alignment: mesh axes = camera axes
-- submeshes beyond the material count are not drawn (MeshRenderer rule)
 - _TextureSampleAdd / _ClipRect / _UIMaskSoftnessX|Y are set by uGUI's CanvasRenderer only; 0 outside a canvas.
 - unity_GUIZTestMode (ZTest of UI/Additive and MobileAddHdrColor) comes from canvas rendering; LessEqual (4) here.
 - the first subshader is taken as the one the GLES3 device runs.
@@ -404,5 +415,119 @@ Every `ENGINE:` note in `src/`, by file. `npm test` checks that this list matche
 **`src/live2d/session.js`**
 
 - the renderer sort is native; sorting order first, equal distances keep the submission (Core index) order.
+
+**`src/story/commands/choice.js`**
+
+- UnityEngine.Random.Range(int, int) is native; this is its known integer mapping.
+
+**`src/story/commands/voice.js`**
+
+- TryPlayVoice returns false for a sound that fails to start; here the audio raises for a cue not preloaded.
+
+**`src/story/features/canvas.js`**
+
+- Mecanim writes a bool property (GameObject.m_IsActive, Behaviour.m_Enabled) from its float curve as
+- a state whose motion is missing or has zero length advances its normalized time as if one second long.
+- a RectTransform under a plain Transform is laid out against a zero-size parent rect at the Transform's
+
+**`src/story/features/chat.js`**
+
+- VerticalLayoutGroup / ContentSizeFitter / ScrollRect / SoftMask layout and TMP text are not modelled, so the
+- .NET StringInfo text elements; Intl.Segmenter grapheme clusters stand in for them.
+- the serialized rects stand in for the layout groups' results.
+
+**`src/story/features/dotween-core.js`**
+
+- the DOTweenSettings resource of the game (which may replace those defaults) is not in the story data.
+- Quaternion.eulerAngles / Quaternion.Euler are native.
+
+**`src/story/features/dotween-pro.js`**
+
+- Unity converts through the rotation matrix in Z, X, Y order (x = asin(-m12) away from the poles
+
+**`src/story/features/dotween.js`**
+
+- UnityEngine.Random is the engine's global stream; `random` is the session's UnityRandom (engine/random.js).
+- Quaternion.AngleAxis is native: (axis sin(a / 2), cos(a / 2)).
+- DOTween and UniTask are library code; their documented behaviour as used by the game.
+
+**`src/story/features/effect.js`**
+
+- activation is native; OnEnable / OnDisable run inside SetActive, parent first.
+- a mesh without vertex colours reads colour (1, 1, 1, 1) (FxMaterial's constant white).
+- bool properties (GameObject.m_IsActive, ParticleSystem.looping) are written from their float curve as
+
+**`src/story/features/frame.js`**
+
+- Animator.Play(hash) (layer -1, normalizedTime -Infinity) continues a state that is already current and
+- .NET StringInfo's text element rules; Intl.Segmenter grapheme clusters stand in for them.
+
+**`src/story/features/posteffect.js`**
+
+- URP applies global volumes of equal priority in registration order (VolumeManager); a Volume registers in
+
+**`src/story/features/screen.js`**
+
+- with HDR and post-process alpha output allowed URP picks R16G16B16A16_SFloat for the colour target; UI
+
+**`src/story/features/video.js`**
+
+- CRI Mana decodes and clocks the movie by its audio track. Here a video is prepared at once, starts playing on
+
+**`src/story/field.js`**
+
+- global volumes of equal priority blend in the volume manager's registration order (VolumeCollection:
+
+**`src/story/params.js`**
+
+- TryParseHtmlString is native; implemented from its documented grammar: '#' + 3, 4, 6 or 8 hex digits, or a
+
+**`src/story/renderer.js`**
+
+- URP picks the camera colour format (B10G11R11 or R16G16B16A16_SFloat) from a player setting; RGBA16F holds
+
+**`src/story/simple/home/blur.js`**
+
+- the Blitter copy shader is not part of the data; a bilinear framebuffer blit samples the same texels.
+
+**`src/story/simple/home/camera.js`**
+
+- LookRotationToQuaternion is native; basis z = forward, x = up x z, y = z x x, trace method, in double, stored as float32.
+- Quaternion.Internal_Slerp is native; shortest-arc slerp, normalized lerp at |dot| >= 0.95, in double, stored as float32.
+
+**`src/story/simple/home/host.js`**
+
+- atlas page texture import settings are not in the data; bilinear, clamped, no mipmaps here.
+- a Skybox clear without a skybox material clears to the background colour.
+
+**`src/story/simple/home/room.js`**
+
+- the opaque sort's quantized depth and state-change grouping are native; plain front-to-back distance here.
+- Renderer.bounds (world box of the mesh's local box) is native; the box of the baked vertices stands in for it.
+
+**`src/story/simple/render.js`**
+
+- the capture RenderTexture is R8G8B8A8_UNorm with a D16 depth buffer; RGBA8 with a 24-bit depth / stencil
+
+**`src/story/simple/ui.js`**
+
+- CrossFade to a missing state is native: Unity logs "State could not be found" and changes nothing.
+
+**`src/story/ui-layout.js`**
+
+- DataUtility.GetMinSize is native; taken as the border sums (Unity's definition for bordered sprites).
+
+**`src/story/ui-ruby.js`**
+
+- the digits are the correctly rounded 7-digit decimal of the value and the decimal separator is ".", as the runtime's invariant-like cultures give.
+
+**`src/story/ui-transition.js`**
+
+- with _UseGradient 1 the shader reads the rule at gl_FragCoord / _ScreenParams; the bound target here is the viewport-sized post target.
+
+**`src/story/ui.js`**
+
+- Animator.writeDefaultValuesOnDisable is not applied: every animated node here is invisible while disabled and resampled on its first update after enable.
+- UniTask's DOTween awaiter completes on the tween's kill callback, so a flash killed by the next Flash call (or Refresh) ends its await inside DOKill and hides the view before the new flash shows it.
 
 <!-- engine-notes:end -->

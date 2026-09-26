@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Stories</title>
+<!-- Story index of a site: lists the site's stories.json and plays a story in the same page.
+       index.html                          the list
+       index.html?story=<advId>            that story (the region's manifest of it, else stories/<advId>.json);
+                                           options &line=<n> &auto=1 &speed=1.5
+       &region=<id> &lang=<language>       the region's stories, the titles and the story in that language
+       &kind=<kind>                        the list: only the stories of that group kind (chapter, friendship, ...)
+     The site root is this page's parent directory unless ?site=<URL> names another one. Live2D Cubism Core is loaded
+     from Live2D's distribution unless ?core=<URL> names another copy; the MotionSync Core (lip sync) is loaded from
+     ?motionsync=<URL> when given. -->
+<style>
+  html, body { margin: 0; height: 100%; background: #111; color: #ddd; font: 14px/1.5 system-ui, sans-serif; }
+  body.list { overflow: auto; }
+  body.play { display: flex; flex-direction: column; overflow: hidden; background: #16171b; }
+  .stories { border-collapse: collapse; margin: 16px; }
+  .stories th, .stories td { padding: 4px 10px; text-align: left; border-bottom: 1px solid #333; }
+  .stories td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .stories a, header a { color: #9cf; }
+  .switch { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 16px 16px 0; }
+  select { margin-left: 4px; background: #222; color: #ddd; border: 1px solid #444; font: inherit; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 12px; border-bottom: 1px solid #2c2d33; }
+  header h1 { margin: 0; font-size: 15px; font-weight: 600; }
+  main { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 8px; }
+  ournotes-story { width: 100%; max-width: calc((100vh - 120px) * 13 / 6); }
+  .line { max-width: 960px; margin: 0 auto 12px; padding: 0 12px; font-size: 13px; color: #aaa; min-height: 1.4em; }
+  .msg { margin: 16px; color: #aaa; font: 12px/1.4 system-ui, sans-serif; white-space: pre-wrap; }
+  header .msg { margin: 0; }
+  .msg:empty { display: none; }
+  @media (max-width: 600px) {
+    .stories { margin: 8px 0; font-size: 13px; }
+    .stories th, .stories td { padding: 4px 6px; }
+    .stories .where { display: none; }
+    .switch { margin: 8px 8px 0; }
+  }
+</style>
+<script type="module" src="story-list.js"></script>
+</head>
+<body></body>
+</html>

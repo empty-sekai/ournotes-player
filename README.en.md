@@ -94,6 +94,27 @@ and sets its expressions, drawing with the game's own Live2D shaders from the da
 (Live2D's `live2dcubismcore.min.js`, under Live2D Inc.'s license), which the page loads itself; this repository, the
 npm package and the bundles do not include it. See [docs/live2d.md](docs/live2d.md).
 
+## Stories
+
+The package also plays the game's story episodes (ADV): `ournotes-player/story` (custom element `<ournotes-story>`)
+runs an episode's command rows on the game's playback loop, with the stage, the Live2D characters, the camera and
+post-processing, the talk window, the rule transitions, music, sound effects and voices. Home spot talks and live
+result talks play in their host screen. It needs Live2D Cubism Core for Web and, for the voices' lip sync, the CRI Core
+of Live2D's MotionSync plugin; the page loads both itself. An episode that uses a part the player does not reproduce
+is refused before it starts, with an error that names that part. The exception is a UIParticle graphic on a frame,
+which is found only while drawing: the episode stops at that frame ([docs/story.md](docs/story.md#not-reproduced)).
+The story data comes from nnnotes (`nnnotes web --all-stories`).
+
+Checked on the 946 episodes of one region's data (English text, no sound files):
+
+- Headless, on a faster clock: 930 play to their end. 16 are refused because they use the centered talk window.
+- Drawn at normal speed, a sample of 56 episodes covering every kind of drawn feature: 44 play to their end. Of the
+  others, 5 are refused before they start (the centered talk window, the chat window, a spot room lit by URP) and 7
+  stop at a UIParticle frame, which the player does not draw.
+- Of the 20 sampled episodes drawn twice, the 15 that play to their end give the same commands, lines and per-frame
+  state in both runs.
+- Every file a story reads is listed in its manifest.
+
 ## Browser support
 
 WebGL2 and WebAudio (the custom element also needs Custom Elements and ResizeObserver), and `decodeAudioData` support

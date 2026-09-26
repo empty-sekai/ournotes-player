@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/empty-sekai/ournotes-player/main/schema/story-language.schema.json",
+  "title": "Story language settings (ui/languages.json)",
+  "description": "The settings of one language of a story: LanguageMode, text field, the line spacing of localized texts and the font asset and line metrics of each font role. See docs/story-data-format.md.",
+  "type": "object",
+  "required": ["format", "language", "mode", "field", "lineSpacing", "fonts", "roles"],
+  "properties": {
+    "format": { "const": "ournotes.story-language/1" },
+    "language": { "enum": ["ja", "en", "zh-Hant", "zh-Hans", "ko"] },
+    "mode": { "enum": [0, 1, 2, 3, 4] },
+    "field": { "enum": ["japanese", "english", "traditionalChinese", "simplifiedChinese", "korean"] },
+    "lineSpacing": { "type": "number" },
+    "fonts": { "enum": ["open", "game"] },
+    "roles": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z][A-Za-z0-9]*$" },
+      "additionalProperties": {
+        "type": "object",
+        "required": ["fontAsset", "lineHeightEm", "ascentEm", "descentEm", "spacingOffset", "boldSpacing"],
+        "properties": {
+          "fontAsset": { "type": "string", "minLength": 1 },
+          "lineHeightEm": { "type": "number" },
+          "ascentEm": { "type": "number" },
+          "descentEm": { "type": "number" },
+          "spacingOffset": { "type": "number" },
+          "boldSpacing": { "type": "number" }
+        }
+      }
+    }
+  }
+}

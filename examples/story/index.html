@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Story</title>
+<!-- One story episode in <ournotes-story>.
+       index.html?story=<advId>      plays stories/<advId>.json of the site
+       index.html?src=<URL>          plays that story manifest
+     Other parameters: ?lang= the story language, ?line= the line to start at, ?auto=1 auto mode, ?speed=1.5.
+     The site root is this page's parent directory unless ?site=<URL> names another one. Live2D Cubism Core is loaded
+     from Live2D's distribution unless ?core=<URL> names another copy; the MotionSync Core (lip sync) is loaded from
+     ?motionsync=<URL> when given. -->
+<style>
+  html, body { margin: 0; height: 100%; }
+  body { display: flex; flex-direction: column; background: #16171b; color: #ddd; font: 14px/1.4 system-ui, sans-serif; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 12px; border-bottom: 1px solid #2c2d33; }
+  header h1 { margin: 0; font-size: 15px; font-weight: 600; }
+  main { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 8px; }
+  ournotes-story { width: 100%; max-width: calc((100vh - 120px) * 13 / 6); }
+  select { font: inherit; color: #eee; background: #25262c; border: 1px solid #3a3b42; border-radius: 6px; padding: 5px 8px; }
+  .msg { font-size: 12px; color: #999; white-space: pre-wrap; }
+  .msg:empty { display: none; }
+  .line { max-width: 960px; margin: 0 auto 12px; padding: 0 12px; font-size: 13px; color: #aaa; min-height: 1.4em; }
+</style>
+<script type="module" src="story.js"></script>
+</head>
+<body>
+<header>
+  <h1 id="title">Story</h1>
+  <label>Language <select id="lang" aria-label="Language"></select></label>
+  <span class="msg" id="msg"></span>
+</header>
+<main><ournotes-story id="story"></ournotes-story></main>
+<div class="line" id="line"></div>
+</body>
+</html>

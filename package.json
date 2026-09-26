@@ -41,6 +41,14 @@
       "types": "./types/live2d.d.ts",
       "default": "./src/live2d/define.js"
     },
+    "./story": {
+      "types": "./types/story.d.ts",
+      "default": "./src/story/index.js"
+    },
+    "./story/element": {
+      "types": "./types/story.d.ts",
+      "default": "./src/story/define.js"
+    },
     "./dist/*": "./dist/*",
     "./schema/*": "./schema/*",
     "./package.json": "./package.json"
@@ -51,7 +59,12 @@
     "./dist/ournotes-player.global*.js",
     "./src/live2d/define.js",
     "./dist/ournotes-player.live2d.element*.js",
-    "./dist/ournotes-player.live2d.global*.js"
+    "./dist/ournotes-player.live2d.global*.js",
+    "./src/story/define.js",
+    "./src/story/player-core.js",
+    "./src/story/features/*.js",
+    "./dist/ournotes-player.story.element*.js",
+    "./dist/ournotes-player.story.global*.js"
   ],
   "files": [
     "dist/",
@@ -63,6 +76,8 @@
     "scripts/validate-data.mjs",
     "examples/chart-list/",
     "examples/live2d/",
+    "examples/story/",
+    "examples/story-list/",
     "LICENSE",
     "LICENSE-EXCEPTION"
   ],

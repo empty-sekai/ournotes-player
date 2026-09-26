@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/empty-sekai/ournotes-player/main/schema/stories.schema.json",
+  "title": "Story index (stories.json)",
+  "description": "The stories a site offers, for listings; the story player does not read it. See docs/story-data-format.md.",
+  "type": "object",
+  "required": ["format", "stories"],
+  "properties": {
+    "format": { "const": "ournotes.stories/1" },
+    "language": { "$ref": "#/$defs/language" },
+    "languages": { "type": "array", "items": { "$ref": "#/$defs/language" } },
+    "regions": { "type": "array", "items": { "$ref": "#/$defs/region" } },
+    "stories": { "type": "array", "items": { "$ref": "#/$defs/entry" } }
+  },
+  "$defs": {
+    "language": { "enum": ["ja", "en", "zh-Hant", "zh-Hans", "ko"] },
+    "regionId": { "type": "string", "pattern": "^[a-z0-9_-]+$" },
+    "region": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "$ref": "#/$defs/regionId" },
+        "name": { "type": "string" },
+        "languages": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "size": { "type": "integer", "minimum": 0 },
+    "names": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/language" },
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    },
+    "character": {
+      "type": "object",
+      "required": ["id", "names"],
+      "additionalProperties": false,
+      "properties": { "id": { "type": "integer" }, "names": { "$ref": "#/$defs/names" } }
+    },
+    "group": {
+      "type": "object",
+      "required": ["kind", "id", "characters"],
+      "properties": {
+        "kind": { "enum": ["chapter", "friendship", "spotTalk", "liveResult", "spot"] },
+        "id": { "type": "integer" },
+        "episodeNumber": { "type": "integer" },
+        "chapter": {
+          "type": "object",
+          "required": ["id", "names"],
+          "properties": {
+            "id": { "type": "integer" },
+            "names": { "$ref": "#/$defs/names" },
+            "bandId": { "type": "integer" },
+            "special": { "type": "boolean" }
+          }
+        },
+        "characters": { "type": "array", "items": { "$ref": "#/$defs/character" } },
+        "spot": {
+          "type": "object",
+          "required": ["id", "names"],
+          "properties": { "id": { "type": "integer" }, "names": { "$ref": "#/$defs/names" } }
+        }
+      }
+    },
+    "facts": {
+      "type": "object",
+      "required": ["advId", "asset", "playbackMode", "titles", "groups", "commands", "commandCount", "language", "languages"],
+      "properties": {
+        "advId": { "type": "integer", "minimum": 1 },
+        "asset": { "type": "string", "minLength": 1 },
+        "sheetName": { "type": "string" },
+        "playbackMode": { "enum": [0, 1] },
+        "titles": { "$ref": "#/$defs/names" },
+        "groups": { "type": "array", "items": { "$ref": "#/$defs/group" } },
+        "commands": { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9]*$" } },
+        "commandCount": { "type": "integer", "minimum": 0 },
+        "language": { "$ref": "#/$defs/language" },
+        "languages": { "type": "array", "items": { "$ref": "#/$defs/language" }, "minItems": 1 }
+      }
+    },
+    "entry": {
+      "type": "object",
+      "required": ["id", "advId", "manifest", "size", "audio", "audioFormat", "fonts",
+                   "asset", "playbackMode", "titles", "groups", "commands", "commandCount", "language", "languages"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[1-9][0-9]*$" },
+        "advId": { "type": "integer", "minimum": 1 },
+        "manifest": { "type": "string", "pattern": "^stories/([a-z0-9_-]+/)?[1-9][0-9]*\\.json$" },
+        "regions": { "type": "array", "items": { "$ref": "#/$defs/regionId" }, "minItems": 1 },
+        "size": {
+          "type": "object",
+          "required": ["common", "languages"],
+          "additionalProperties": false,
+          "properties": {
+            "common": { "$ref": "#/$defs/size" },
+            "languages": {
+              "type": "object",
+              "propertyNames": { "$ref": "#/$defs/language" },
+              "additionalProperties": { "$ref": "#/$defs/size" }
+            }
+          }
+        },
+        "audio": { "type": "boolean" },
+        "audioFormat": { "enum": ["aac", "flac", null] },
+        "fonts": { "enum": ["open", "game"] },
+        "asset": { "type": "string", "minLength": 1 },
+        "sheetName": { "type": "string" },
+        "playbackMode": { "enum": [0, 1] },
+        "titles": { "$ref": "#/$defs/names" },
+        "groups": { "type": "array", "items": { "$ref": "#/$defs/group" } },
+        "commands": { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9]*$" } },
+        "commandCount": { "type": "integer", "minimum": 0 },
+        "language": { "$ref": "#/$defs/language" },
+        "languages": { "type": "array", "items": { "$ref": "#/$defs/language" }, "minItems": 1 }
+      }
+    }
+  }
+}

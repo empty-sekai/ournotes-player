@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/empty-sekai/ournotes-player/main/schema/story.schema.json",
+  "title": "Story index (story.json)",
+  "description": "The index of a story's logical files: episode, scene, UI, models, cue sheet directories and the media files of the kinds the episode uses. See docs/story-data-format.md.",
+  "type": "object",
+  "required": ["advId", "episode", "scene", "ui", "models", "audio", "frames", "effects", "postEffects", "stills", "talkWindows", "chat", "videos"],
+  "properties": {
+    "advId": { "type": "integer", "minimum": 1 },
+    "episode": { "$ref": "#/$defs/path" },
+    "scene": { "$ref": "#/$defs/path" },
+    "ui": { "$ref": "#/$defs/path" },
+    "models": {
+      "type": "object",
+      "propertyNames": { "pattern": "^Character/Live2D/[^/]+/[^/]+/model/[^/]+$" },
+      "additionalProperties": {
+        "type": "object",
+        "required": ["dir", "moc3", "prefab"],
+        "properties": {
+          "dir": { "$ref": "#/$defs/path" },
+          "moc3": { "type": "string", "pattern": "^[^/\\\\]+\\.moc3$" },
+          "prefab": { "type": "string", "pattern": "^[^/\\\\]+\\.json$" }
+        }
+      }
+    },
+    "audio": {
+      "type": "object",
+      "propertyNames": { "minLength": 1 },
+      "additionalProperties": { "$ref": "#/$defs/path" }
+    },
+    "frames": { "$ref": "#/$defs/optionalPath" },
+    "effects": { "$ref": "#/$defs/optionalPath" },
+    "postEffects": { "$ref": "#/$defs/optionalPath" },
+    "stills": { "$ref": "#/$defs/optionalPath" },
+    "talkWindows": { "$ref": "#/$defs/optionalPath" },
+    "chat": { "$ref": "#/$defs/optionalPath" },
+    "videos": { "$ref": "#/$defs/optionalPath" }
+  },
+  "$defs": {
+    "path": { "type": "string", "pattern": "^[A-Za-z0-9_][^\\\\]*$" },
+    "optionalPath": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9_][^\\\\]*\\.json$" }
+  }
+}

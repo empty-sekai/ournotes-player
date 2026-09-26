@@ -70,6 +70,17 @@ iframe：[examples/iframe.html](examples/iframe.html) 是一个只含一个播�
 
 同一个包还包含 Live2D 模型查看器 `ournotes-player/live2d`（自定义元素 `<ournotes-live2d>`）：按游戏剧情画面的方式显示一个角色（待机动作、自动眨眼、呼吸、物理），并可播放动作、切换表情，绘制使用数据中游戏自身的 Live2D 着色器。它需要 Live2D Cubism Core for Web（Live2D 的 `live2dcubismcore.min.js`，适用 Live2D Inc. 的许可），由页面自行加载；本仓库、npm 包与打包文件均不包含它。见 [docs/live2d.md](docs/live2d.md)。
 
+## 剧情
+
+同一个包还能播放游戏的剧情（ADV）：`ournotes-player/story`（自定义元素 `<ournotes-story>`）按游戏的播放循环执行一集的命令行，包括舞台、Live2D 角色、镜头与后处理、对话框、规则转场、音乐、音效与语音；据点对话与演出结束对话在各自的宿主画面中播放。它需要 Live2D Cubism Core for Web，语音口型另需 Live2D MotionSync 插件的 CRI Core，两者都由页面自行加载。用到播放器尚未重现的部分的剧情会在开始前被拒绝播放，错误信息会指明该部分；唯一的例外是画框上的 UIParticle 图形，它只在绘制时才被发现，剧情会在该帧停止（见 [docs/story.md](docs/story.md#not-reproduced)）。剧情数据由 nnnotes 生成（`nnnotes web --all-stories`）。
+
+在一个区服的 946 集剧情数据（英语文本，无音频）上检验：
+
+- 不绘制（加速时钟）：930 集播放到结尾；16 集用到居中对话框，被拒绝播放。
+- 以正常速度绘制，覆盖各类绘制功能的 56 集抽样：44 集播放到结尾；其余 5 集在开始前被拒绝（居中对话框、聊天窗口、使用 URP 光照的据点房间），7 集在播放器不绘制的 UIParticle 画框处停止。
+- 抽样中的 20 集各绘制两次，其中播放到结尾的 15 集两次的命令、台词与逐帧状态一致。
+- 每集读取的文件都在其清单之内。
+
 ## 浏览器支持
 
 需要 WebGL2 与 WebAudio（自定义元素另需 Custom Elements 与 ResizeObserver），并能用 `decodeAudioData` 解码 FLAC 与 AAC（MP4）。目前在 Chromium 内核浏览器中测试。

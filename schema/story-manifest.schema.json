@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/empty-sekai/ournotes-player/main/schema/story-manifest.schema.json",
+  "title": "Story manifest (stories/<advId>.json, or stories/<region>/<advId>.json)",
+  "description": "The logical files of one story (common files and one group per language) and where their bytes are; the file entries are those of a chart manifest. See docs/story-data-format.md.",
+  "type": "object",
+  "required": ["format", "advId", "story", "language", "audio", "audioFormat", "fonts", "requires", "files", "languages"],
+  "properties": {
+    "format": { "const": "ournotes.story-manifest/1" },
+    "advId": { "type": "integer", "minimum": 1 },
+    "story": { "$ref": "#/$defs/facts" },
+    "regions": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9_-]+$" }, "minItems": 1 },
+    "language": { "$ref": "#/$defs/language" },
+    "audio": { "type": "boolean" },
+    "audioFormat": { "enum": ["aac", "flac", null] },
+    "fonts": { "enum": ["open", "game"] },
+    "requires": {
+      "type": "object",
+      "required": ["commands", "cubismCore", "motionSync"],
+      "properties": {
+        "commands": { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9]*$" } },
+        "cubismCore": { "type": "boolean" },
+        "motionSync": { "type": "boolean" }
+      }
+    },
+    "files": { "$ref": "#/$defs/files" },
+    "host": {
+      "type": "object",
+      "required": ["kind", "doc", "ui"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["home", "afterlive"] },
+        "doc": { "const": "host/host.json" },
+        "ui": { "const": "ui/simple/ui.json" }
+      }
+    },
+    "languages": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/language" },
+      "additionalProperties": {
+        "type": "object",
+        "required": ["files"],
+        "additionalProperties": false,
+        "properties": { "files": { "$ref": "#/$defs/files" } }
+      }
+    }
+  },
+  "$defs": {
+    "language": { "enum": ["ja", "en", "zh-Hant", "zh-Hans", "ko"] },
+    "names": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/language" },
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    },
+    "facts": {
+      "type": "object",
+      "required": ["advId", "asset", "playbackMode", "titles", "groups", "commands", "commandCount", "language", "languages"],
+      "properties": {
+        "advId": { "type": "integer", "minimum": 1 },
+        "asset": { "type": "string", "minLength": 1 },
+        "sheetName": { "type": "string" },
+        "playbackMode": { "enum": [0, 1] },
+        "titles": { "$ref": "#/$defs/names" },
+        "groups": { "type": "array", "items": { "type": "object", "required": ["kind", "id", "characters"] } },
+        "commands": { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9]*$" } },
+        "commandCount": { "type": "integer", "minimum": 0 },
+        "language": { "$ref": "#/$defs/language" },
+        "languages": { "type": "array", "items": { "$ref": "#/$defs/language" }, "minItems": 1 }
+      }
+    },
+    "files": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Za-z0-9_][^\\\\]*$" },
+      "additionalProperties": {
+        "anyOf": [{ "$ref": "#/$defs/whole" }, { "$ref": "#/$defs/parts" }]
+      }
+    },
+    "asset": { "type": "string", "pattern": "^assets/[0-9a-f]{64}\\.[a-z0-9]+$" },
+    "size": { "type": "integer", "minimum": 0 },
+    "whole": {
+      "type": "object",
+      "required": ["asset", "size"],
+      "additionalProperties": false,
+      "properties": { "asset": { "$ref": "#/$defs/asset" }, "size": { "$ref": "#/$defs/size" } }
+    },
+    "parts": {
+      "type": "object",
+      "required": ["parts", "size"],
+      "additionalProperties": false,
+      "properties": {
+        "parts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "array",
+            "prefixItems": [{ "type": "string" }, { "$ref": "#/$defs/asset" }, { "$ref": "#/$defs/size" }],
+            "minItems": 3,
+            "maxItems": 3
+          }
+        },
+        "size": { "$ref": "#/$defs/size" }
+      }
+    }
+  }
+}

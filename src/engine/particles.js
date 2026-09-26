@@ -32,7 +32,9 @@ import { GLTex } from "./texture.js";
 //
 // Frame model: the effect views (e.g. src/live/fx-effects.js) call play/stop/clear/onActiveChanged from the update /
 // animation phases and simulate(dt) once per frame in the animation phase (after the Animators); drawItem(camera) in
-// the render hook.
+// the render hook. Coffee UIParticle hosts instead keep the systems paused and call fastForward(dt, false, false, false)
+// (ParticleSystem.Simulate) and bake(camera) (ParticleSystemRenderer.BakeMesh) per frame. Hosts link the Sub Emitters
+// module's systems with linkSubEmitters once a prefab's systems exist.
 
 export class FxError extends Error {};
 
@@ -398,10 +400,11 @@ export class FxParticleSystem {
       randomPosition: F(S.randomPositionAmount), alignToDirection: !!S.alignToDirection,
     };
     if (this.shape.enabled) {
-      if (![0, 1, 2, 3, 4, 5, 10, 11, 12, 15, 16, 18].includes(S.type)) this.unsupported.push(`shape type ${S.type}`);
+      if (![0, 1, 2, 3, 4, 5, 6, 10, 11, 12, 15, 16, 18].includes(S.type)) this.unsupported.push(`shape type ${S.type}`);
       if ([0, 1, 2, 3, 4, 10, 11, 12].includes(S.type) && S.radius.mode !== 0) this.unsupported.push("shape radius mode");
       if ([4, 10, 11].includes(S.type) && S.arc.mode !== 0) this.unsupported.push("shape arc mode");
       if (this.shape.alignToDirection) this.unsupported.push("shape alignToDirection");
+      if (S.type === 6) this._meshShape(S);
     }
     const Z = c.SizeModule;
     this.size = Z.enabled ? { separateAxes: !!Z.separateAxes, x: MM(Z.curve), y: MM(Z.y), z: MM(Z.z) } : null;
@@ -435,28 +438,44 @@ export class FxParticleSystem {
     this.custom = CD.enabled ? [0, 1].map((k) => ({
       mode: CD[`mode${k}`] | 0, count: CD[`vectorComponentCount${k}`] | 0,
       vec: [0, 1, 2, 3].map((j) => MM(CD[`vector${k}_${j}`])), color: new MinMaxGradient(CD[`color${k}`]) })) : null;
-    for (const m of ["UVModule", "InheritVelocityModule", "LifetimeByEmitterSpeedModule", "ExternalForcesModule",
+    // Texture Sheet Animation (UVModule): Grid mode, Whole Sheet, Lifetime time mode (_uvTile)
+    const U = c.UVModule;
+    this.uv = U && U.enabled ? {
+      tilesX: Math.max(1, U.tilesX | 0), tilesY: Math.max(1, U.tilesY | 0), frameOverTime: MM(U.frameOverTime),
+      startFrame: MM(U.startFrame), cycles: F(U.cycles), channels: U.uvChannelMask ?? -1 } : null;
+    if (this.uv) {
+      if ((U.mode | 0) !== 0) this.unsupported.push("texture sheet Sprites mode");
+      if ((U.animationType | 0) !== 0) this.unsupported.push("texture sheet Single Row animation");
+      if ((U.timeMode | 0) !== 0) this.unsupported.push(`texture sheet time mode ${U.timeMode}`);
+      if (F(U.flipU || 0) > 0 || F(U.flipV || 0) > 0) this.unsupported.push("texture sheet UV flip");
+    }
+    // Sub Emitters (SubModule): Birth; the systems are resolved by linkSubEmitters
+    const SM = c.SubModule;
+    this.subEmitters = SM && SM.enabled ? (SM.subEmitters || []).map((e) => ({
+      emitter: e.emitter || null, type: e.type | 0, properties: e.properties | 0, probability: F(e.emitProbability ?? 1),
+      system: null })) : [];
+    for (const e of this.subEmitters) {
+      if (e.type !== 0) this.unsupported.push(`sub-emitter type ${e.type}`);
+      if (e.properties) this.unsupported.push("sub-emitter inherited properties");
+    }
+    this.mainEmitter = null;          // the parent system when this one is a sub-emitter (it then emits only for its parent)
+    this._pending = [];               // sub-emitter emissions waiting for this system's step
+    for (const m of ["InheritVelocityModule", "LifetimeByEmitterSpeedModule", "ExternalForcesModule",
                      "SizeBySpeedModule", "RotationBySpeedModule", "ColorBySpeedModule", "CollisionModule",
-                     "TriggerModule", "SubModule", "LightsModule", "TrailModule"])
+                     "TriggerModule", "LightsModule", "TrailModule"])
       if (c[m] && c[m].enabled) this.unsupported.push(m);
-    // renderer
+    // renderer: `renderer` holds the settings of an enabled ParticleSystemRenderer (drawn by drawItem / draw);
+    // rendererConfig (getter) the same settings also for a disabled one (bake: Coffee UIParticle disables the renderer
+    // and bakes its mesh)
     const r = rendererComp && rendererComp.m_Enabled ? rendererComp : null;
-    this.renderer = r ? {
-      renderMode: r.m_RenderMode, alignment: r.m_RenderAlignment, pivot: v3(r.m_Pivot), flip: v3(r.m_Flip),
-      minSize: F(r.m_MinParticleSize), maxSize: F(r.m_MaxParticleSize), sortMode: r.m_SortMode,
-      sortingLayer: r.m_SortingLayer | 0, sortingLayerID: r.m_SortingLayerID | 0, normalDirection: F(r.m_NormalDirection),
-      maskInteraction: r.m_MaskInteraction | 0, sortingFudge: F(r.m_SortingFudge || 0),
-      streams: r.m_UseCustomVertexStreams ? r.m_VertexStreams.slice() : [0, 1, 3, 4],
-      mesh: r.m_Mesh || null, materials: (r.m_Materials || []).filter(Boolean),
-    } : null;
+    this._rendererComp = rendererComp || null;
+    this._rendererConfig = undefined;
+    this.renderer = r ? FxParticleSystem._rendererSettings(r) : null;
     this.sortingOrder = r ? r.m_SortingOrder | 0 : 0;     // LiveParticleOrderInLayerSetter may overwrite
     this.renderUnsupported = [];
     if (this.renderer) {
       const R2 = this.renderer;
-      if (![0, 2, 3, 4, 5].includes(R2.renderMode)) this.renderUnsupported.push(`render mode ${R2.renderMode}`);
-      if (R2.renderMode === 4 && !R2.mesh) this.renderUnsupported.push("mesh render mode without mesh data");
-      if (R2.alignment === 4) this.renderUnsupported.push("velocity render alignment");
-      for (const s of R2.streams) if (!FX_STREAM[s]) this.renderUnsupported.push(`vertex stream ${s}`);
+      this.renderUnsupported.push(...FxParticleSystem._geometryUnsupported(R2));
       if (!R2.materials.length) this.renderUnsupported.push("no material");
       // register the materials now, so FxMaterials.load() uploads them before the first draw (Unity loads a prefab's
       // materials with the prefab)
@@ -478,6 +497,43 @@ export class FxParticleSystem {
     this._pausedFrom = null;
   }
 
+  // ParticleSystemRenderer serialized fields -> renderer settings
+  static _rendererSettings(r) {
+    const v3 = (o) => [F(o.x), F(o.y), F(o.z)];
+    return {
+      renderMode: r.m_RenderMode, alignment: r.m_RenderAlignment, pivot: v3(r.m_Pivot), flip: v3(r.m_Flip),
+      minSize: F(r.m_MinParticleSize), maxSize: F(r.m_MaxParticleSize), sortMode: r.m_SortMode,
+      sortingLayer: r.m_SortingLayer | 0, sortingLayerID: r.m_SortingLayerID | 0, normalDirection: F(r.m_NormalDirection),
+      maskInteraction: r.m_MaskInteraction | 0, sortingFudge: F(r.m_SortingFudge || 0),
+      streams: r.m_UseCustomVertexStreams ? r.m_VertexStreams.slice() : [0, 1, 3, 4],
+      mesh: r.m_Mesh || null, materials: (r.m_Materials || []).filter(Boolean),
+      lengthScale: F(r.m_LengthScale ?? 2), velocityScale: F(r.m_VelocityScale || 0),
+      cameraVelocityScale: F(r.m_CameraVelocityScale || 0), freeformStretching: !!r.m_FreeformStretching,
+    };
+  }
+
+  // renderer features the geometry does not implement (drawn or baked -> FxError)
+  static _geometryUnsupported(R) {
+    const out = [];
+    if (![0, 1, 2, 3, 4, 5].includes(R.renderMode)) out.push(`render mode ${R.renderMode}`);
+    if (R.renderMode === 1) {
+      if (R.freeformStretching) out.push("freeform stretching");
+      if (R.flip.some((x) => x > 0)) out.push("stretched billboard flip");
+      if (R.pivot[2]) out.push("stretched billboard pivot z");
+    }
+    if (R.renderMode === 4 && !R.mesh) out.push("mesh render mode without mesh data");
+    if (R.alignment === 4) out.push("velocity render alignment");
+    for (const s of R.streams) if (!FX_STREAM[s]) out.push(`vertex stream ${s}`);
+    return out;
+  }
+
+  // renderer settings also for a disabled renderer (null without a ParticleSystemRenderer component)
+  get rendererConfig() {
+    if (this._rendererConfig === undefined)
+      this._rendererConfig = this.renderer || (this._rendererComp ? FxParticleSystem._rendererSettings(this._rendererComp) : null);
+    return this._rendererConfig;
+  }
+
   // -------------------------------------------------------------------------------------------- state
   get particleCount() { return this.particles.length; }
   // ENGINE: isPlaying stays true while a stopped system still has live particles (observed engine behaviour).
@@ -493,6 +549,22 @@ export class FxParticleSystem {
 
   _checkSupported() {
     if (this.unsupported.length) throw new FxError(`${this.name}: not implemented: ${this.unsupported.join(", ")}`);
+    if (this.subEmitters.some((e) => !e.system)) throw new FxError(`${this.name}: sub-emitters not linked (linkSubEmitters)`);
+  }
+
+  // Sub Emitters module: resolve(emitter) -> FxParticleSystem | null for each serialized emitter reference
+  // ({component: "ParticleSystem", gameObject: <node path>}); the host calls it once all systems of the prefab exist.
+  // A linked system is driven by this one (mainEmitter): it emits only for this system's particles, and it is stepped
+  // inside this system's step, so its own simulate / fastForward do nothing (Coffee UIParticle does not simulate a
+  // sub-emitter's renderer either). A restart (fastForward) of this system clears its sub-emitters' particles too.
+  // ENGINE: a sub-emitter advances by its parent's simulated time (its own simulationSpeed is not applied).
+  linkSubEmitters(resolve) {
+    for (const e of this.subEmitters) {
+      const s = e.emitter ? resolve(e.emitter) : null;
+      if (!s || s === this) throw new FxError(`${this.name}: sub-emitter ${e.emitter ? e.emitter.gameObject : "(none)"} not found`);
+      e.system = s;
+      s.mainEmitter = this;
+    }
   }
 
   // ParticleSystem.Play; a paused system resumes.
@@ -505,6 +577,11 @@ export class FxParticleSystem {
   _play() {
     if (this.state === "paused") { this.state = this._pausedFrom || "playing"; return; }
     if (this.state === "playing") return;
+    this._start();
+  }
+
+  // playing from time 0 (Play of a stopped system, Simulate with restart)
+  _start() {
     this._checkSupported();
     if (!this.main.autoRandomSeed) this.rng.initState(this.main.randomSeed);
     this.state = "playing";
@@ -634,11 +711,50 @@ export class FxParticleSystem {
   // velocity over lifetime, limit velocity, rotation, position integration; then emission (bursts, rate over time,
   // rate over distance), each new particle simulated for the part of the step after its emission time.
   simulate(dt) {
-    if (this.activeInHierarchy === false) return;
+    if (this.activeInHierarchy === false || this.mainEmitter) return;
     if (this.state === "stopped" || this.state === "paused") return;
     const sdt = F(dt * this.main.simulationSpeed);
     if (!(sdt > 0)) return;
     this._step(sdt);
+  }
+
+  // ParticleSystem.Simulate(t, withChildren, restart, fixedTimeStep): fast-forwards the system by t seconds, then pauses
+  // it (Unity API). restart: back to time 0 first (particles cleared, then the start of Play: delay, bursts, seed,
+  // prewarm); without restart the simulation continues from the current state, also from a paused one. Coffee
+  // UIParticle drives its systems only this way (Clear + Pause, then Simulate(deltaTime, false, false, false) per frame;
+  // UIParticle.Play = Simulate(0, false, true)); such a system must not also get simulate(dt).
+  // fixedTimeStep (steps of Time.fixedDeltaTime, a project setting not in the data), a negative t and no restart on a
+  // stopped system raise FxError.
+  // ENGINE: Simulate advances t * simulationSpeed, as the player-loop update (manual: the speed of the whole system).
+  // ENGINE: native Simulate step size unknown; t over duration / 60 runs in equal steps of at most duration / 60.
+  // (duration / 60 is the prewarm step here.)
+  // ENGINE: Simulate(0) only records the emitter position (rate over distance); no particle update, no emission.
+  // ENGINE: a system that dies inside Simulate (stopping, last particle gone) ends stopped with its stop action, not paused.
+  fastForward(t, withChildren = true, restart = true, fixedTimeStep = true) {
+    if (fixedTimeStep) throw new FxError(`${this.name}: Simulate with fixedTimeStep not implemented`);
+    if (!(t >= 0)) throw new FxError(`${this.name}: Simulate time ${t}`);
+    this._fastForward(t, restart);
+    if (withChildren) for (const c of this.children) c.fastForward(t, true, restart, false);
+  }
+
+  _fastForward(t, restart) {
+    if (this.activeInHierarchy === false || this.mainEmitter) return;
+    if (restart) {
+      this._checkSupported();
+      this.particles.length = 0;
+      for (const e of this.subEmitters) { e.system.particles.length = 0; e.system._pending.length = 0; }
+      this._start();
+    }
+    const from = this.state === "paused" ? this._pausedFrom || "playing" : this.state;
+    if (from === "stopped") throw new FxError(`${this.name}: Simulate without restart on a stopped system`);
+    this.state = from;
+    const sdt = F(t * this.main.simulationSpeed);
+    if (sdt > 0) {
+      const h = this.main.duration > 0 ? F(this.main.duration / 60) : 0;
+      const n = h > 0 && sdt > h ? Math.ceil(sdt / h) : 1, d = n > 1 ? F(sdt / n) : sdt;
+      for (let i = 0; i < n && this.state !== "stopped"; i++) this._step(d);
+    } else this.prevEmitterPos = this._emitterPosition();
+    if (this.state !== "stopped") { this._pausedFrom = this.state; this.state = "paused"; }
   }
 
   _step(sdt) {
@@ -646,13 +762,56 @@ export class FxParticleSystem {
     const ps = this.particles;
     // ENGINE: noise scroll: the offset advances by scrollSpeed (at the normalized system time) per simulated second
     if (this.noise) this.noiseOffset += this.noise.scrollSpeed.evaluate(this.main.duration > 0 ? this.time / this.main.duration : 0, 1) * sdt;
+    const births = this.subEmitters.length > 0;
     for (let i = 0; i < ps.length;) {
-      if (this._update(ps[i], sdt, fr)) i++;
+      if (this._update(ps[i], sdt, fr)) { if (births) this._subBirth(ps[i], sdt, fr); i++; }
       else { ps[i] = ps[ps.length - 1]; ps.pop(); }      // ENGINE: dead particles are swap-removed (buffer order)
     }
-    if (this.state === "playing") this._emit(sdt, fr);
+    if (this.state === "playing" && !this.mainEmitter) this._emit(sdt, fr);
+    if (this._pending.length) {
+      for (const e of this._pending) this._spawn(e.age, 1, fr, e.at, e.tn);
+      this._pending.length = 0;
+    }
     this.prevEmitterPos = fr.pos;
+    if (births) for (const sub of new Set(this.subEmitters.map((e) => e.system))) if (sub.activeInHierarchy !== false) sub._step(sdt);
     if (this.state === "stopping" && ps.length === 0) this._stopped();
+  }
+
+  // Birth sub-emitters of particle p after an update of dt: each sub-emitter's Emission module runs on the particle's
+  // own timeline (its age): bursts whose time the age passed, and rate over time over [age - dt, age), emitted at the
+  // particle's position. Emit Probability is tested once per particle at birth (p.sub, set in _spawn).
+  // ENGINE: Birth sub-emitters emit at the parent's position after its update; the timeline does not loop.
+  // (The age of each emitted particle is the time since its emission on that timeline.)
+  _subBirth(p, dt, fr) {
+    const t1 = p.age, t0 = Math.max(0, F(t1 - dt));
+    let at = null;
+    this.subEmitters.forEach((e, i) => {
+      const st = p.sub[i], s = e.system, em = s.emission, D = s.main.duration;
+      if (!st || !em.enabled || s.activeInHierarchy === false) return;
+      const put = (tau) => {
+        if (!at) at = this.worldPosition(p, fr);
+        s._pending.push({ age: F(t1 - tau), at, tn: D > 0 ? Math.min(tau / D, 1) : 0 });
+      };
+      em.bursts.forEach((b, k) => {
+        const cycles = b.cycles > 0 ? b.cycles : (b.interval > 0 ? Infinity : 1);
+        for (let guard = 0; guard < 100000 && st.bursts[k] < cycles; guard++) {
+          const T = F(b.time + st.bursts[k] * b.interval);
+          if (T > t1) break;
+          st.bursts[k]++;
+          if (b.probability < 1 && !(s.rng.value() < b.probability)) continue;
+          const n = Math.round(b.count.evaluate(D > 0 ? T / D : 0, s.rng.value()));
+          for (let j = 0; j < n; j++) put(T);
+        }
+      });
+      if (t1 > t0) {
+        const rate = em.rateOverTime.evaluate(D > 0 ? (t0 + t1) * 0.5 / D : 0, s.rng.value());
+        if (rate > 0) {
+          const total = st.acc + rate * (t1 - t0), n = Math.floor(total);
+          for (let k = 1; k <= n; k++) put(t0 + (k - st.acc) / rate);
+          st.acc = total - n;
+        }
+      }
+    });
   }
 
   // ENGINE: the stop action runs inside the update in which the system is found dead (no live particles, not emitting).
@@ -749,6 +908,29 @@ export class FxParticleSystem {
     this.emitAcc = total - n;
   }
 
+  // Shape type Mesh (6): the exported mesh ({vertices, normals, submeshes}), the triangles of every submesh (or of
+  // m_MeshMaterialIndex with m_UseMeshMaterialIndex), with cumulative areas and edge lengths for the placement modes
+  // (placementMode: 0 Vertex, 1 Edge, 2 Triangle). Spawn modes other than Random and mesh colours raise FxError.
+  _meshShape(S) {
+    const m = S.m_Mesh;
+    if (!m || !m.vertices || !m.vertices.length) { this.unsupported.push("shape mesh without mesh data"); return; }
+    if (S.m_MeshSpawn && (S.m_MeshSpawn.mode | 0) !== 0) this.unsupported.push(`shape mesh spawn mode ${S.m_MeshSpawn.mode}`);
+    if (S.m_UseMeshColors && m.colors) this.unsupported.push("shape mesh colours");
+    if (![0, 1, 2].includes(S.placementMode | 0)) this.unsupported.push(`shape mesh placement ${S.placementMode}`);
+    const V = FxV, P = m.vertices.map((v) => [F(v[0]), F(v[1]), F(v[2] ?? 0)]);
+    const N = m.normals ? m.normals.map((n) => [F(n[0]), F(n[1]), F(n[2] ?? 0)]) : P.map(() => [0, 0, 1]);
+    const subs = S.m_UseMeshMaterialIndex ? [(m.submeshes || [])[S.m_MeshMaterialIndex | 0] || []] : m.submeshes || [];
+    const tris = [], areas = [], edges = [], lengths = [];
+    let area = 0, length = 0;
+    for (const sub of subs) for (let i = 0; i + 2 < sub.length; i += 3) {
+      const t = [sub[i], sub[i + 1], sub[i + 2]], [a, b, c] = t.map((k) => P[k]);
+      tris.push(t); area += 0.5 * V.len(V.cross(V.sub(b, a), V.sub(c, a))); areas.push(area);
+      for (const [x, y] of [[t[0], t[1]], [t[1], t[2]], [t[2], t[0]]]) { edges.push([x, y]); length += V.len(V.sub(P[y], P[x])); lengths.push(length); }
+    }
+    if ((S.placementMode | 0) !== 0 && !tris.length) this.unsupported.push("shape mesh without triangles");
+    this.shape.mesh = { P, N, tris, areas, edges, lengths, placement: S.placementMode | 0, normalOffset: F(S.m_MeshNormalOffset || 0) };
+  }
+
   // Shape module sample in the shape's frame -> {p, d} in the system's local frame (before the system matrix).
   // Shape frame: TRS(m_Position, Euler(m_Rotation), m_Scale).
   // ENGINE: the shape sampling formulas below follow the manual (the native sampling is not visible):
@@ -793,6 +975,32 @@ export class FxParticleSystem {
         } else d = V.norm(p[0] || p[1] ? [p[0], p[1], 0] : [1, 0, 0]);
         break;
       }
+      case 6: {
+        // ENGINE: mesh shape: Vertex uniform, Edge by length, Triangle by area (uniform on the surface), along the normal.
+        // The emission direction is the barycentric blend of the vertex normals; m_MeshNormalOffset moves along it.
+        const M = S.mesh;
+        const pick = (cum) => {
+          const x = rng.value() * cum[cum.length - 1];
+          let lo = 0, hi = cum.length - 1;
+          while (lo < hi) { const m = (lo + hi) >> 1; if (cum[m] > x) hi = m; else lo = m + 1; }
+          return lo;
+        };
+        if (M.placement === 0) {
+          const k = Math.min(M.P.length - 1, Math.floor(rng.value() * M.P.length));
+          p = M.P[k].slice(); d = V.norm(M.N[k]);
+        } else if (M.placement === 1) {
+          const [a, b] = M.edges[pick(M.lengths)], u = rng.value();
+          p = V.lerp(M.P[a], M.P[b], u); d = V.norm(V.lerp(M.N[a], M.N[b], u));
+        } else {
+          const [a, b, c] = M.tris[pick(M.areas)];
+          let u = rng.value(), w = rng.value();
+          if (u + w > 1) { u = 1 - u; w = 1 - w; }
+          const bary = (X) => V.add(X[a], V.add(V.scale(V.sub(X[b], X[a]), u), V.scale(V.sub(X[c], X[a]), w)));
+          p = bary(M.P); d = V.norm(bary(M.N));
+        }
+        if (M.normalOffset) p = V.add(p, V.scale(d, M.normalOffset));
+        break;
+      }
       default: throw new FxError(`${this.name}: shape type ${S.type}`);
     }
     p = [p[0] * S.scale[0], p[1] * S.scale[1], p[2] * S.scale[2]];
@@ -810,11 +1018,13 @@ export class FxParticleSystem {
   // ENGINE: the order of random draws at emission is native and not known; the order below is this port's.
   // startColor is stored as Color32 (Particle.startColor) with
   // round(clamp01(c) * 255); a particle whose start lifetime is <= 0 is not emitted; maxParticles drops the excess.
-  _spawn(age, f, fr) {
+  // origin (sub-emitters): the emitter position in world space instead of the system's; tnAt: the normalized time for
+  // the start values instead of the system time's.
+  _spawn(age, f, fr, origin = null, tnAt = null) {
     const I = this.initial, rng = this.rng, V = FxV, D = this.main.duration;
     if (this.particles.length >= I.maxParticles) return;
     this.emittedTotal++;
-    const tn = D > 0 ? Math.min(this.time / D, 1) : 0;
+    const tn = tnAt !== null ? tnAt : D > 0 ? Math.min(this.time / D, 1) : 0;
     const life = I.startLifetime.evaluate(tn, rng.value());
     if (!(life > 0)) return;
     const speed = I.startSpeed.evaluate(tn, rng.value());
@@ -834,7 +1044,7 @@ export class FxParticleSystem {
     if (this.main.simulationSpace === 1) {
       const M = fr.M, prev = this.prevEmitterPos || fr.pos;
       // ENGINE: world-space sub-frame emission: emitter position interpolated linearly between the last and this update
-      const at = V.lerp(prev, fr.pos, Math.min(Math.max(f, 0), 1));
+      const at = origin || V.lerp(prev, fr.pos, Math.min(Math.max(f, 0), 1));
       const q = [sh.p[0] * fr.shapeScale[0], sh.p[1] * fr.shapeScale[1], sh.p[2] * fr.shapeScale[2]];
       pos = V.add(V.dir(M, q), at);
       // ENGINE: start velocity = shape direction (rotated, not scaled) x speed, into World space by system rotation and scale.
@@ -842,6 +1052,8 @@ export class FxParticleSystem {
       vel = V.colsMul(fr.R, [sh.d[0] * speed * fr.S[0], sh.d[1] * speed * fr.S[1], sh.d[2] * speed * fr.S[2]]);
     } else {
       pos = [sh.p[0] * fr.shapeScale[0], sh.p[1] * fr.shapeScale[1], sh.p[2] * fr.shapeScale[2]];
+      // a world origin into the system frame: S^-1 R^T (origin - position)
+      if (origin) pos = V.add(pos, V.colsMulT(fr.R, V.sub(origin, fr.pos)).map((c, i) => (Math.abs(fr.S[i]) > 1e-12 ? c / fr.S[i] : 0)));
       vel = V.scale(sh.d, speed);
     }
     const rnd = new Float32Array(FX_RND.N);
@@ -850,7 +1062,30 @@ export class FxParticleSystem {
     const flip = R2 ? R2.flip.map((x) => (x > 0 && rng.value() < x ? -1 : 1)) : [1, 1, 1];
     const p = { pos, vel, anim: [0, 0, 0], age: 0, life, size0: size, rot, spin: sign, color0, rnd, flip,
                 stable: [rng.value(), rng.value(), rng.value(), rng.value()] };
-    if (this._update(p, age, fr)) this.particles.push(p);
+    if (this.uv) p.uvr = [rng.value(), rng.value()];              // texture sheet: frame over time, start frame
+    if (this.subEmitters.length)                                  // Birth sub-emitters: Emit Probability at birth
+      p.sub = this.subEmitters.map((e) => (e.probability >= 1 || rng.value() < e.probability
+        ? { bursts: e.system.emission.bursts.map(() => 0), acc: 0 } : null));
+    if (this._update(p, age, fr)) {
+      this.particles.push(p);
+      if (p.sub) this._subBirth(p, age, fr);
+    }
+  }
+
+  // Texture sheet tile of particle p as [u0, v0, du, dv] (uv' = [u0 + u du, v0 + v dv]), or null (no module, or UV0 not
+  // among its channels). Frames are numbered from the top-left tile, row by row; frameOverTime and startFrame are stored
+  // normalized (0..1 of the frame count: the inspector shows them times the count).
+  // ENGINE: frame = floor((frameOverTime(frac(t cycles)) + startFrame) x frames) wrapped; start frame at time 0.
+  // (t = normalized age; lerp factors per particle.)
+  _uvTile(p) {
+    const U = this.uv;
+    if (!U || !(U.channels & 1)) return null;
+    const n = U.tilesX * U.tilesY, t = this._t(p), tc = (t * U.cycles) % 1;
+    const f = U.frameOverTime.evaluate(tc, p.uvr[0]) + U.startFrame.evaluate(0, p.uvr[1]);
+    let k = Math.floor(f * n) % n;
+    if (k < 0) k += n;
+    const col = k % U.tilesX, row = Math.floor(k / U.tilesX);
+    return [col / U.tilesX, 1 - (row + 1) / U.tilesY, 1 / U.tilesX, 1 / U.tilesY];
   }
 
   // Normalized age t = age / startLifetime (Particle.remainingLifetime = startLifetime - age).
@@ -1058,8 +1293,8 @@ export class FxParticleSystem {
 
   // Vertex layout of the renderer's streams: shader channels first (POSITION, NORMAL, TANGENT, COLOR), then every
   // other stream packed into TEXCOORD0.. (4 floats each, a stream may straddle two channels).
-  _layout() {
-    const streams = this.renderer.streams;
+  _layout(R = this.renderer) {
+    const streams = R.streams;
     if (!streams.includes(0)) throw new FxError(`${this.name}: vertex streams without Position`);
     const attribs = {}, chan = [], tex = [];
     let off = 0;
@@ -1105,8 +1340,8 @@ export class FxParticleSystem {
 
   // particle draw order by ParticleSystemSortMode; None = buffer order.
   // ENGINE: tie order and the native sort keys (e.g. whether Distance uses the camera position or plane) are not known.
-  _sorted(cb, fr) {
-    const mode = this.renderer.sortMode, ps = this.particles.slice();
+  _sorted(cb, fr, R = this.renderer) {
+    const mode = R.sortMode, ps = this.particles.slice();
     if (!mode) return ps;
     const key = (p) => {
       const w = this.worldPosition(p, fr), d = FxV.sub(w, cb.pos);
@@ -1133,6 +1368,49 @@ export class FxParticleSystem {
     const R = this.renderer;
     if (!R || R.renderMode === 5 || !this.particles.length) return null;
     if (this.renderUnsupported.length) throw new FxError(`${this.name}: renderer: ${this.renderUnsupported.join(", ")}`);
+    const g = this._build(R, camera), parts = [];
+    g.submeshes.forEach((idx, si) => {
+      const mat = R.materials[si];              // ENGINE: submeshes beyond the material count are not drawn (MeshRenderer rule)
+      if (mat) parts.push({ material: mat, mesh: { verts: g.verts, stride: g.stride, attribs: g.attribs, idx } });
+    });
+    return { localToWorld: g.world ? mat4.identity() : g.fr.M, parts, particles: g.particles };
+  }
+
+  // ParticleSystemRenderer.BakeMesh(mesh, camera, ParticleSystemBakeMeshOptions.BakeRotationAndScale): the renderer's
+  // geometry for `camera` (as geometry()) with the rotation and scale of the renderer's matrix applied and its position
+  // left out: Local-space vertices times the 3x3 of the system matrix M (normals too, renormalised), World-space
+  // vertices unchanged (their render matrix is the identity). The renderer settings are read also when the renderer is
+  // disabled (Coffee UIParticle disables it and bakes). null without particles or with render mode None, else
+  // {verts, stride, attribs, idx, submeshes, particles}: {verts, stride, attribs, idx} is FxMaterial.draw's mesh, idx =
+  // submeshes[0]. Other options, the Tangent / Center / Velocity streams (spatial values left unbaked) and m_Flip on a
+  // disabled renderer (flip is drawn at emission for enabled renderers only) raise FxError.
+  // ENGINE: World-space particles keep their world position under BakeRotationAndScale (inferred: UIParticle's World matrix is a scale).
+  bake(camera, options = 1) {
+    if (options !== 1) throw new FxError(`${this.name}: BakeMesh options ${options} not implemented`);
+    const R = this.rendererConfig;
+    if (!R || R.renderMode === 5 || !this.particles.length) return null;
+    const bad = FxParticleSystem._geometryUnsupported(R);
+    for (const s of R.streams) if (s === 2 || s === 10 || s === 19) bad.push(`baked vertex stream ${s}`);
+    if (!this.renderer && R.flip.some((x) => x > 0)) bad.push("flip of a disabled renderer");
+    if (bad.length) throw new FxError(`${this.name}: bake: ${bad.join(", ")}`);
+    const g = this._build(R, camera);
+    if (!g.world) {
+      const M = g.fr.M, v = g.verts, st = g.stride, pa = g.attribs.in_POSITION0, na = g.attribs.in_NORMAL0;
+      for (let o = 0; o < v.length; o += st) {
+        const q = FxV.dir(M, [v[o + pa[1]], v[o + pa[1] + 1], v[o + pa[1] + 2]]);
+        v[o + pa[1]] = q[0]; v[o + pa[1] + 1] = q[1]; v[o + pa[1] + 2] = q[2];
+        if (na) {
+          const n = FxV.norm(FxV.dir(M, [v[o + na[1]], v[o + na[1] + 1], v[o + na[1] + 2]]));
+          v[o + na[1]] = n[0]; v[o + na[1] + 1] = n[1]; v[o + na[1] + 2] = n[2];
+        }
+      }
+    }
+    return { verts: g.verts, stride: g.stride, attribs: g.attribs, idx: g.submeshes[0], submeshes: g.submeshes,
+             particles: g.particles };
+  }
+
+  // vertices and per-submesh indices of the renderer settings R for one camera (geometry / bake)
+  _build(R, camera) {
     const V = FxV, fr = this._frame(), cb = FxParticleSystem.cameraBasis(camera);
     const world = this.main.simulationSpace === 1;
     const mulS = (d) => [d[0] * fr.S[0], d[1] * fr.S[1], d[2] * fr.S[2]];
@@ -1140,8 +1418,8 @@ export class FxParticleSystem {
     const fromWorld = world ? (d) => V.colsMul(fr.R, mulS(V.colsMulT(fr.R, d))) : (d) => V.colsMulT(fr.R, d);
     const fromLocal = world ? (d) => V.colsMul(fr.R, mulS(d)) : (d) => d.slice();
     const scaleAlong = (d) => V.len(V.colsMul(fr.R, mulS(V.colsMulT(fr.R, d))));
-    const L = this._layout();
-    const ps = this._sorted(cb, fr);
+    const L = this._layout(R);
+    const ps = this._sorted(cb, fr, R);
     const mesh = R.renderMode === 4 ? R.mesh : null;
     const nv = mesh ? mesh.vertices.length : 4;
     const verts = new Float32Array(ps.length * nv * L.stride);
@@ -1150,6 +1428,54 @@ export class FxParticleSystem {
     ps.forEach((p, pi) => {
       const size = this._size(p), col = this._color(p).map(c32), w = this.worldPosition(p, fr);
       const base = pi * nv;
+      const tile = this._uvTile(p), uvOf = (u, v) => (tile ? [tile[0] + u * tile[2], tile[1] + v * tile[3]] : [u, v]);
+      if (!mesh && R.renderMode === 1) {
+        // Stretched billboard, the engine's vertex form in view space (Unity view: x right, y up, z backwards): the quad
+        // runs from the particle position (head) to end = position - velocity * velocityScale - direction * lengthScale
+        // * size.y, and is half size.x wide across cross(end, position).xy; pivot.y moves both ends along the
+        // direction by size.y, pivot.x across by the half width. Velocity = velocity + animated velocity, in world
+        // units; lengths from sizes follow the system scale like the billboard extents; the particle rotation is not
+        // used. Corner uvs as the billboard: (0, 0) head +side, (1, 0) end +side, (1, 1) end -side, (0, 1) head -side.
+        // ENGINE: stretched billboard uv orientation (u along the stretch, head at u = 0) follows the billboard corner order.
+        // ENGINE: camera velocity (Camera Scale) comes from camera.velocity (world units / s) when given, else zero.
+        const vSim = V.add(p.vel, p.anim), vW = world ? vSim : V.colsMul(fr.R, mulS(vSim));
+        const toView = (d) => [V.dot(d, cb.right), V.dot(d, cb.up), -V.dot(d, cb.fwd)];
+        const camVel = camera && camera.velocity ? toView(camera.velocity) : [0, 0, 0];
+        const vVS = V.sub(toView(vW), V.scale(camVel, R.cameraVelocityScale));
+        const sq = V.dot(vVS, vVS), inv = sq <= 1e-30 ? 0 : 1 / Math.sqrt(sq);
+        // view-space vectors back to world, and the world stretch direction
+        const fromView = (d) => V.add(V.add(V.scale(cb.right, d[0]), V.scale(cb.up, d[1])), V.scale(cb.fwd, -d[2]));
+        const vWv = fromView(vVS), dirW = V.scale(vWv, inv);
+        const RSR = (d) => V.colsMul(fr.R, mulS(V.colsMulT(fr.R, d)));          // world displacement of a sim offset fromWorld(d)
+        const lift = V.scale(dirW, pv[1] * size[1]);
+        const startW = V.add(w, RSR(lift));
+        const endW = V.sub(V.sub(startW, V.scale(vWv, R.velocityScale)), RSR(V.scale(dirW, R.lengthScale * size[1])));
+        const P = toView(V.sub(startW, cb.pos)), E = toView(V.sub(endW, cb.pos));
+        let dx = P[2] * E[1] - P[1] * E[2], dy = P[0] * E[2] - P[2] * E[0];
+        const dl = Math.hypot(dx, dy);
+        if (dl > 0) { dx /= dl; dy /= dl; } else { dx = 0; dy = 0; }
+        const across = V.add(V.scale(cb.right, dx), V.scale(cb.up, dy));
+        let hx = 0.5 * size[0];
+        if (cb.proj && (R.maxSize > 0 || R.minSize > 0)) {                    // min / max size on the width (hsize)
+          const Pm = cb.proj, depth = V.dot(V.sub(w, cb.pos), cb.fwd);
+          const vh = Pm[15] === 0 ? 2 * depth / Pm[5] : 2 / Pm[5];
+          const e = Math.abs(2 * hx) * scaleAlong(across);
+          if (e > 0 && vh > 0) {
+            if (e > R.maxSize * vh) hx *= R.maxSize * vh / e;
+            else if (e < R.minSize * vh) hx *= R.minSize * vh / e;
+          }
+        }
+        const nOff = fromWorld(V.scale(across, hx)), side = V.scale(nOff, pv[0]);
+        const start = V.add(V.add(p.pos, fromWorld(lift)), side);
+        // the velocity part in the simulation space (the system velocity itself unless a camera velocity was subtracted)
+        const vPart = !camVel.some(Boolean) ? vSim : world ? vWv
+          : V.colsMulT(fr.R, vWv).map((c, i) => (Math.abs(fr.S[i]) > 1e-12 ? c / fr.S[i] : 0));
+        const end = V.add(V.sub(V.sub(V.sub(start, side), V.scale(vPart, R.velocityScale)), fromWorld(V.scale(dirW, R.lengthScale * size[1]))), side);
+        const nrm = V.norm(fromWorld(V.scale(cb.fwd, -1)));
+        const q = [[V.add(start, nOff), 0, 0], [V.add(end, nOff), 1, 0], [V.sub(end, nOff), 1, 1], [V.sub(start, nOff), 0, 1]];
+        q.forEach(([v, u, t], ci) => this._vertex(verts, (base + ci) * L.stride, L, p, v, nrm, uvOf(u, t), col, p.pos, ci));
+        return;
+      }
       if (!mesh) {
         let right, up, n;
         if (R.renderMode === 2) { right = [1, 0, 0]; up = [0, 0, 1]; n = [0, 1, 0]; }          // ENGINE: horizontal billboard: u +X, v +Z
@@ -1190,7 +1516,7 @@ export class FxParticleSystem {
         corners.forEach(([cx, cy, u, v], ci) => {
           const x = (cx * p.flip[0] + pv[0]) * sx, y = (cy * p.flip[1] + pv[1]) * sy, z = pv[2] * size[2];
           const off = fromWorld(V.add(V.add(V.scale(r2, x), V.scale(u2, y)), V.scale(n, -z)));
-          this._vertex(verts, (base + ci) * L.stride, L, p, V.add(p.pos, off), nrm, [u, v], col, p.pos, ci);
+          this._vertex(verts, (base + ci) * L.stride, L, p, V.add(p.pos, off), nrm, uvOf(u, v), col, p.pos, ci);
         });
       } else {
         // mesh: vertex = position + orient(Rot3D((v + pivot) * size)); orient by render alignment
@@ -1208,21 +1534,17 @@ export class FxParticleSystem {
           const o = V.colsMul(Rp, [(mv[0] * p.flip[0] + pv[0]) * size[0], (mv[1] * p.flip[1] + pv[1]) * size[1],
                                    ((mv[2] ?? 0) * p.flip[2] + pv[2]) * size[2]]);
           const nrm = V.norm(tr(V.colsMul(Rp, mn)));
-          this._vertex(verts, (base + vi) * L.stride, L, p, V.add(p.pos, tr(o)), nrm, [uv[0], uv[1]], col, p.pos, vi);
+          this._vertex(verts, (base + vi) * L.stride, L, p, V.add(p.pos, tr(o)), nrm, uvOf(uv[0], uv[1]), col, p.pos, vi);
         }
       }
     });
     const nTotal = ps.length * nv, Idx = nTotal > 65535 ? Uint32Array : Uint16Array;
-    const subs = mesh ? mesh.submeshes : [[0, 1, 2, 0, 2, 3]];
-    const parts = [];
-    subs.forEach((sub, si) => {
-      const mat = R.materials[si];              // ENGINE: submeshes beyond the material count are not drawn (MeshRenderer rule)
-      if (!mat) return;
+    const submeshes = (mesh ? mesh.submeshes : [[0, 1, 2, 0, 2, 3]]).map((sub) => {
       const idx = new Idx(ps.length * sub.length);
       for (let pi = 0; pi < ps.length; pi++) for (let k = 0; k < sub.length; k++) idx[pi * sub.length + k] = pi * nv + sub[k];
-      parts.push({ material: mat, mesh: { verts, stride: L.stride, attribs: L.attribs, idx } });
+      return idx;
     });
-    return { localToWorld: world ? mat4.identity() : fr.M, parts, particles: ps.length };
+    return { verts, stride: L.stride, attribs: L.attribs, submeshes, particles: ps.length, fr, world };
   }
 };
 
