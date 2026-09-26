@@ -163,26 +163,44 @@ LiveCameraMath.globals = (cam, m, w, h, time, dt) => {
 // UnityPerDraw for a renderer with no lighting data (unlit live content): the engine defaults.
 // unity_RenderingLayer: asfloat(renderingLayerMask 1).
 // ENGINE: the probe / lightmap members are set natively; Unity's defaults for a renderer without probes are used.
-LiveCameraMath.perObject = (M) => {
-  // ENGINE: world-to-object of a zero-scale transform is native; zeros are passed (the draw covers no pixel).
-  // A zero-scale transform (e.g. an effect whose animated scale reaches 0) has no inverse; every vertex then maps to
-  // one point, so the draw covers no pixel whatever unity_WorldToObject holds.
-  const I = LiveCameraMath.det3(M) === 0 ? new Float32Array(16) : LiveCameraMath.inverse(M);
-  const bits = new Float32Array(new Uint32Array([1]).buffer)[0];
-  return {
-    unity_ObjectToWorld: M, unity_WorldToObject: I, unity_LODFade: [0, 0, 0, 0],
-    unity_WorldTransformParams: [0, 0, 0, LiveCameraMath.det3(M) < 0 ? -1 : 1],
-    unity_RenderingLayer: [bits, 0, 0, 0], unity_LightData: [0, 0, 0, 0], unity_LightIndices: new Float32Array(8),
-    unity_ProbesOcclusion: [1, 1, 1, 1], unity_SpecCube0_HDR: [1, 1, 0, 0], unity_SpecCube1_HDR: [1, 1, 0, 0],
-    unity_SpecCube0_BoxMax: [0, 0, 0, 0], unity_SpecCube0_BoxMin: [0, 0, 0, 0], unity_SpecCube0_ProbePosition: [0, 0, 0, 0],
-    unity_SpecCube1_BoxMax: [0, 0, 0, 0], unity_SpecCube1_BoxMin: [0, 0, 0, 0], unity_SpecCube1_ProbePosition: [0, 0, 0, 0],
-    unity_LightmapST: [1, 1, 0, 0], unity_DynamicLightmapST: [1, 1, 0, 0],
-    unity_SHAr: [0, 0, 0, 0], unity_SHAg: [0, 0, 0, 0], unity_SHAb: [0, 0, 0, 0], unity_SHBr: [0, 0, 0, 0],
-    unity_SHBg: [0, 0, 0, 0], unity_SHBb: [0, 0, 0, 0], unity_SHC: [0, 0, 0, 0],
-    unity_RendererBounds_Min: [0, 0, 0, 0], unity_RendererBounds_Max: [0, 0, 0, 0],
-    unity_MatrixPreviousM: M, unity_MatrixPreviousMI: I, unity_MotionVectorsParams: [0, 0, 0, 0],
-  };
-};
+// One sheet per draw, read by name (UnityProgram.lookup): the members that depend on the matrix are computed when a
+// program reads them, the constant members are shared and frozen.
+class LivePerObject {
+  #inverse = null;
+
+  constructor(M) {
+    this.unity_ObjectToWorld = M;
+    this.unity_MatrixPreviousM = M;
+  }
+
+  get unity_WorldToObject() {
+    // ENGINE: world-to-object of a zero-scale transform is native; zeros are passed (the draw covers no pixel).
+    // A zero-scale transform (e.g. an effect whose animated scale reaches 0) has no inverse; every vertex then maps to
+    // one point, so the draw covers no pixel whatever unity_WorldToObject holds.
+    if (!this.#inverse) {
+      const M = this.unity_ObjectToWorld;
+      this.#inverse = LiveCameraMath.det3(M) === 0 ? new Float32Array(16) : LiveCameraMath.inverse(M);
+    }
+    return this.#inverse;
+  }
+
+  get unity_MatrixPreviousMI() { return this.unity_WorldToObject; }
+  get unity_WorldTransformParams() { return [0, 0, 0, LiveCameraMath.det3(this.unity_ObjectToWorld) < 0 ? -1 : 1]; }
+  get unity_LightIndices() { return new Float32Array(8); }
+}
+const renderingLayer1 = new Float32Array(new Uint32Array([1]).buffer)[0];
+for (const [k, v] of Object.entries({
+  unity_LODFade: [0, 0, 0, 0], unity_RenderingLayer: [renderingLayer1, 0, 0, 0], unity_LightData: [0, 0, 0, 0],
+  unity_ProbesOcclusion: [1, 1, 1, 1], unity_SpecCube0_HDR: [1, 1, 0, 0], unity_SpecCube1_HDR: [1, 1, 0, 0],
+  unity_SpecCube0_BoxMax: [0, 0, 0, 0], unity_SpecCube0_BoxMin: [0, 0, 0, 0], unity_SpecCube0_ProbePosition: [0, 0, 0, 0],
+  unity_SpecCube1_BoxMax: [0, 0, 0, 0], unity_SpecCube1_BoxMin: [0, 0, 0, 0], unity_SpecCube1_ProbePosition: [0, 0, 0, 0],
+  unity_LightmapST: [1, 1, 0, 0], unity_DynamicLightmapST: [1, 1, 0, 0],
+  unity_SHAr: [0, 0, 0, 0], unity_SHAg: [0, 0, 0, 0], unity_SHAb: [0, 0, 0, 0], unity_SHBr: [0, 0, 0, 0],
+  unity_SHBg: [0, 0, 0, 0], unity_SHBb: [0, 0, 0, 0], unity_SHC: [0, 0, 0, 0],
+  unity_RendererBounds_Min: [0, 0, 0, 0], unity_RendererBounds_Max: [0, 0, 0, 0], unity_MotionVectorsParams: [0, 0, 0, 0],
+})) Object.defineProperty(LivePerObject.prototype, k, { value: Object.freeze(v), enumerable: true });
+
+LiveCameraMath.perObject = (M) => new LivePerObject(M);
 
 // Unity's per-camera draw order (header comment).
 LiveCameraMath.sortItems = (items, opaqueDrawn = true) => {
