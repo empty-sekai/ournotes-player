@@ -191,13 +191,16 @@ export class LiveJudgeEffectView {
 
 // ------------------------------------------------------------------- LiveJudgementView (center mode)
 export class LiveJudgementViewCenter {
-  constructor(comp, view) {
+  // positionType: JudgeResultPositionType (option 103): 0 Center, 2 None (1 Lane is not reproduced)
+  constructor(comp, view, positionType = 0) {
+    if (positionType !== 0 && positionType !== 2) throw new UIError(`JudgeResultPositionType ${positionType} not implemented`);
     this.center = { x: comp._centerAnchoredPosition.x, y: comp._centerAnchoredPosition.y };
     this.view = view;
+    this.showResult = positionType !== 2;  // IsShowJudgeResult: JudgeResultPositionType != 2
     this.shows = [];                      // judgements passed to Show this frame (for checks)
   }
 
-  // ShowJudgement: JudgeResultPositionType 103 = 0 (Center) -> ShowJudgementCenter.
+  // ShowJudgement: JudgeResultPositionType 103 != 1 -> ShowJudgementCenter.
   // judged = [{judgement, note}] in GetCurrentFrameJudgementNoteIdList order.
   // gekisou: ResolveGekisouMission reads the gekisou frame result, absent in a normal live; mission 0 is assumed, so
   // SetScale writes Vector3.one (UILiveJudgement's scale is already one) and ShowGekisou is not reached.
@@ -209,6 +212,7 @@ export class LiveJudgementViewCenter {
     const js = judged.map((j) => j.judgement);
     if (!js.some((j) => j !== 0 && j !== 7)) return;                       // Wait 0 / Pass 7 only
     const comboReset = js.some((j) => j === 1 || j === 2);                  // HasComboResetJudgement: Miss / Bad
+    if (!this.showResult) return;                                           // None: returns before ResolveSingleView
     let best = -1;
     for (const j of js) {
       let p;
@@ -323,8 +327,11 @@ export class LiveUIFx {
   // (0.25 s) is complete long before the intro timeline, so the settled state is taken.
   // ENGINE: Mecanim transition interruption is native; the Animator (engine/anim.js) checks no transition during a cross-fade.
   // (Only matters if Init / Add arrive inside a running Init fade, which auto play at Perfect never does.)
-  constructor(gl, { scene, notes }, opts = {}) {
+  // settings: the live settings (settings.js) read by LiveUIView.Initialize (ComboCountDisplay 206,
+  // ContinuationEffectDisplay 208, JudgeResultPositionType 103); absent: the defaults.
+  constructor(gl, { scene, notes, settings = null }, opts = {}) {
     this.gl = gl;
+    const opt = (k, d) => (settings && settings[k] !== undefined ? settings[k] : d);
     const recs = new Map(scene.scene.nodes.map((r) => [r.path, r]));
     const rec = (p) => { const r = recs.get(p); if (!r) throw new UIError(`scene node missing: ${p}`); return r; };
     const canvasRec = rec(LIVEUI.CANVAS);
@@ -373,7 +380,7 @@ export class LiveUIFx {
     const effComp = liveComp(prefab.nodes[0], "UILiveNoteJudgeEffectView");
     this.effectView = new LiveJudgeEffectView(tree, tree.node(inst(LIVEUI.PREFAB)), effComp, (p) => tree.node(inst(p)),
                                                  judgeSprites, jsa, jv._showDuration, this.dotween);
-    this.judgement = new LiveJudgementViewCenter(jv, this.effectView);
+    this.judgement = new LiveJudgementViewCenter(jv, this.effectView, opt("JudgeResultPositionType", 0));
 
     // combo: Animator UILiveCombo on UIComboCounterView's GameObject
     const comboNode = tree.node(LIVEUI.COMBO), comboRec = rec(LIVEUI.COMBO);
@@ -394,8 +401,12 @@ export class LiveUIFx {
       for (const s of [ts.TitleSprite, ts.GlowSprite, ...ts.BaseDigitSprites, ...ts.FillDigitSprites]) if (s) tree.sprite(s, true);
     this.combo = new LiveComboCounter(tree, liveComp(comboRec, "UIComboCounterView"), csa, this.animator);
     this.combo.awake();
-    this.combo.initialize(true);
-    if (opts.preroll !== false) this.preroll();
+    this.combo.initialize(opt("ContinuationEffectDisplay", true));
+    // LiveUIView.Initialize: _comboCounterView.gameObject.SetActiveFast(IsShowComboCount). An inactive counter is not
+    // drawn and its Animator does not update; UpdateView still runs.
+    this.comboShown = opt("ComboCountDisplay", true);
+    if (!this.comboShown) tree.setActive(comboNode, false);
+    if (opts.preroll !== false && this.comboShown) this.preroll();
   }
 
   // Animator binding (paths relative to UILiveCombo): Transform.m_LocalScale.x|y|z and CanvasGroup.m_Alpha. A path
@@ -437,7 +448,7 @@ export class LiveUIFx {
 
   tweens(dt) { this.dotween.update(dt); }
 
-  animate(dt) { this.animator.update(dt); }
+  animate(dt) { if (this.comboShown) this.animator.update(dt); }
 
   // LiveUIView.SetActive: LiveUICanvas CanvasGroup alpha 1 / 0 (interactable / blocksRaycasts not modelled).
   // Game calls: LiveViewPresenter.HideUI (false) from MusicStartAnimationStateNode.Enter before

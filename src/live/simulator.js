@@ -3,8 +3,9 @@ import { NoteGeo } from "./notegeo.js";
 
 // LiveExecutor: the game's auto-play simulation (FTLiveSimulator + App LiveExecutor) that drives the chart player:
 // note and line states, auto judgements, combo, and the per-frame result read by the note views, effects and UI.
-// Default options: auto play at Perfect (LocalCacheData._autoJudgement 5, no diff override), note speed 5, input timing
-// offset 0, no mirror, no skills.
+// Auto play at Perfect (LocalCacheData._autoJudgement 5, no diff override), no skills. Options: note speed (NoteSpeed
+// 1) and input timing offset (NoteTiming 2) from `opts` (settings.js liveDerived), else the chart data's defaults
+// (note speed 5, offset 0); a mirrored chart is a mirrored score file.
 // Input: score/<chart>.notes.json and livenotes/notes.json `settings` (see docs/data-format.md).
 //
 // One update() = one LiveExecutor.Update -> FTLiveSimulator.Update:
@@ -16,14 +17,19 @@ import { NoteGeo } from "./notegeo.js";
 // No skill effect is simulated (the player has no deck).
 
 export class LiveExecutor {
-  constructor(score, settings) {
+  // opts: {noteSpeed, timingAdjustmentMs} (settings.js liveDerived); absent: the data's defaults
+  constructor(score, settings, opts = {}) {
     const od = settings.optionDefaults, ls = settings.liveSettings;
+    const defSpeed = parseFloat(od.NoteSpeed), speed = opts.noteSpeed ?? defSpeed;
     // NoteBeforePlayingTimeGetter (bpmRatio 1): D from NoteSpeed and MasterLiveSettings 3..6
-    this.D = NoteGeo.displayOffsetMs(parseFloat(od.NoteSpeed), parseFloat(ls.note_speed_min), parseFloat(ls.note_speed_max),
+    this.D = NoteGeo.displayOffsetMs(speed, parseFloat(ls.note_speed_min), parseFloat(ls.note_speed_max),
                                         parseFloat(ls.note_speed_view_min), parseFloat(ls.note_speed_view_max));
-    if (settings.noteDisplayTimeMs !== undefined && settings.noteDisplayTimeMs !== this.D)
+    // the exported display offset is the default speed's
+    if (F(speed) === F(defSpeed) && settings.noteDisplayTimeMs !== undefined && settings.noteDisplayTimeMs !== this.D)
       throw new Error(`display offset ${this.D} != exported ${settings.noteDisplayTimeMs}`);
-    this.inp = 0;          // IInputTimingProvider.TimingAdjustmentMs: option item 2 "0.00"
+    // IInputTimingProvider.TimingAdjustmentMs (LiveSettingsInputTimingProvider): OptionRangeHelper
+    // .GetClampedNoteTimingOffsetMs of option 2 (default "0.00" -> 0)
+    this.inp = opts.timingAdjustmentMs ?? 0;
     const MAX = 2147483647;
     this.MAX = MAX;
     const JT = { 1: 1, 20: 10, 21: 21, 60: 21, 61: 21, 63: 21, 104: 21, 105: 21, 120: 21, 22: 11, 40: 5, 41: 5, 42: 5,
@@ -43,8 +49,13 @@ export class LiveExecutor {
     });
     this.byId = new Map(this.notes.map((r) => [r.id, r]));
     // AfterMaxTimeMs of the note's timing parameter (MasterLiveJudgementTiming, assist 0: the last unit of each
-    // NoteJudgementType). Only the Last test reads it; every value is < 237 ms = the jp >= 1.1 bound.
-    this.afterMax = { 0: 130, 1: 130, 2: 130, 5: 130, 10: 130, 11: 150, 12: 130, 15: 130, 21: 130, 22: 130 };
+    // NoteJudgementType, the Miss unit). Only the Last test reads it. LiveSettingCreator.CreateTimingDictionary widens
+    // the Miss units' BeforeMax / AfterMax by |TimingAdjustmentMs|. (At note speed 5 and offset 0 every value is below
+    // the jp >= 1.1 bound of 237 ms.)
+    const widen = Math.abs(this.inp);
+    this.afterMax = {};
+    for (const [t, v] of Object.entries({ 0: 130, 1: 130, 2: 130, 5: 130, 10: 130, 11: 150, 12: 130, 15: 130, 21: 130, 22: 130 }))
+      this.afterMax[t] = v + widen;
     // MusicScore.LastTimingNotePosition: first note of the largest (float) Bar + BarProgress key
     let lastKey = -Infinity, lastT = 0;
     for (const n of score.notes) { const k = F(n.bar + F(n.barProgress)); if (k > lastKey) { lastKey = k; lastT = n.timeMs; } }

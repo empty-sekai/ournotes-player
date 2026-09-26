@@ -10,13 +10,18 @@ import { ChartPlayer } from "./player.js";
 //   autoplay   start playing once loaded (boolean attribute; see ChartPlayer for locked audio)
 //   speed      playback speed (default 1)
 //   music, se  "off" (or "false", "0") switches the music / the sound effects off; absent: on
+//   settings   the game's Live options as a JSON object ({"NoteSpeed": 8.5, "MirrorChart": true}); changing it
+//              replaces them (the names not given take their defaults)
+//   lang       language of the controls (the element's own or inherited `lang`; English by default)
 //   quality, seed   passed to the session when the chart loads
-// Methods and properties as ChartPlayer: play(), pause(), seek(ms), currentTime, duration, paused, ended, chart,
-// plus `player` (the ChartPlayer, null until loaded) and `ready` (a promise of the ChartPlayer of the current src).
-// Events (not bubbling): ready, play, pause, seeked, timeupdate, ended, error, progress; `detail` as ChartPlayer's.
+// Methods and properties as ChartPlayer: play(), pause(), seek(ms), setSettings(values, {reset}), currentTime,
+// duration, paused, ended, chart, settings, plus `player` (the ChartPlayer, null until loaded) and `ready` (a promise
+// of the ChartPlayer of the current src).
+// Events (not bubbling): ready, play, pause, seeked, timeupdate, ended, error, progress, settingschange; `detail` as
+// ChartPlayer's.
 // The element is 16:9 at its width unless given a height (CSS aspect-ratio).
 
-const EVENTS = ["ready", "play", "pause", "seeked", "timeupdate", "ended", "error", "progress"];
+const EVENTS = ["ready", "play", "pause", "seeked", "timeupdate", "ended", "error", "progress", "settingschange"];
 const OFF = new Set(["off", "false", "0", "no"]);
 const ELEMENT_CSS = `:host { display: block; position: relative; aspect-ratio: 16 / 9; background: #000; contain: content; }
 :host([hidden]) { display: none; }`;
@@ -24,7 +29,7 @@ const ELEMENT_CSS = `:host { display: block; position: relative; aspect-ratio: 1
 const Base = globalThis.HTMLElement || class {};
 
 export class OurnotesPlayerElement extends Base {
-  static get observedAttributes() { return ["src", "controls", "speed", "music", "se"]; }
+  static get observedAttributes() { return ["src", "controls", "speed", "music", "se", "settings", "lang"]; }
 
   constructor() {
     super();
@@ -52,6 +57,16 @@ export class OurnotesPlayerElement extends Base {
   get se() { return this.player ? this.player.se : !OFF.has(String(this.getAttribute("se")).toLowerCase()); }
   set se(v) { if (this.player) this.player.se = !!v; if (v) this.removeAttribute("se"); else this.setAttribute("se", "off"); }
 
+  // the Live options in effect once loaded, else those of the `settings` attribute; setting it writes the attribute
+  get settings() {
+    if (this.player) return this.player.settings;
+    try { return attrSettings(this.getAttribute("settings")); } catch (_) { return null; }
+  }
+  set settings(v) {
+    if (v === null || v === undefined) this.removeAttribute("settings");
+    else this.setAttribute("settings", JSON.stringify(v));
+  }
+
   get currentTime() { return this.player ? this.player.currentTime : 0; }
   set currentTime(ms) { this.seek(ms); }
   get duration() { return this.player ? this.player.duration : NaN; }
@@ -63,6 +78,7 @@ export class OurnotesPlayerElement extends Base {
   async play() { return (await this._ready).play(); }
   async pause() { if (this.player) await this.player.pause(); }
   async seek(ms) { return (await this._ready).seek(ms); }
+  async setSettings(values, opts) { return (await this._ready).setSettings(values, opts); }
 
   // ---- lifecycle
   connectedCallback() {
@@ -84,6 +100,18 @@ export class OurnotesPlayerElement extends Base {
     else if (name === "music") { const on = !OFF.has(String(value).toLowerCase()); if (on !== p.music) p.music = on; }
     else if (name === "se") { const on = !OFF.has(String(value).toLowerCase()); if (on !== p.se) p.se = on; }
     else if (name === "controls") p.controls = this.controls;
+    else if (name === "settings") {
+      let v;
+      try { v = attrSettings(value); } catch (e) { this.dispatchEvent(new CustomEvent("error", { detail: { error: e } })); return; }
+      p.setSettings(v || {}, { reset: true }).catch((e) => this.dispatchEvent(new CustomEvent("error", { detail: { error: e } })));
+    }
+    else if (name === "lang") p.lang = this._lang();
+  }
+
+  // the element's language: its own or inherited lang attribute, else the document's
+  _lang() {
+    const near = this.closest("[lang]");
+    return (near && near.getAttribute("lang")) || document.documentElement.lang || "en";
   }
 
   _reset() {
@@ -92,6 +120,12 @@ export class OurnotesPlayerElement extends Base {
   }
 
   _load() {
+    let settings;
+    try { settings = attrSettings(this.getAttribute("settings")); } catch (e) {
+      this._reject(e);
+      this.dispatchEvent(new CustomEvent("error", { detail: { error: e } }));
+      return;
+    }
     const gen = ++this._gen, abort = new AbortController();
     this._abort = abort;
     const num = (a) => (this.hasAttribute(a) ? Number(this.getAttribute(a)) : undefined);
@@ -102,6 +136,7 @@ export class OurnotesPlayerElement extends Base {
     this._loading = ChartPlayer.create(this.shadowRoot, {
       src: new URL(this.src, document.baseURI).href, controls: this.controls, autoplay: this.autoplay,
       speed: attrNumber(this.getAttribute("speed"), 1), music: this.music, se: this.se,
+      settings, lang: this._lang(),
       quality: num("quality"), seed: num("seed"), signal: abort.signal,
       on: Object.fromEntries(EVENTS.map((t) => [t, relay])),
     }).then((p) => {
@@ -130,6 +165,13 @@ export class OurnotesPlayerElement extends Base {
 }
 
 const attrNumber = (v, d) => (v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? d : Number(v));
+// the settings attribute: a JSON object (absent or empty: no settings); anything else raises
+const attrSettings = (v) => {
+  if (v === null || v === undefined || v.trim() === "") return null;
+  const o = JSON.parse(v);
+  if (!o || typeof o !== "object" || Array.isArray(o)) throw new TypeError("the settings attribute must be a JSON object");
+  return o;
+};
 
 // defines the element under `tagName` (once per name)
 export const defineOurnotesPlayer = (tagName = "ournotes-player") => {

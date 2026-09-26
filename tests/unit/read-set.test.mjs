@@ -1,6 +1,7 @@
 // The read-set tool (scripts/read-set.mjs) and its headless harness (scripts/lib/headless.mjs): the plan of the note
 // views' materials (LiveNotes.plannedMaterials, NoteGL.prepare) over a synthetic score and prefabs, the command line
-// (--features, option errors, the --serve protocol), the plain-object WebGL2 stub and the on-demand directory store.
+// (--features, option errors, the --serve protocol, --settings reaching the session), the plain-object WebGL2 stub and
+// the on-demand directory store.
 // The equality of the plan with the full simulation over real charts, and of the served read sets with those of one
 // process per chart, is an opt-in data check (CONTRIBUTING.md).
 import assert from "node:assert/strict";
@@ -90,11 +91,11 @@ test("plan: a planned material makes the shader library requests of its draw", (
 // ---- command line
 const run = (...args) => spawnSync(process.execPath, [script, ...args], { encoding: "utf8" });
 
-test("read-set --features names the plan and serve modes; option errors exit 2", () => {
+test("read-set --features names the plan, serve and settings modes; option errors exit 2", () => {
   const f = run("--features");
   assert.equal(f.status, 0);
-  assert.deepEqual(JSON.parse(f.stdout), { features: ["plan", "serve"] });
-  assert.equal(f.stdout.trim(), '{"features":["plan","serve"]}');
+  assert.deepEqual(JSON.parse(f.stdout), { features: ["plan", "serve", "settings"] });
+  assert.equal(f.stdout.trim(), '{"features":["plan","serve","settings"]}');
   assert.equal(run().status, 2);
   const r = run("some/chart", "--plan", "--frames=10");
   assert.equal(r.status, 2);
@@ -121,6 +122,64 @@ test("read-set --serve answers each request line in order, one JSON line each, u
     assert.match(answers[2].error, /--frames has no meaning with --plan/);
     assert.match(answers[3].error, /ENOENT|no such file/);
     assert.ok(answers[4].error.length > 0);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// a live directory whose session gets as far as the Live options: live.json and empty scene / note asset / audio
+// files, no score (a load with accepted settings fails at the score)
+const settingsDir = () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ournotes-settings-"));
+  fs.writeFileSync(path.join(dir, "live.json"), JSON.stringify({ scene: "scene.json", noteAssets: "notes.json",
+                                                                 liveAudio: "audio.json", notes: "score.json" }));
+  for (const f of ["scene.json", "notes.json", "audio.json"]) fs.writeFileSync(path.join(dir, f), "{}");
+  return dir;
+};
+
+test("read-set --settings: the session is booted with the settings; bad JSON and refused settings exit 2", () => {
+  const dir = settingsDir();
+  try {
+    for (const [arg, re] of [["--settings=nope", /--settings: .*JSON/], ["--settings=[1]", /must be a JSON object/],
+                             ["--settings", /must be a JSON object/],
+                             ['--settings={"NoteSpeed":99}', /NoteSpeed: out of range 1\.\.12 \(got 99\)/],
+                             ['--settings={"NoteSped":5}', /unknown setting NoteSped/],
+                             ['--settings={"MirrorChart":true}', /MirrorChart: this chart offers false/]]) {
+      const r = run(dir, "--plan", arg);
+      assert.equal(r.status, 2, arg);
+      assert.match(r.stderr, re, arg);
+    }
+    // the value is the whole rest of the argument, "=" included
+    const eq = run(dir, "--plan", '--settings={"NoteSpeed":5.5,"ComboCountDisplay":false,"x=":1}');
+    assert.equal(eq.status, 2);
+    assert.match(eq.stderr, /unknown setting x=/);
+    // accepted settings: the load goes on to the score, which the directory lacks
+    for (const json of ['{"NoteSpeed":5.5,"NoteTiming":-0.25}', '{"LiveQuality":2}', '{"LiveQuality":0,"NoteSpeed":6}']) {
+      const later = run(dir, "--plan", `--settings=${json}`);
+      assert.notEqual(later.status, 0, json);
+      assert.match(later.stderr, /score\.json/, json);
+      assert.doesNotMatch(later.stderr, /NoteSpeed|NoteTiming|LiveQuality/, json);
+    }
+    // a live directory offers every LiveQuality, and no other value
+    const q = run(dir, "--plan", '--settings={"LiveQuality":3}');
+    assert.equal(q.status, 2);
+    assert.match(q.stderr, /LiveQuality: this chart offers 0, 1, 2 \(got 3\)/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("read-set --serve: a request's settings object reaches the session; refused settings answer without a stack", () => {
+  const dir = settingsDir();
+  try {
+    const requests = [{ chart: dir, plan: true, settings: { LaneOpacity: 101 } }, { chart: dir, plan: true, settings: [1] },
+                      { chart: dir, plan: true, settings: { LaneOpacity: 40 } }, { chart: dir, plan: true, settings: null },
+                      { chart: dir, plan: true, settings: { LiveQuality: 2 } }];
+    const input = `${requests.map((q) => JSON.stringify(q)).join("\n")}\n`;
+    const r = spawnSync(process.execPath, [script, "--serve"], { encoding: "utf8", input });
+    assert.equal(r.status, 0);
+    const answers = r.stdout.trimEnd().split("\n").map((l) => JSON.parse(l));
+    assert.equal(answers.length, 5);
+    assert.ok(answers.every((a) => a.ok === false));
+    assert.equal(answers[0].error, "LaneOpacity: out of range 0..100 (got 101)");
+    assert.equal(answers[1].error, "--settings must be a JSON object");
+    for (const a of answers.slice(2)) assert.match(a.error, /score\.json/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 

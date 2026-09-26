@@ -89,9 +89,10 @@ export const LiveGradient = {
 
 // ------------------------------------------------------------------------------------------ lane layout (no GL)
 // LiveLaneView.Initialize -> LiveLaneLineView.Initialize / UpdateProperties /
-// GetSettings / LiveLaneLine.SetLine / SetColor, with the default options
-// (GuidelineCount 302 -> LaneSplitCountType, GuidelineOpacity 301 -> lineAlpha, LaneOpacity 300 -> lane base alpha).
-// Returns every active line with its world end points, widths and end colours.
+// GetSettings / LiveLaneLine.SetLine / SetColor, with the options of LiveBootDataCreator.CreateViewData
+// (GuidelineCount 302 -> LaneSplitCountType, GuidelineOpacity 301 -> lineAlpha = GetGuidelineOpacity01, LaneOpacity
+// 300 -> lane base alpha = GetLaneOpacity01: clamp01(value / 100)); `settings` = the live settings (settings.js),
+// absent: the data's preset-1 defaults. Returns every active line with its world end points, widths and end colours.
 export const LiveLaneLayout = {
   LANE_COUNT: 24,                           // LiveDataCreator.CreateBootData
   SPLIT_MAIN: [0, 4, 6, 8, 12],             // constant table of the game code, by LiveLaneSplitCountType
@@ -103,17 +104,19 @@ export const LiveLaneLayout = {
     return o.value;
   },
 
-  build(scene, prefab) {
+  build(scene, prefab, settings = null) {
     const L = LiveLaneLayout, n = L.LANE_COUNT;
+    const opt = (k) => (settings && settings[k] !== undefined ? settings[k] : Number(L.option(scene, k)));
+    const unit01 = (v) => { const x = F(v / 100); return x < 0 ? 0 : x > 1 ? 1 : x; };
     const view = prefab.component("LiveGameView/root/LiveGameLane/lines", "LiveLaneLineView");
     const width = F(view._laneWidth), length = F(view._lineLength), spaceLen = F(view._spaceLineLength);
     const judgementZ = F(prefab.transform("LiveGameView/root/LiveGameLane/judgement_root").localPosition.z);
-    const split = Number(L.option(scene, "GuidelineCount"));
-    const lineAlpha = F(Number(L.option(scene, "GuidelineOpacity")) / 100);
+    const split = opt("GuidelineCount");
+    const lineAlpha = unit01(opt("GuidelineOpacity"));
     const main = L.SPLIT_MAIN[split], sub = L.SPLIT_SUB[split];
     // TrySetupSettingDictionary: OutSide widths = out_side_line texture height / 100
     const outW = F(scene.laneSkin.out_side_line.texture.height / 100);
-    const settings = new Map(view._settings.map((s) => [s.LineType,
+    const lineSettings = new Map(view._settings.map((s) => [s.LineType,
       s.LineType === 1 ? { ...s, LineWidthFrom: outW, LineWidthTo: outW } : s]));
     const lines = [];
     let x = F(width * -0.5);
@@ -123,7 +126,7 @@ export const LiveLaneLayout = {
       else if (main && i % (n / main) === 0) type = 0;
       else if (sub && i % (n / sub) === 0) type = 2;
       if (type !== null) {
-        const s = settings.get(type);
+        const s = lineSettings.get(type);
         const z0 = type === 2 ? F(judgementZ + F(spaceLen * -0.5)) : 0;
         const z1 = type === 2 ? F(z0 + spaceLen) : length;
         const w0 = F(s.LineWidthFrom);
@@ -143,7 +146,7 @@ export const LiveLaneLayout = {
       x = F(F(width / n) + x);
     }
     return { width, length, judgementZ, lineAlpha, split, lines,
-             laneBaseAlpha: F(Number(L.option(scene, "LaneOpacity")) / 100),
+             laneBaseAlpha: unit01(opt("LaneOpacity")),
              showJudgementLine: L.option(scene, "JudgePositionDisplay") === "TRUE" };
   },
 };
@@ -175,9 +178,9 @@ LiveLaneLayout.maskHeight = (scene, W, H) => {
 //   laneTransform activeSelf (timeline / Animator), tapArea.animationAlpha (fade-in), laneBase.animationAlpha,
 //   lines.animationStart/EndAlpha, sideLines.animationStart/EndAlpha (live_game_view clips hold them at 1).
 export class LiveLane {
+  // renderer.settings: the live settings (settings.js) or undefined (the data's defaults)
   constructor(renderer, scene) {
     this.r = renderer; this.scene = scene; this.prefab = renderer.prefab;
-    this.layout = LiveLaneLayout.build(scene, this.prefab);
     const P = "LiveGameView/root/LiveGameLane";
     this.paths = { lane: P, base: `${P}/base`, laneBase: `${P}/base/lane_base`, tapArea: `${P}/judgement_root/tap_area` };
     this.laneBaseSR = this.prefab.component(this.paths.laneBase, "SpriteRenderer");
@@ -187,8 +190,8 @@ export class LiveLane {
     const lv = this.prefab.component(`${P}/lines`, "LiveLaneLineView");
     this.outsideMat = lv._outSideLineMaterial;
     // inner lines: instances of LiveLaneLineView._linePrefab EmbLive/Prefabs/LiveGame/lane_line (scene.assets.laneLinePrefab)
-    const lp = new Prefab(scene.assets.laneLinePrefab), lpRoot = lp.root.name;
-    const lineLR = lp.component(lpRoot, "LineRenderer");
+    const lp = this.linePrefab = new Prefab(scene.assets.laneLinePrefab), lpRoot = lp.root.name;
+    const lineLR = this.lineLR = lp.component(lpRoot, "LineRenderer");
     this.lineMat = lineLR.m_Materials[0];
     // LineRenderer parameters of the three line kinds must be what LiveGeom.lineStrip builds (world space,
     // alignment View, texture mode Stretch, no corner / cap vertices); width and colour come from the setters.
@@ -199,18 +202,27 @@ export class LiveLane {
           q.textureScale.x !== 1 || lr.m_Loop)
         throw new Error(`${path}: LineRenderer parameters outside LiveGeom.lineStrip`);
     }
+    this.laneBase = { baseAlpha: 1, animationAlpha: 1 };
+    this.configure(renderer.settings);
+    this.tapArea = { baseAlpha: 1, animationAlpha: 1 };
+    // LiveLineRendererAlphaController animation alphas (base already folded into the layout colours)
+    this.lines = { animationStartAlpha: 1, animationEndAlpha: 1 };
+    this.sideLines = { animationStartAlpha: 1, animationEndAlpha: 1 };
+  }
+
+  // The lane options LiveLaneView.Initialize applies once (layout, line colours, lane base alpha). They are constants
+  // of the lane's draw, so a new value set during a live gives the lane a live started with it would have.
+  configure(settings) {
+    const P = "LiveGameView/root/LiveGameLane";
+    this.layout = LiveLaneLayout.build(this.scene, this.prefab, settings);
     // sorting orders: LiveRendererOrderInLayerSetter of each line (LiveLane 41 + 0 -> 4100)
-    const innerOrder = LiveLane.sortingOrder(lp, lpRoot, lineLR.m_SortingOrder);
+    const innerOrder = LiveLane.sortingOrder(this.linePrefab, this.linePrefab.root.name, this.lineLR.m_SortingOrder);
     for (const l of this.layout.lines)
       l.sortingOrder = l.index === 0 ? LiveLane.sortingOrder(this.prefab, `${P}/lines/lane_line_left`, 4100)
         : l.index === LiveLaneLayout.LANE_COUNT ? LiveLane.sortingOrder(this.prefab, `${P}/lines/lane_line_right`, 4100)
           : innerOrder;
     // LiveSpriteRendererAlphaController (a = base * animation): lane base base = LaneBaseAlpha, tap area base 1
-    this.laneBase = { baseAlpha: this.layout.laneBaseAlpha, animationAlpha: 1 };
-    this.tapArea = { baseAlpha: 1, animationAlpha: 1 };
-    // LiveLineRendererAlphaController animation alphas (base already folded into the layout colours)
-    this.lines = { animationStartAlpha: 1, animationEndAlpha: 1 };
-    this.sideLines = { animationStartAlpha: 1, animationEndAlpha: 1 };
+    this.laneBase.baseAlpha = this.layout.laneBaseAlpha;
   }
 
   async load() {

@@ -133,6 +133,7 @@ and where their bytes are.
 | `audioFormat` | `"aac"` \| `"flac"` | no | Format of the music file: AAC in an MP4 container (`.m4a`) or FLAC. Sound effects are FLAC. |
 | `flows` | string[] | no | Start flows the files support. The player uses the direct start (the chart starts at the end of the live's intro timeline), `"direct"`, which every chart supports; other values name start sequences this player does not use. |
 | `quality` | `0` \| `1` \| `2` | yes | The `LiveQuality` the files were prepared for (0 High, 1 Middle, 2 Low); the default quality of the player. The current data uses 1 (Middle, the game's default option). |
+| `options` | object | yes | Optional. Live option name → the values the files support, for options that select files: `{"LiveQuality": [1, 2]}`. Absent: `LiveQuality` offers `quality` only. (The other file-selecting options are offered by the data itself: `live.json` `notesMirror`, `livenotes/notes.json` `settings.skins` / `settings.effects`, `audio/live-audio.json` `noteSe.groups`.) |
 | `files` | object | yes | Logical path → file entry. |
 
 ### File entries
@@ -191,6 +192,7 @@ their own directory.
 |---|---|
 | `scene` | Path of the live scene. |
 | `notes` | Path of the score. |
+| `notesMirror` | Optional. Path of the score converted mirrored (the game's `MirrorChart` option: lanes and flick directions mirrored while the score is converted), same format as `notes`. Without it the `MirrorChart` option is not offered. |
 | `noteAssets` | Path of the note assets. |
 | `liveAudio` | Path of the sound definitions. |
 
@@ -255,10 +257,10 @@ id names a cue made of one or more waveform layers, routed through CRI categorie
 | Key | Meaning |
 |---|---|
 | `sounds` | Sound id (decimal string) → cue (below). |
-| `categories` | CRI category name → volume. A cue plays at the product of the volumes of its categories. |
+| `categories` | CRI category name → volume. A cue plays at the product of the volumes of its categories. `LiveBgmConfig`, `LiveSeConfig`, `LiveVoiceConfig` and `LiveNotesSeConfig` are the live volumes of a fresh profile (the game's local sound config after a fresh install, not the volume options' defaults); the volume options replace them once one of them is changed (a volume option whose category is absent is not offered). |
 | `react` | Ducking rules (REACT): `[{src, dest, level, decrementMs, incrementMs, holdMs}]`. While a cue of category `src` plays, category `dest` goes to `level` over `decrementMs`; after the last one ends it holds for `holdMs`, then returns to 1 over `incrementMs`. |
 | `music` | `{ soundId }`: the music (BGM). |
-| `noteSe` | `{ types, volumes, mutes }`: `LiveNoteSeType` → sound id / volume / muted. |
+| `noteSe` | `{ types, volumes, mutes }`: `LiveNoteSeType` → sound id / volume / muted, for the default options. Optional: `patternId` (the note sound set of `types`, default 1) and `groups` (note sound set id → `{ LiveNoteSeType: sound id }`, every set the page may choose; their sounds must be in `sounds`), which offer the note sound options (`NoteSePatternId`, `UseIndividualNoteSe` and the per-type sounds). |
 | `liveSe` | `LiveSeType` → sound id. |
 | `voice` | Optional: `startVoiceSoundId`, `clearVoiceSoundId`, `fullComboVoiceSoundId`, `allPerfectVoiceSoundId` (absent or -1: none). |
 
@@ -290,9 +292,14 @@ Types and sounds the player uses:
 - `noteSe` types 1–14: 1 InVain, 2 Good, 3 Great, 4 Perfect, 5 Flick, 6 FlickDirection, 7 Slide (the hold loop),
   8 Just, 9 Trace, 10 SlideConnect, 11–14 the Gekisou variants. Every type listed in `types` must have its sound in
   `sounds`.
-- `liveSe`: the player's auto play ends every chart with an all perfect, so of the live sound effects it plays
-  FinishCheers (10) and AllPerfectDirection (16). Their sounds must be in `sounds`; sounds of other types may be
-  omitted.
+- `liveSe`: a chart ends with FinishCheers (10) and the finish direction of its result: AllPerfectDirection (16) after
+  an all perfect, else FullComboDirection (14) after a full combo, else AssistFullComboDirection (15) after an assist
+  full combo, else LiveClearDirection (13); none when the life is below 1. At the default settings the player's auto
+  play ends every chart with an all perfect; a late `NoteTiming` can end it otherwise (a slide shorter than the offset
+  ends before its start note is judged, and the game then judges that note a Miss; the chart ends with
+  LiveClearDirection). nnnotes writes the sounds of StartCheers (9), FinishCheers (10) and every finish direction
+  (13–16) into `sounds`. The sounds of 10 and 16 must be in `sounds`; sounds of other types may be omitted, and the
+  player then plays nothing for them.
 - Every sound in `sounds` is decoded before the chart starts.
 
 Other keys (cue sheet details, bus sends, timeline timings of the game's start sequence, …) are not read.
@@ -345,6 +352,7 @@ split JSON object. Keys read:
 | `settings` | Lane and option settings (below). |
 | `prefabs` | Name → node list: the note views (`tap_note_view`, `flick_note_view`, `flick_left_note_view`, `flick_right_note_view`, `slide_note_view`, `slide_end_note_view`, `connection_note_view`, `none_note_view`), `slide_line_view`, `pair_note_line`, `judge_effect_view`. |
 | `noteSkin` | The note skin asset: its serialized fields (`TapNoteAsset`, `FlickNoteAsset`, `SlideLineGradient`, …) with referenced assets, sprites and materials inline. |
+| `noteSkins` | Optional. Skin asset name → a record like `noteSkin`, for the other note designs (`settings.skins`). |
 | `assets` | Asset key (the game's asset path, e.g. `Effect/Live/NoteEffect/effect001/note_normal`) → a node list (effect prefabs), a ScriptableObject's serialized fields (effect and sprite settings), or `{ key, controller }`. |
 | `clips` | Clip key → animation clip. |
 | `controllers` | Controller key → animator controller. |
@@ -355,7 +363,9 @@ split JSON object. Keys read:
 |---|---|
 | `laneCount`, `laneSize` | Lane count (equal to the score's) and the lane's reference size `[width, height]`. |
 | `laneTopRange`, `laneBottomRange`, `laneTopPosition`, `judgementScreenBottomPosition`, `tiltCenterLane` | Lane geometry of the game's lane settings. |
-| `effect` | Name of the effect set used for asset keys (e.g. `effect001`). |
+| `effect` | Name of the note effect set used for asset keys (e.g. `effect001`). The lane effects always come from `Effect/Live/LaneEffect/effect001/`, whatever the note effect set (the game loads that set by a constant name). |
+| `skins` | Optional. `NoteDesignId` → skin asset name (`skin001`, …); a design is offered when `noteSkins` has its record. |
+| `effects` | Optional. `NoteEffectId` → note effect set name (`effect001`, `effect001Simple`); the sets' assets are in `assets` under `Effect/Live/NoteEffect/<name>/`. At `LiveQuality` 2 the player uses the set's Light variant (`<name>Light`) when `assets` has its `LiveNoteEffectAssetSettings`, else the set itself, as the game does. |
 | `optionDefaults` | Option name → default value as a string (`NoteSpeed`, `SlideOpacity`, `GuideOpacity`, …). |
 | `optionRanges` | Option name → `[min, max]`. |
 | `liveSettings` | Live master settings: `note_speed_min`, `note_speed_max`, `note_speed_view_min`, `note_speed_view_max` (strings). |

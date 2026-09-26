@@ -1,6 +1,6 @@
 # Fidelity
 
-What the player reproduces from the game, under which fixed settings, what it adds as a viewer, and where it relies on
+What the player reproduces from the game, under which settings, what it adds as a viewer, and where it relies on
 the documented behaviour of the engine rather than on the game's own code.
 
 ## Source of the behaviour
@@ -28,9 +28,9 @@ The player shows one live the way the game's auto play does, with these settings
 | Setting | Value |
 |---|---|
 | Play mode | Auto play, every judgement Perfect. No skills (there is no deck), no Gekisou. |
-| Options | The game's defaults, from the chart data (`optionDefaults`, `optionDefaultsPreset1`): note speed 5, input timing offset 0, no mirror, default opacities and line displays. |
+| Options | The game's Live options, see [Live settings](#live-settings); by default the game's defaults from the chart data (`optionDefaults`, `optionDefaultsPreset1`): note speed 5, timing offsets 0, no mirror, default opacities and line displays. |
 | Background | LightWeight mode: the composited background image the game builds once when the live loads. The 3D stage, stage video and characters of the other background modes are not drawn. |
-| Live quality | The manifest's `quality` (Middle in the current data), or the value the page passes. |
+| Live quality | The `LiveQuality` option: the manifest's `quality` (Middle in the current data) unless the manifest lists more. |
 | Frame rate | 60 frames per second of game time. Each frame runs the game's order: UniTask waits, the live update (sound manager, state machine, simulation, views, effects, UI), DOTween, Animators and the timeline, particles, then rendering. |
 | Arithmetic | float32 where the game's managed code computes in float32 (`Math.fround` in source order, no fused multiply-add). |
 | Chart clock | The music's audio-synced time in whole milliseconds, as the game reads it; with the music off, the game time since the music start. |
@@ -38,6 +38,48 @@ The player shows one live the way the game's auto play does, with these settings
 
 With these settings the chart side (judgements, combo, note and line views, the UI's state) follows the game frame by
 frame at 60 fps.
+
+## Live settings
+
+The player takes the game's own Live options (`App.Options.OptionItemType`), by the game's names, with the game's
+ranges (`MasterOptionRange`) and defaults (`MasterOptionDefault`, preset 1, as a fresh profile has them), and applies
+each one where the game's code reads it (`src/live/settings.js` lists them with the reading method; the settings panel
+groups them as the game's option screen does). Float options take any float32 value in their range; the game's option
+screen steps them with buttons. The note speed buttons of the control bar step as the game's pre-live note speed
+buttons do (`UIFloatElementStepButtonsParts`: steps 1, 0.1 and 0.01, a float32 sum clamped to 1–12, shown with two
+decimals); the bar uses 0.1 and, with Shift, 1.
+
+| Group | Options | Where the game reads them |
+|---|---|---|
+| Basic | `NoteSpeed`, `NoteTiming`, `ChartPosition`, `MirrorChart`, `LiveQuality` | the display offset of the notes (`NoteBeforePlayingTimeGetter`), the input timing offset and the widened Miss window (`CreateTimingDictionary`), the chart clock offset and post-music lead, the mirrored score conversion, the quality settings and effect set |
+| Detail | `JudgeResultPositionType` (Center, None), `JudgePosition`, `SlideOpacity`, `GuideOpacity`, `SimultaneousLineDisplay` | `LiveJudgementView.ShowJudgement`, the 2D judgement positions and held heads (`viewProgressOffset`), the line alphas (`ComputeLineAlpha`), the pair lines |
+| Display 1 | `BackgroundBrightness`, `ComboCountDisplay`, `ContinuationEffectDisplay` | the LightWeight shadow image, the combo counter's active flag and tier sprites |
+| Display 2 | `LaneOpacity`, `GuidelineOpacity`, `GuidelineCount`, `NoteDesignId`, `NoteEffectId` | the lane base and lane lines, the note skin and note effect set |
+| Sound | `LiveMusicVolume`, `LiveNoteSeVolume`, `LiveSeVolume`, `LiveVoiceVolume` and their mutes; `NoteSePatternId`, `UseIndividualNoteSe`, the per-type sounds, volumes and mutes | the CRI live categories (`AppConfig.ApplyLive*Volume`), the note sound maps (`CreateSESettings`) |
+
+The game reads the options once, when the live starts. A change while a chart plays gives the state a live started with
+the new values has at the current chart time:
+
+- Options read by the simulation, the note views or the live UI (note speed, timing offsets, judgement position and
+  display, pair lines, combo display) restart the chart state and re-simulate it to the current chart time, as a seek.
+- Options that are constants of a draw (lane and line opacities, lane dividers, background brightness) and the note
+  sound maps are replaced; the chart state does not depend on them.
+- The live category volumes change the sounds that are playing at once, as the game's settings panel does. The game
+  keeps these volumes in the device's sound config, not in the options: a fresh install has the chart data's
+  `categories` values (1 for each), while its option screen shows 100, 70, 50 and 80; saving the sound settings writes
+  all four from the options. The player does the same: the chart data's values while every live volume and mute is at
+  its default, all four option values once one of them differs. `LiveVoiceVolume` has nothing to change: the direct
+  start skips the start voice, and without a deck the live has no character voice for the finish.
+- Options that select other files (mirrored score, note design, note effect set, live quality) load the chart again
+  and return to the chart time. They are offered only when the chart data carries those files.
+
+`FastSlowDisplay`, `PerfectFastSlowDisplay`, `JudgeOffsetMsDisplay` and `Vibration` are accepted without an effect: the
+timing lines of the judgement text follow the judgement's timing and offset, which auto play does not have, and
+vibration is the device's. With a positive `ChartPosition` the chart runs behind the music and continues for the lead
+after the music ends; the player ends the chart when that lead is used up (the game's chart time stops there too).
+`NoteTiming` delays the auto judgements but not the slides' ends (the game's `NoteLineUpdater` compares a line's end
+with the chart time): a slide shorter than a positive offset ends before its start note is judged, and that note is
+judged a Miss, as in the game; the chart then ends without a full combo.
 
 ## Viewer features
 
@@ -56,7 +98,8 @@ These are not in the game; they are kept apart from the reproduced code and docu
   effects are advanced too, beyond that they are cleared, and a jump of more than 2 s is handled as a seek.
 - **Speed** (0.5–1.5). Game time is scaled (effects, tweens, animations) and the music plays at that rate, with its
   pitch; the chart follows the music.
-- **Music and sound effect switches.** With the music off, the chart runs on game time.
+- **Music and sound effect switches** (API only). With the music off, the chart runs on game time. The game's own
+  volumes and mutes are Live settings.
 - **Any size.** The render targets follow the drawing buffer as they follow the screen size in the game.
 
 ## Not reproduced
@@ -64,7 +107,13 @@ These are not in the game; they are kept apart from the reproduced code and docu
 - The game's start sequence (see above), the result screens after the music, and everything outside the live.
 - Real input: there is no touch play and no judgement other than auto play's Perfect.
 - Background modes other than LightWeight, and skill and Gekisou effects.
-- Options other than the defaults (note speed, mirror, opacity, …).
+- Live options with parts the player does not draw: the judgement shown at the note's lane (`JudgeResultPositionType`
+  1), the judgement line (`JudgePositionDisplay`), bar lines (`MeasureLineDisplay`), skill lines, the judgement counter
+  (`JudgeDetailDisplay`), the lane mask of `NoteStartPosition`, the assist and challenge labels (`AssistMode`,
+  `FcAcChallengeAssist`), 120 fps (`FrameRate`), the other screen modes and backgrounds (`ScreenMode`,
+  `BackgroundSwitch`). They are accepted at their default values only (`ScreenMode` at 3, LightWeight).
+- The Bluetooth variants of the timing and volume options (the game uses them while a Bluetooth audio device is
+  connected).
 - Sound details: the CRI reverb bus is not rendered and cue pitch commands are not applied (see the `ENGINE:` notes of
   `src/live/sound.js`).
 - The HDR format of the camera target depends on a player setting of the game; RGBA16F is used.
@@ -152,6 +201,56 @@ Every `ENGINE:` note in `src/`, by file. `npm test` checks that this list matche
 
 - two order-0 MonoBehaviour Updates run in an unspecified order; GameMain runs first here.
 
+**`src/engine/particles.js`**
+
+- which draws the native particle code makes, and in which order, is not known.
+- AnimationCurve.Evaluate is native; Hermite form, Bezier solve (Newton + bisection to 1e-7), float32 rounding.
+- random MinMax values use the managed Lerp(min, max, t) form, not the native Random.Range mapping.
+- Fixed gradient mode: the colour of the first key at or after t (documented "no interpolation").
+- the particle 3D rotation order is native; Quaternion.Euler order (z, x, y) is assumed.
+- Unity's noise field is native (function, per-axis offsets, seed, range, octave normalisation); gradient noise here.
+- Unity derives these from the particle's randomSeed with module offsets; separate factors per axis here.
+- stream packing follows the renderer inspector ("UV (TEXCOORD0.xy)", "Custom1.x (TEXCOORD0.z)").
+- isPlaying stays true while a stopped system still has live particles (observed engine behaviour).
+- Play on a playing system does nothing; on a stopping / finished one it restarts at time 0, keeping particles.
+- startDelay is counted in simulated time (dt * simulationSpeed) and drawn once per Play.
+- prewarm simulates one full loop in 60 equal steps before the first frame (native step size not known).
+- the transition to stopped (and the stop action) happens in the next simulate(), not inside Stop.
+- deactivation removes the particles and resets the system to stopped without a stop action.
+- the lossy-scale extraction ignores shear from non-uniform parent scale under rotation.
+- the order inside a step follows the documented module order (native order not visible):
+- noise scroll: the offset advances by scrollSpeed (at the normalized system time) per simulated second
+- dead particles are swap-removed (buffer order)
+- the stop action runs inside the update in which the system is found dead (no live particles, not emitting).
+- rate over distance uses the world displacement since the last update, not scaled by simulationSpeed.
+- a burst fires in the step whose time window contains it (start inclusive), aged by the rest of the step.
+- the native sampling point of the rate curve, the carry across Play / loops and float precision are not known.
+- the shape sampling formulas below follow the manual (the native sampling is not visible):
+- disabled shape module: emit at origin along +Z
+- the order of random draws at emission is native and not known; the order below is this port's.
+- randomizeRotationDirection: the fraction of particles whose rotation (and spin) is mirrored
+- world-space sub-frame emission: emitter position interpolated linearly between the last and this update
+- start velocity = shape direction (rotated, not scaled) x speed, into World space by system rotation and scale.
+- velocity over lifetime, limit, drag, dampen and gravity follow the manual; the native forms are not visible:
+- module vectors in local space enter a World-space simulation through R S v; world vectors a Local one via S^-1 R^T.
+- drag by size uses the largest size axis
+- drag by velocity uses the total speed
+- the Noise module is native; the steps above are the documented semantics, not Unity's exact field.
+- noise size mapping (see _noise)
+- Unity's renderer bounds are native (computed in the update, own margin); only the centre is used here.
+- constant tangent (1, 0, 0, 1)
+- tie order and the native sort keys (e.g. whether Distance uses the camera position or plane) are not known.
+- non-uniform transform scale on billboards / World-space particles is undocumented; extents scale along system axes.
+- vertex colour Color32 rounding
+- horizontal billboard: u +X, v +Z
+- rotation sign (positive = clockwise on screen) and normalDirection blend are native conventions
+- which viewport dimension, and whether Horizontal / Vertical billboards are included, is native.
+- mesh particles with View alignment: mesh axes = camera axes
+- submeshes beyond the material count are not drawn (MeshRenderer rule)
+- _TextureSampleAdd / _ClipRect / _UIMaskSoftnessX|Y are set by uGUI's CanvasRenderer only; 0 outside a canvas.
+- unity_GUIZTestMode (ZTest of UI/Additive and MobileAddHdrColor) comes from canvas rendering; LessEqual (4) here.
+- the first subshader is taken as the one the GLES3 device runs.
+
 **`src/engine/postfx.js`**
 
 - Unity's Random is native (see random.js); the offsets match the game's only in distribution.
@@ -233,56 +332,6 @@ Every `ENGINE:` note in `src/`, by file. `npm test` checks that this list matche
 - the SpriteRenderer mesh is native; rebuilt here from the sprite's mesh (Simple) or a 9-slice of its rect (Sliced).
 - Texture2D.SetPixels float -> RGBA32 conversion is native; rounded to nearest here.
 - the graph's time origin (first OnEnable) is taken as the first animation phase after a flick view is rented.
-
-**`src/live/particles.js`**
-
-- which draws the native particle code makes, and in which order, is not known.
-- AnimationCurve.Evaluate is native; Hermite form, Bezier solve (Newton + bisection to 1e-7), float32 rounding.
-- random MinMax values use the managed Lerp(min, max, t) form, not the native Random.Range mapping.
-- Fixed gradient mode: the colour of the first key at or after t (documented "no interpolation").
-- the particle 3D rotation order is native; Quaternion.Euler order (z, x, y) is assumed.
-- Unity's noise field is native (function, per-axis offsets, seed, range, octave normalisation); gradient noise here.
-- Unity derives these from the particle's randomSeed with module offsets; separate factors per axis here.
-- stream packing follows the renderer inspector ("UV (TEXCOORD0.xy)", "Custom1.x (TEXCOORD0.z)").
-- isPlaying stays true while a stopped system still has live particles (observed engine behaviour).
-- Play on a playing system does nothing; on a stopping / finished one it restarts at time 0, keeping particles.
-- startDelay is counted in simulated time (dt * simulationSpeed) and drawn once per Play.
-- prewarm simulates one full loop in 60 equal steps before the first frame (native step size not known).
-- the transition to stopped (and the stop action) happens in the next simulate(), not inside Stop.
-- deactivation removes the particles and resets the system to stopped without a stop action.
-- the lossy-scale extraction ignores shear from non-uniform parent scale under rotation.
-- the order inside a step follows the documented module order (native order not visible):
-- noise scroll: the offset advances by scrollSpeed (at the normalized system time) per simulated second
-- dead particles are swap-removed (buffer order)
-- the stop action runs inside the update in which the system is found dead (no live particles, not emitting).
-- rate over distance uses the world displacement since the last update, not scaled by simulationSpeed.
-- a burst fires in the step whose time window contains it (start inclusive), aged by the rest of the step.
-- the native sampling point of the rate curve, the carry across Play / loops and float precision are not known.
-- the shape sampling formulas below follow the manual (the native sampling is not visible):
-- disabled shape module: emit at origin along +Z
-- the order of random draws at emission is native and not known; the order below is this port's.
-- randomizeRotationDirection: the fraction of particles whose rotation (and spin) is mirrored
-- world-space sub-frame emission: emitter position interpolated linearly between the last and this update
-- start velocity = shape direction (rotated, not scaled) x speed, into World space by system rotation and scale.
-- velocity over lifetime, limit, drag, dampen and gravity follow the manual; the native forms are not visible:
-- module vectors in local space enter a World-space simulation through R S v; world vectors a Local one via S^-1 R^T.
-- drag by size uses the largest size axis
-- drag by velocity uses the total speed
-- the Noise module is native; the steps above are the documented semantics, not Unity's exact field.
-- noise size mapping (see _noise)
-- Unity's renderer bounds are native (computed in the update, own margin); only the centre is used here.
-- constant tangent (1, 0, 0, 1)
-- tie order and the native sort keys (e.g. whether Distance uses the camera position or plane) are not known.
-- non-uniform transform scale on billboards / World-space particles is undocumented; extents scale along system axes.
-- vertex colour Color32 rounding
-- horizontal billboard: u +X, v +Z
-- rotation sign (positive = clockwise on screen) and normalDirection blend are native conventions
-- which viewport dimension, and whether Horizontal / Vertical billboards are included, is native.
-- mesh particles with View alignment: mesh axes = camera axes
-- submeshes beyond the material count are not drawn (MeshRenderer rule)
-- _TextureSampleAdd / _ClipRect / _UIMaskSoftnessX|Y are set by uGUI's CanvasRenderer only; 0 outside a canvas.
-- unity_GUIZTestMode (ZTest of UI/Additive and MobileAddHdrColor) comes from canvas rendering; LessEqual (4) here.
-- the first subshader is taken as the one the GLES3 device runs.
 
 **`src/live/renderer.js`**
 

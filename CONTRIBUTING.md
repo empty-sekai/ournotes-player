@@ -31,8 +31,9 @@ public API changes, and document it in [docs/api.md](docs/api.md).
   from the definition the module states (an easing formula, Unity's matrix convention, a documented algorithm), not
   from the current output of the code.
 - `tests/data/` (opt-in): runs the player in Node with a no-op WebGL2 context and a no-op AudioContext over a real
-  chart site, and checks that charts play to the end and that seeking, speed changes, pause and late frames keep the
-  chart state exact. It is skipped unless `OURNOTES_DATA` names a site directory:
+  chart site, and checks that charts play to the end, that seeking, speed changes, pause and late frames keep the
+  chart state exact, and that a Live settings change during a chart gives the state of a session started with the
+  settings. It is skipped unless `OURNOTES_DATA` names a site directory:
 
   ```sh
   OURNOTES_DATA=/path/to/site npm run test:data

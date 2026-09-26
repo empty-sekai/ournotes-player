@@ -49,9 +49,7 @@ export class LiveRenderCanvas {
     // LiveViewPresenter.FullInitialize, mode 3, no MV ids, BackgroundSwitch 0 (no snap)
     for (const k of ["LightWeightBackgroundStageImage", "LightWeightBackgroundShadowImage"]) n(k).activeSelf = true;
     for (const k of ["LightWeightCompositeRoot", "LightWeightBackgroundSuppertCardImage", "MVImage"]) n(k).activeSelf = false;
-    // SetLightWeightBackgroundBrightness: shadow CanvasGroup alpha = 1 - clamp01(option 201 / 100)
-    const bright = Math.min(1, Math.max(0, Number(LiveLaneLayout.option(this.scene, "BackgroundBrightness")) / 100));
-    this.shadow.canvasGroup.alpha = F(1 - F(bright));
+    this.configure(renderer.settings);
     const comp = (node, cls) => this.prefab.component(node.path, cls);
     this.graphics = new Map([
       [this.stage, { kind: "raw", g: comp(this.stage, "RawImage") }],
@@ -65,6 +63,16 @@ export class LiveRenderCanvas {
   _material(m) {                            // m_Material null -> Default UI Material (UI/Default, property defaults)
     const mat = m || { material: "Default UI Material", shader: { shader: "UI/Default" }, keywords: [], floats: {}, colors: {} };
     return liveMaterialSheets(this.lib, mat, this.r.tex);
+  }
+
+  // LiveViewPresenter.FullInitialize -> SetLightWeightBackgroundBrightness: shadow CanvasGroup alpha = 1 -
+  // GetBackgroundBrightness01 = 1 - clamp01(option 201 / 100), set once (a constant of the canvas draw).
+  // settings: the live settings or undefined (the data's preset-1 default).
+  configure(settings) {
+    const v = settings && settings.BackgroundBrightness !== undefined ? settings.BackgroundBrightness
+      : Number(LiveLaneLayout.option(this.scene, "BackgroundBrightness"));
+    const bright = Math.min(1, Math.max(0, v / 100));
+    this.shadow.canvasGroup.alpha = F(1 - F(bright));
   }
 
   async load() {

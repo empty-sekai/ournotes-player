@@ -11,6 +11,10 @@ import { Audio, framesAt } from "../engine/audio.js";
 //   LiveGameClock                    music position advanced by game time (music off or no audio files)
 // LiveSoundPlayer has no WebAudio dependency (a logging stub can stand in for `sm`).
 //
+// Live options (settings.js): the live category volumes (LiveMusicVolume 410 ... LiveVoiceMute 417) change the CRI
+// category volumes at once, as the game's settings panel does (AppConfig.ApplyLive*Volume); the note SE options (420,
+// 421, 432-441, 461-465) give the note SE maps of LiveSettingCreator.CreateSESettings.
+//
 // Player features (not in the game): music on / off, sound effects on / off, playback speed of the music
 // (AudioBufferSourceNode.playbackRate: the pitch follows the speed; note SE, cheers and voices play at their own
 // rate), pause (AudioContext.suspend), seek (the BGM restarted at the position), charts without audio files.
@@ -58,6 +62,7 @@ export class LiveSoundPlayer {
     this.noteSeVolume = num(ns.volumes);         // _noteSeVolumeMap
     this.noteSeMute = num(ns.mutes);             // _noteSeMuteMap
     this.se = num(data.liveSe);                  // _seDictionary
+    this.sounds = data.sounds || {};
     this.cache = new Array(LIVE_NOTE_SE_COUNT).fill(false);  // _playNoteSeArrayCache
     this.longSePlaying = false;                  // the looped Slide SE is playing
     this.longSeId = 0;                           // its unique sound id
@@ -128,6 +133,17 @@ export class LiveSoundPlayer {
 
   stopSe(uid) { this.sm.stop(uid, false, 0); }  // StopSe (no fade)
 
+  // player: note SE maps of other settings ({types, volumes, mutes} as live-audio.json noteSe). The looped Slide SE
+  // playing with the old maps is stopped; the next frame that holds a line starts it with the new ones.
+  setNoteSe(ns) {
+    const num = (o) => new Map(Object.entries(o).map(([k, v]) => [Number(k), v]));
+    this.noteSe = num(ns.types); this.noteSeVolume = num(ns.volumes); this.noteSeMute = num(ns.mutes);
+    if (this.longSePlaying) {
+      this.stopSe(this.longSeId);
+      this.longSePlaying = false; this.longSeId = 0; this.currentLongSeType = 0;
+    }
+  }
+
   // player: the SE handles after every non-music sound was stopped (music / sound effects switch, seek)
   forgetSe() {
     this.longSePlaying = false; this.longSeId = 0; this.currentLongSeType = 0;
@@ -141,9 +157,11 @@ export class LiveSoundPlayer {
     return { se, loop };
   }
 
-  playSe(type) {                                // PlaySe
+  // PlaySe. A live sound effect whose sound the chart data omits is not played: the data has to carry only the sounds
+  // an all-perfect run plays (docs/data-format.md); other results (possible with a late NoteTiming) may lack theirs.
+  playSe(type) {
     const id = this.se.get(type);
-    if (id === undefined) return -1;
+    if (id === undefined || !(String(id) in this.sounds)) return -1;
     return this.sm.play(id, { loop: false, volume: 1.0, kind: "se", type });
   }
   playStartCheer() { this.startCheerId = this.playSe(LIVE_SE.StartCheers); return this.startCheerId; }   // PlayStartCheer
@@ -188,6 +206,7 @@ export class LiveSoundManager extends Audio {
       return { sheet: s.sheet, cue: s.cue, category: s.category, row: s.row, entry: s };
     }, loop, opts);
     this.data = data;
+    this.catVolume = new Map();                 // category -> volume set by the live settings (else data.categories)
     this.catBuses = new Map();                  // "A+B" -> GainNode
     this.duck = new Map();                      // dest category -> { level, state, t0 }
     this.layerBuffers = new Map();              // file -> AudioBuffer
@@ -212,7 +231,7 @@ export class LiveSoundManager extends Audio {
   _catGain(cats) {
     let g = 1;
     for (const c of cats) {
-      const v = this.data.categories[c];
+      const v = this.catVolume.has(c) ? this.catVolume.get(c) : this.data.categories[c];
       if (v === undefined) throw new Error(`CRI category ${c} has no volume`);
       g *= v * (this.duck.has(c) ? this.duck.get(c).level : 1);
     }
@@ -319,6 +338,23 @@ export class LiveSoundManager extends Audio {
   update() {
     super.update();
     this._react();
+  }
+
+  // CriAtomExCategory.SetVolume of live categories ({category: volume}): the buses of the cues playing and to come
+  // take the new product at once (a REACT ramp in progress on such a bus ends at its target).
+  setCategoryVolumes(map) {
+    const now = this.ctx.currentTime, changed = new Set();
+    for (const [c, v] of Object.entries(map)) {
+      const cur = this.catVolume.has(c) ? this.catVolume.get(c) : this.data.categories[c];
+      if (cur === v) continue;
+      if (v === this.data.categories[c]) this.catVolume.delete(c); else this.catVolume.set(c, v);
+      changed.add(c);
+    }
+    for (const b of this.catBuses.values()) {
+      if (!b.cats.some((c) => changed.has(c))) continue;
+      b.gain.cancelScheduledValues(now);
+      b.gain.setValueAtTime(this._catGain(b.cats), now);
+    }
   }
 
   // REACT (ACF React_LiveBgm_from_LiveSe): while a cue of `src` plays, `dest` drops to `level` over decrementMs;
@@ -450,6 +486,10 @@ export class LiveAudio {
   stopSe() { this.sm.stopOthers(this.player.musicId); this.player.forgetSe(); }
 
   setRate(r) { this.sm.setMusicRate(r); }
+
+  // live settings: CRI category volumes ({category: volume}) and the note SE maps (see the header)
+  setCategoryVolumes(map) { this.sm.setCategoryVolumes(map); }
+  setNoteSe(ns) { this.player.setNoteSe(ns); }
 
   // seek to music position `sec`; `finished`: the chart's finish (voice + cheer) is already behind that position
   seek(sec, finished) {

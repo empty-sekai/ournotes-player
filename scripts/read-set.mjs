@@ -17,7 +17,15 @@
 // would read it: every chart gets a new store, context and session, and the player keeps no state between sessions
 // that decides what a session reads.
 //
-//   node scripts/read-set.mjs <chart> [--plan] [--files=<json list of paths>] [--keys] [--frames=<n>] [--quality=<0..4>]
+// Settings (--settings): the read set of a session booted with those Live options (ChartSession `settings`, the
+// game's option names and units, src/live/settings.js), in either mode; values the chart's files do not offer are an
+// error. Options that select other files (MirrorChart, NoteDesignId, NoteEffectId, LiveQuality, the note sound sets)
+// give the read set of that variant. A live directory has no manifest, whose `options` would list the qualities its
+// files serve: there every LiveQuality (0..2) is accepted, and the files the directory holds decide whether the session
+// loads.
+//
+//   node scripts/read-set.mjs <chart> [--plan] [--files=<json list of paths>] [--keys] [--frames=<n>] [--quality=<0..2>]
+//                             [--settings=<json object>]
 //   node scripts/read-set.mjs --serve
 //   node scripts/read-set.mjs --features
 //     <chart>     a chart manifest (site/charts/<musicId>_<difficulty>.json) or a directory holding live.json
@@ -27,30 +35,47 @@
 //     --keys      also list the top-level keys read of every JSON file, and the keys read of its top-level objects
 //                 ("<path>#<key>", "<path>#<key>.<subkey>"); in plan mode the keys read by the load and the plan
 //     --frames    full mode: stop after n frames instead of at the end of the chart (not with --plan)
+//     --settings  the Live options of the session, a JSON object ({"MirrorChart": true, "NoteSpeed": 9})
 //     --serve     requests on stdin, one JSON object per line: {"chart": <chart>, "plan"?, "files"?, "keys"?,
-//                 "frames"?, "quality"?} (the options above); one answer per request on stdout, one JSON object per
-//                 line: {"ok": true, "result": <the object below>, "cpuSeconds"} or {"ok": false, "error", "cpuSeconds"}
-//                 (cpuSeconds: CPU time of the process for the request); exits at the end of stdin
-//     --features  prints {"features": [...]}: the modes beyond the full simulation ("plan", "serve")
-// Prints one JSON object: {chart, mode, frames, state, readAfterLoad, read, seconds, files | listed + missing + extra,
-// keys?}; mode "full" (state "ended" at the end of the chart) or "plan" (state "planned", frames 0).
+//                 "frames"?, "quality"?, "settings"?} (the options above; "settings" as an object); one answer per
+//                 request on stdout, one JSON object per line: {"ok": true, "result": <the object below>, "cpuSeconds"}
+//                 or {"ok": false, "error", "cpuSeconds"} (cpuSeconds: CPU time of the process for the request); exits at
+//                 the end of stdin
+//     --features  prints {"features": [...]}: the modes beyond the full simulation ("plan", "serve", "settings")
+// Prints one JSON object: {chart, mode, frames, state, readAfterLoad, read, seconds, settings?, files | listed +
+// missing + extra, keys?}; mode "full" (state "ended" at the end of the chart) or "plan" (state "planned", frames 0);
+// settings: the options asked for, when given. Exit 2 for a usage error or settings the chart does not accept.
 import fs from "node:fs";
 import readline from "node:readline";
 import { ChartSession } from "../src/live/session.js";
+import { LiveSettingsError } from "../src/live/settings.js";
 import { HeadlessAudioContext, headlessGL, openChart } from "./lib/headless.mjs";
 
-const FEATURES = ["plan", "serve"];
+const FEATURES = ["plan", "serve", "settings"];
 const USAGE = "usage: node scripts/read-set.mjs <chart manifest | live dir> [--plan] [--files=<json>] [--keys] [--frames=<n>] " +
-              "[--quality=<n>] | --serve | --features";
+              "[--quality=<n>] [--settings=<json object>] | --serve | --features";
 
 class UsageError extends Error {}
 class NoPlan extends Error {}
 
+// the settings option: a JSON object on the command line, an object in a serve request; absent / null: none
+const settingsOf = (v) => {
+  if (v === undefined || v === null) return undefined;
+  let o = v;
+  if (typeof v === "string") {
+    try { o = JSON.parse(v); } catch (e) { throw new UsageError(`--settings: ${e.message}`); }
+  }
+  if (!o || typeof o !== "object" || Array.isArray(o)) throw new UsageError("--settings must be a JSON object");
+  return o;
+};
+
 // the read set of one chart: {out, bad}; bad: a --files comparison found a difference
 const readSet = async (where, opt) => {
   if (opt.plan && opt.frames !== undefined) throw new UsageError("--frames has no meaning with --plan");
+  const settings = settingsOf(opt.settings);
   const t0 = Date.now();
   const assets = await openChart(where);
+  if (!assets.info) assets.info = { options: { LiveQuality: [0, 1, 2] } };   // a live directory (see the header)
   const reads = new Set(), keyReads = new Set();
   const recorded = (name) => { const f = assets[name].bind(assets); assets[name] = (p, ...a) => { reads.add(p); return f(p, ...a); }; };
   for (const m of ["text", "bytes", "arrayBuffer", "image"]) recorded(m);
@@ -65,7 +90,7 @@ const readSet = async (where, opt) => {
 
   const audioContext = new HeadlessAudioContext();
   const session = await ChartSession.create({ gl: headlessGL(), assets, audioContext, seed: 1,
-                                              quality: opt.quality !== undefined ? Number(opt.quality) : undefined });
+                                              quality: opt.quality !== undefined ? Number(opt.quality) : undefined, settings });
   const readAfterLoad = reads.size;
   let frames = 0, state;
   try {
@@ -101,6 +126,7 @@ const readSet = async (where, opt) => {
   const read = [...reads].sort();
   const out = { chart: where, mode: opt.plan ? "plan" : "full", frames, state, readAfterLoad, read: read.length,
                 seconds: (Date.now() - t0) / 1000 };
+  if (settings) out.settings = settings;
   let bad = false;
   if (opt.files) {
     const list = new Set(JSON.parse(fs.readFileSync(opt.files, "utf8")));
@@ -132,14 +158,19 @@ const serve = async () => {
       const { out } = await readSet(chart, opt);
       write({ ok: true, result: out, cpuSeconds: cpuSeconds() });
     } catch (e) {
-      const error = e instanceof UsageError || e instanceof NoPlan || !e.stack ? String(e.message || e) : e.stack;
+      const error = e instanceof UsageError || e instanceof NoPlan || e instanceof LiveSettingsError || !e.stack
+        ? String(e.message || e) : e.stack;
       write({ ok: false, error, cpuSeconds: cpuSeconds() });
     }
   }
 };
 
 const args = process.argv.slice(2);
-const opt = Object.fromEntries(args.filter((a) => a.startsWith("--")).map((a) => { const [k, v] = a.slice(2).split("="); return [k, v ?? true]; }));
+// --name=value (the value up to the end: a JSON object may hold "=") or --name
+const opt = Object.fromEntries(args.filter((a) => a.startsWith("--")).map((a) => {
+  const i = a.indexOf("=");
+  return i < 0 ? [a.slice(2), true] : [a.slice(2, i), a.slice(i + 1)];
+}));
 if (opt.features) { console.log(JSON.stringify({ features: FEATURES })); process.exit(0); }
 if (opt.serve) { await serve(); process.exit(0); }
 const where = args.find((a) => !a.startsWith("--"));
@@ -149,6 +180,7 @@ let result;
 try {
   result = await readSet(where, opt);
 } catch (e) {
+  if (e instanceof UsageError || e instanceof LiveSettingsError) { console.error(e.message); process.exit(2); }
   if (!(e instanceof NoPlan)) throw e;
   console.error(e.message);
   process.exit(1);

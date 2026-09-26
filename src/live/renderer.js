@@ -216,10 +216,11 @@ LiveCameraMath.sortItems = (items, opaqueDrawn = true) => {
 // ------------------------------------------------------------------------------------------------ renderer
 // `scene` = parsed livescene/scene.json, `lib` = ShaderLib over "livescene/shaders", `loop` = PlayerLoop.
 // Screen size: resize(W, H) (Screen.width / height; LiveGameView.FullInitialize runs again on a size change).
+// `settings`: the live settings (settings.js) read by the lane and the render canvas; absent: the data's defaults.
 export class LiveRenderer {
-  constructor(gl, lib, scene, loop, { quality = LIVE_QUALITY.Middle, base = "livescene" } = {}) {
+  constructor(gl, lib, scene, loop, { quality = LIVE_QUALITY.Middle, base = "livescene", settings } = {}) {
     if (!gl.getExtension("EXT_color_buffer_float")) throw new Error("EXT_color_buffer_float is required");
-    this.gl = gl; this.lib = lib; this.scene = scene; this.loop = loop; this.base = base;
+    this.gl = gl; this.lib = lib; this.scene = scene; this.loop = loop; this.base = base; this.settings = settings;
     gl.frontFace(gl.CW);                    // Unity's front-face convention with its world-to-camera matrix
     this.vao = gl.createVertexArray();
     this.post = new URPPost(gl, lib, { vao: this.vao });

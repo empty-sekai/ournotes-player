@@ -2,7 +2,7 @@ import { AnimClip, AnimController, AnimTargets, Animator } from "../engine/anim.
 import { F } from "../engine/core.js";
 import { Transform, mat4 } from "../engine/math.js";
 import { Prefab } from "../engine/prefab.js";
-import { FxParticleSystem, PS_STOP } from "./particles.js";
+import { FxParticleSystem, PS_STOP } from "../engine/particles.js";
 
 // Note effects, slide hold loop and lane effects of the live chart player: FxPrefab (one effect prefab instance),
 // FxSpriteRenderer, LiveNoteEffects (LiveAllNoteEffectView), LiveLaneEffects (LiveLaneEffectView) and the scene values
@@ -775,8 +775,9 @@ export const FxContainerChain = (names) => {
 // slide hold loop per held long line. Effects are drawn by LiveEffectCamera (layer 29): camera "effect".
 export class LiveNoteEffects {
   // opts {notes (livenotes/notes.json), score (score/<file>.notes.json), materials (FxMaterials), rng (UnityRandom),
-  //       sceneInfo (FxScene.read(scene)), judgementRoot3D (localToWorld of judgement_root; default = sceneInfo)}
-  constructor(gl, { notes, score, sceneInfo, materials = null, rng = null, judgementRoot3D = null } = {}) {
+  //       sceneInfo (FxScene.read(scene)), judgementRoot3D (localToWorld of judgement_root; default = sceneInfo),
+  //       effect (the effect set's asset name, NoteEffectId; default notes.settings.effect)}
+  constructor(gl, { notes, score, sceneInfo, materials = null, rng = null, judgementRoot3D = null, effect = null } = {}) {
     if (!sceneInfo) throw new FxEffectsError("LiveNoteEffects: sceneInfo (FxScene.read) missing");
     this.gl = gl;
     this.notes = notes;
@@ -784,8 +785,9 @@ export class LiveNoteEffects {
     this.materials = materials;
     this.rng = rng;
     this.cache = { clips: new Map(), ctrls: new Map() };
-    // effect set: MasterLiveNoteEffectSkin NoteEffectId 1 -> effect001, LiveQuality Middle -> not the Light set
-    const dir = `Effect/Live/NoteEffect/${notes.settings.effect}`;
+    // effect set: MasterLiveNoteEffectSkin of NoteEffectId (default 1 -> effect001), LiveQuality Middle -> not the
+    // Light set (SoloLiveResourceLoadStateNode.CreateLoadParameter)
+    const dir = `Effect/Live/NoteEffect/${effect || notes.settings.effect}`;
     const settings = notes.assets[`${dir}/LiveNoteEffectAssetSettings`];
     if (!settings) throw new FxEffectsError(`${dir}/LiveNoteEffectAssetSettings not exported`);
     this.laneCount = score.laneCount;                                  // _maxLaneCount (24)
@@ -969,14 +971,17 @@ export class LiveNoteEffects {
 };
 
 // ------------------------------------------------------------------------------------------ lane effects
+export const LIVE_LANE_EFFECT_SET = "effect001";       // LaneEffectLoadStep.GetAssetPath
 // LiveLaneEffectView (LiveGameView/root/LiveGameLaneEffectView): per container 24 permanent instances, one per
 // lane; per frame the requested type per lane is played. Drawn by LiveGameCamera (layer 25): camera "game".
 export class LiveLaneEffects {
+  // The lane effect set does not follow NoteEffectId or LiveQuality: LaneEffectLoadStep.GetAssetPath passes the
+  // constant "effect001" to LiveAddressablePath.GetLiveLaneEffectSkinAssetPath.
   constructor(gl, { notes, score, sceneInfo, materials = null, rng = null } = {}) {
     if (!sceneInfo) throw new FxEffectsError("LiveLaneEffects: sceneInfo (FxScene.read) missing");
     this.gl = gl;
     this.notes = notes;
-    const dir = `Effect/Live/LaneEffect/${notes.settings.effect}`;
+    const dir = `Effect/Live/LaneEffect/${LIVE_LANE_EFFECT_SET}`;
     const settings = notes.assets[`${dir}/LiveLaneEffectAssetSettings`];
     if (!settings) throw new FxEffectsError(`${dir}/LiveLaneEffectAssetSettings not exported`);
     this.laneCount = score.laneCount;                                  // LiveLaneView lane count (24)

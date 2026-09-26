@@ -72,7 +72,9 @@ export interface ChartSessionOptions {
   assets: AssetStore;
   /** An AudioContext at any sample rate (default: a 48 kHz one created, and closed on dispose, by the session). */
   audioContext?: AudioContext;
-  /** LiveQuality 0..4 (default: the manifest's `quality`, else 1). */
+  /** The game's Live options by name (default: the chart data's preset-1 values). */
+  settings?: LiveSettingsInput | null;
+  /** LiveQuality 0..2 when settings.LiveQuality is not given (default: the manifest's `quality`, else 1). */
   quality?: number;
   /** Seed of the particle random stream (default: from the clock). */
   seed?: number;
@@ -80,6 +82,41 @@ export interface ChartSessionOptions {
   width?: number;
   height?: number;
 }
+
+/** A Live option value: float / int options are numbers, switches booleans, choices ids. */
+export type LiveSettingValue = number | boolean;
+/** The Live options in effect, by the game's option name (NoteSpeed, LaneOpacity, LiveMusicVolume, ...). */
+export type LiveSettings = Readonly<Record<string, LiveSettingValue>>;
+export type LiveSettingsInput = Partial<Record<string, LiveSettingValue>>;
+export interface LiveOptionItem {
+  name: string;
+  /** App.Options.OptionItemType */
+  id: number;
+  /** "basic" | "detail" | "display1" | "display2" | "sound" */
+  group: string;
+  section: string;
+  type: "float" | "int" | "bool" | "enum";
+  /** "boot" | "live" | "reload" | "none" */
+  apply: string;
+  default: LiveSettingValue;
+  value: LiveSettingValue;
+  /** [min, max] in the option screen's unit, or null. */
+  range: [number, number] | null;
+  /** The values the chart offers, or null for any value in the range. */
+  values: LiveSettingValue[] | null;
+  offered: boolean;
+  hidden: boolean;
+  /** The mute option of a volume. */
+  mute: string | null;
+}
+export class LiveSettingsError extends RangeError {
+  /** ChartSession.setSettings: the change selects other files; create a new session with `settings`. */
+  reload?: boolean;
+  settings?: LiveSettings;
+}
+export const LIVE_OPTIONS: readonly { name: string; id: number; type: string; section: string; apply: string; def: string }[];
+export const LIVE_OPTION_GROUPS: readonly { key: string; sections: string[] }[];
+export const PLAYER_LANGUAGES: readonly string[];
 
 /** The DOM-free chart session: step it at 60 steps per second of game time and render it. */
 export class ChartSession {
@@ -102,6 +139,13 @@ export class ChartSession {
   readonly audioAvailable: boolean;
   readonly audioContext: AudioContext;
   readonly chart: ChartInfo | null;
+  /** The Live options in effect. */
+  readonly settings: LiveSettings;
+  /** Every Live option with this chart's default, value, range and offered values. */
+  optionItems(): LiveOptionItem[];
+  /** Changes Live options; resolves to the names changed. Rejects with LiveSettingsError (reload: true for options
+   *  that select other files). */
+  setSettings(values: LiveSettingsInput, options?: { reset?: boolean }): Promise<string[]>;
   /** Chart time of the last live update in ms (0 before the chart starts). */
   positionMs(): number;
   /** Length of the music in ms. */
@@ -137,6 +181,10 @@ export interface ChartPlayerOptions {
   speed?: number;
   music?: boolean;
   se?: boolean;
+  /** The game's Live options by name. */
+  settings?: LiveSettingsInput | null;
+  /** Language of the controls (BCP 47; default: the page's). */
+  lang?: string;
   quality?: number;
   seed?: number;
   /** An AudioContext at any sample rate (default: the player's own, 48 kHz). */
@@ -158,6 +206,7 @@ export interface ChartPlayerEventMap {
   ended: CustomEvent<null>;
   error: CustomEvent<{ error: unknown }>;
   progress: CustomEvent<{ loaded: number; total: number }>;
+  settingschange: CustomEvent<{ settings: LiveSettings; changed: string[] }>;
 }
 
 interface PlayerControls {
@@ -175,6 +224,8 @@ interface PlayerControls {
   music: boolean;
   se: boolean;
   readonly chart: ChartInfo | null;
+  /** Changes Live options by name; resolves to the names changed. */
+  setSettings(values: LiveSettingsInput, options?: { reset?: boolean }): Promise<string[]>;
 }
 
 /** A chart player in a host element: canvas, WebGL2 context, requestAnimationFrame, control bar and events. */
@@ -199,6 +250,12 @@ export class ChartPlayer extends EventTarget implements PlayerControls {
   music: boolean;
   se: boolean;
   readonly chart: ChartInfo | null;
+  /** The Live options in effect (null until ready); setting it replaces them. */
+  settings: LiveSettings | null;
+  setSettings(values: LiveSettingsInput, options?: { reset?: boolean }): Promise<string[]>;
+  optionItems(): LiveOptionItem[];
+  /** Language of the controls. */
+  lang: string;
   /** Stops the player, releases its WebGL context and audio, and removes it from the host. */
   dispose(): Promise<void>;
   addEventListener<K extends keyof ChartPlayerEventMap>(type: K, listener: (event: ChartPlayerEventMap[K]) => void,
@@ -225,6 +282,9 @@ export class OurnotesPlayerElement extends HTMLElement implements PlayerControls
   music: boolean;
   se: boolean;
   readonly chart: ChartInfo | null;
+  /** The Live options in effect once loaded, else those of the `settings` attribute; setting it writes the attribute. */
+  settings: LiveSettingsInput | null;
+  setSettings(values: LiveSettingsInput, options?: { reset?: boolean }): Promise<string[]>;
   /** The player of the current `src` (null until loaded). */
   readonly player: ChartPlayer | null;
   /** Resolves to the player of the current `src`. */

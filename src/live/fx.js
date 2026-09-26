@@ -1,7 +1,8 @@
 import { UnityRandom } from "../engine/random.js";
 import { FxScene, LiveLaneEffects, LiveNoteEffects } from "./fx-effects.js";
 import { LiveUIFx } from "./fx-ui.js";
-import { FxMaterials, LiveIntroStars } from "./particles.js";
+import { FxMaterials } from "../engine/particles.js";
+import { LiveIntroStars } from "./particles.js";
 
 // Hit feedback of the live chart player (LiveFx): note effects + slide hold loop and lane effects (fx-effects.js),
 // ParticleSystems and the lane-in stars of the start timeline (particles.js), judgement text + combo counter
@@ -26,19 +27,20 @@ export class LiveFx {
   // scene = assets.json("livescene/scene.json"). introStars = () => stage.intro.stars() (the 7 lane-in
   // star emitters of the start timeline; the session constructs LiveFx after the stage so that this object's animation
   // hook runs after the timeline evaluation of the frame, as Unity's DirectorUpdateAnimation precedes
-  // ParticleSystemBeginUpdateAll). seed: UnityRandom seed of the particle stream.
+  // ParticleSystemBeginUpdateAll). seed: UnityRandom seed of the particle stream. settings: the live settings
+  // (settings.js; the live UI's options and the note effect set), absent: the data's defaults.
   // ENGINE: effect ParticleSystems use autoRandomSeed, so the game's values are not reproducible; deterministic per seed here.
-  constructor({ gl, loop, notes, score, scene, introStars = null, seed = 1 }) {
+  constructor({ gl, loop, notes, score, scene, introStars = null, seed = 1, settings = null, effect = null }) {
     this.gl = gl; this.loop = loop;
     this.materials = new FxMaterials(gl, "livenotes");
     this.sceneMaterials = new FxMaterials(gl, "livescene");      // white_star (shader + texture under livescene/)
     this.rng = new UnityRandom(seed);
     this.introStars = introStars;
     this.stars = new LiveIntroStars(gl, { materials: this.sceneMaterials, rng: this.rng });
-    const opts = { notes, score, sceneInfo: FxScene.read(scene), materials: this.materials, rng: this.rng };
+    const opts = { notes, score, sceneInfo: FxScene.read(scene), materials: this.materials, rng: this.rng, effect };
     this.lane = new LiveLaneEffects(gl, opts);
     this.note = new LiveNoteEffects(gl, opts);
-    this.uiArgs = { scene, notes, score };
+    this.uiArgs = { scene, notes, score, settings };
     this.ui = new LiveUIFx(gl, this.uiArgs);
     this.frozen = false;             // a step that does not count (the player's seek after a long clock jump)
     loop.on("tweens", (l) => { if (!this.frozen) this.ui.tweens(l.deltaTime); });
@@ -97,8 +99,10 @@ export class LiveFx {
     for (const { ps } of this.stars.entries.values()) ps.clear(true);
   }
 
-  // the live UI in its state after load (a new LiveUIFx on the loaded GL resources), keeping LiveUIView's active flag
-  resetUI() {
+  // the live UI in its state after load (a new LiveUIFx on the loaded GL resources), keeping LiveUIView's active flag;
+  // settings (optional): new live settings for it (LiveUIView.Initialize's options)
+  resetUI(settings) {
+    if (settings !== undefined) this.uiArgs = { ...this.uiArgs, settings };
     const u = new LiveUIFx(this.gl, this.uiArgs);
     u.adoptGL(this.ui);
     u.root.canvasGroup.alpha = this.ui.root.canvasGroup.alpha;

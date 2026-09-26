@@ -4,6 +4,7 @@ import { ShaderLib, applyState } from "../engine/glsl.js";
 import { Transform, mat4 } from "../engine/math.js";
 import { GLTex } from "../engine/texture.js";
 import { NoteGeo } from "./notegeo.js";
+import { LiveSettingsMath } from "./settings.js";
 
 // Live note views on WebGL2: the port of LiveAllNoteView and its note head, flick arrow, slide / guide body and
 // pair-line views with their per-frame view state. Geometry: NoteGeo (notegeo.js). Frame input: the frame result of
@@ -240,7 +241,7 @@ export class NoteHeadView {
     this.left = ref("_leftSpriteRenderer"); this.right = ref("_rightSpriteRenderer");
     this.arrow = ref("_flickArrowSpriteRenderer"); this.subArrow = ref("_subArrowSpriteRenderer");
     this.parts = ref("_partsRenderer");
-    this.unit = NoteViewType.skin[type] ? owner.ln.noteSkin[NoteViewType.skin[type]] : null;
+    this.unit = NoteViewType.skin[type] ? (owner.skin || owner.ln.noteSkin)[NoteViewType.skin[type]] : null;
     this.noteId = -1;
   }
 
@@ -367,22 +368,37 @@ export class NoteLineView {
 
 // ------------------------------------------------------------------ LiveAllNoteView (container of all views)
 export class LiveNotes {
-  // ln = livenotes/notes.json, score = score/<chart>.notes.json, opts.base = packed livenotes directory
+  // ln = livenotes/notes.json, score = score/<chart>.notes.json, opts.base = packed livenotes directory,
+  // opts.settings = the live settings (settings.js; absent: the data's option defaults), opts.displayOffsetMs = the
+  // executor's display offset, opts.skin = the note skin record (NoteDesignId; default ln.noteSkin)
   constructor(gl, ln, score, opts = {}) {
     this.gl = gl; this.ln = ln; this.score = score; this.base = opts.base || "livenotes";
-    const s = ln.settings, od = s.optionDefaults;
-    this.geo = new NoteGeo(s);
-    this.noteSpeed = F(parseFloat(od.NoteSpeed));
-    this.showPairLines = od.SimultaneousLineDisplay === "TRUE";          // option 108
-    this.showBarLines = od.MeasureLineDisplay === "TRUE";                // option 109 (default FALSE: not drawn)
-    this.showSkillLines = od.LiveSkillActivationPositionDisplay === "TRUE"; // option 309 (default FALSE: not drawn)
-    if (this.showBarLines || this.showSkillLines) throw new Error("bar / skill lines are hidden by default and not implemented");
+    this.skin = opts.skin || ln.noteSkin;
     this.notes = new Map(score.notes.map((n) => [n.id, n]));
     this.lines = new Map(score.lines.map((l) => [l.lineId, l]));
     this._clips = new Map();
     this.gl_ = gl ? new NoteGL(gl, this.base) : null;
+    this.configure(opts.settings, opts.displayOffsetMs);
+  }
+
+  // The option values LiveAllNoteView.FullInitialize reads (the note settings, IReadOnlyLiveViewSettings and the view
+  // progress offset of LiveGameView.FullInitialize), then every view released as by reset(). settings: resolved live
+  // settings or undefined (the data's defaults).
+  configure(settings, displayOffsetMs) {
+    const ln = this.ln, s = ln.settings, od = s.optionDefaults;
+    const val = (k) => (settings && settings[k] !== undefined ? settings[k] : undefined);
+    // LiveGameView.FullInitialize: viewProgressOffset = EarlyFloatLerp(-0.05, 0.05, laneJudgementPosOffset) of
+    // JudgePosition 104 (0 at the default); the 2D judgement root and the held heads follow it
+    this.viewProgressOffset = val("JudgePosition") !== undefined ? LiveSettingsMath.viewProgressOffset(val("JudgePosition")) : 0;
+    this.geo = new NoteGeo(s, this.viewProgressOffset);
+    this.noteSpeed = F(val("NoteSpeed") ?? parseFloat(od.NoteSpeed));    // IReadOnlyNoteSettings slot 0 (line body LOD)
+    this.showPairLines = val("SimultaneousLineDisplay") ?? od.SimultaneousLineDisplay === "TRUE";   // option 108
+    this.showBarLines = od.MeasureLineDisplay === "TRUE";                // option 109 (default FALSE: not drawn)
+    this.showSkillLines = od.LiveSkillActivationPositionDisplay === "TRUE"; // option 309 (default FALSE: not drawn)
+    if (this.showBarLines || this.showSkillLines) throw new Error("bar / skill lines are hidden by default and not implemented");
+    this.displayOffsetMs = displayOffsetMs ?? s.noteDisplayTimeMs;
     // line kinds: skin + container values
-    const sk = ln.noteSkin;
+    const sk = this.skin;
     const normal = new Gradient(sk.SlideLineGradient), pressed = new Gradient(sk.SlideLinePressedGradient),
           disable = new Gradient(sk.SlideLineDisableGradient);
     const maxA = (g) => { let m = 0; for (let i = 0; i < 256; i++) m = Math.max(m, g.evaluate(i / 255)[3]); return F(m); };
@@ -390,32 +406,45 @@ export class LiveNotes {
     const guideColor = sk.OverrideGuideLineColor ? sk.GuideLineColor : null;
     if (!guideColor) throw new Error("guide container _color (OverrideGuideLineColor 0) not exported");   // skins must override it
     const GN = F(guideColor.a);
-    // option ratio r = value / default; maxRatio = 100 / 60 (UpdateNoteAndGuideOpacity, ComputeLineAlpha)
-    const range = s.optionRanges, ratio = (k) => F(parseFloat(od[k]) / parseFloat(od[k]));
-    const maxR = (k) => F(F(range[k][1]) / F(parseFloat(od[k])));
+    // option ratio r = value / default (options 106 / 107); maxRatio = range max / default = 100 / 60
+    // (LiveAllNoteView.InitOpacityMaxRatio, UpdateNoteAndGuideOpacity, ComputeLineAlpha)
+    const range = s.optionRanges, maxR = (k) => F(F(range[k][1]) / F(parseFloat(od[k])));
     const alpha = (r, n, full, mr) => (r <= 1 ? F(n * r) : F(n + F(F(full - n) * F(F(r - 1) / F(mr - 1)))));
+    this._lineAlphas = (st) => {
+      const ratio = (k) => F((st && st[k] !== undefined ? st[k] : parseFloat(od[k])) / parseFloat(od[k]));
+      return { slide: alpha(ratio("SlideOpacity"), SN, F(SN / SMin), maxR("SlideOpacity")),
+               guide: alpha(ratio("GuideOpacity"), GN, 1, maxR("GuideOpacity")) };
+    };
+    const la = this._lineAlphas(settings);
     this.lineKinds = {
       slide: { widthScale: F(sk.SlideLineWidthScale), glowScale: F(sk.SlideLineGlowRangeScale), normalMaxAlpha: SN,
-               alpha: alpha(ratio("SlideOpacity"), SN, F(SN / SMin), maxR("SlideOpacity")),
-               rows: [(x) => disable.evaluate(x), (x) => normal.evaluate(x), (x) => pressed.evaluate(x)] },
+               alpha: la.slide, rows: [(x) => disable.evaluate(x), (x) => normal.evaluate(x), (x) => pressed.evaluate(x)] },
       guide: { widthScale: 1, glowScale: 0, normalMaxAlpha: GN,
-               alpha: alpha(ratio("GuideOpacity"), GN, 1, maxR("GuideOpacity")),
-               rows: [0, 1, 2].map(() => () => [guideColor.r, guideColor.g, guideColor.b, guideColor.a]) },
+               alpha: la.guide, rows: [0, 1, 2].map(() => () => [guideColor.r, guideColor.g, guideColor.b, guideColor.a]) },
     };
     this.material = sk.SlideLineMaterial;         // both slide and guide (ApplyNoteLine: _skinMaterial ?? _longMaterial)
+    if (this._lineTex) for (const k of ["slide", "guide"]) this.lineKinds[k].tex = this._lineTex[k];   // loaded
     this.spawned = new Map();                     // _currentSpawnNoteDictionary: noteId -> NoteHeadView
     this.held = new Map();                        // _currentSpawnLineBeginNoteDictionary: noteId -> {view, lineIds}
     this.lineViews = new Map();                   // _currentSpawnNoteLineDictionary: lineId -> NoteLineView
     this.pairs = new Map();                       // noteId -> PairLineView (registered under both ids)
     this.pool = new Map();                        // view type -> [views]
-    this.t = 0; this.D = s.noteDisplayTimeMs;
+    this.reset();
+  }
+
+  // SlideOpacity / GuideOpacity (106 / 107): the line alphas are constants of the line views (SetSlideAlpha at spawn);
+  // the lines on screen take the new value as those of a live started with it
+  setLineOpacity(settings) {
+    const la = this._lineAlphas(settings);
+    this.lineKinds.slide.alpha = la.slide; this.lineKinds.guide.alpha = la.guide;
+    for (const lv of this.lineViews.values()) { lv.line.slideAlpha = this.lineKinds[lv.kind].alpha; lv._mesh = null; }
   }
 
   // every view released and the flick graph unstarted: the state after load (the loaded textures are kept)
   reset() {
     this.spawned.clear(); this.held.clear(); this.lineViews.clear(); this.pairs.clear();
     this.graphTime = undefined; this._flickSeen = false;
-    this.t = 0; this.D = this.ln.settings.noteDisplayTimeMs; this.fr = undefined;
+    this.t = 0; this.D = this.displayOffsetMs; this.fr = undefined;
   }
 
   clip(id) {
@@ -429,10 +458,11 @@ export class LiveNotes {
     const add = (sp) => { if (sp && sp.texture) want.set(sp.texture.texture, sp.texture); };
     const walk = (x) => { if (!x || typeof x !== "object") return; if (x.sprite && x.rect && x.texture) { add(x); return; }
                           for (const v of Array.isArray(x) ? x : Object.values(x)) walk(v); };
-    walk(this.ln.noteSkin);
+    walk(this.skin);
     add(this.ln.prefabs.pair_note_line.nodes.flatMap((n) => n.components).find((c) => c.type === "SpriteRenderer").m_Sprite);
     for (const d of want.values()) await g.texture(d);
-    for (const k of ["slide", "guide"]) this.lineKinds[k].tex = g.gradientTexture(this.lineKinds[k].rows);
+    this._lineTex = {};
+    for (const k of ["slide", "guide"]) this.lineKinds[k].tex = this._lineTex[k] = g.gradientTexture(this.lineKinds[k].rows);
   }
 
   // animation phase: the shared LoopAnimationTimeSync PlayableGraph of all flick views (one phase for every arrow,
@@ -589,7 +619,7 @@ export class LiveNotes {
         const e = G.ease(c, sel.eL);
         const lane = F(sel.l0 + F(F(sel.l1 - sel.l0) * G.clamp01(e))), width = F(sel.w0 + F(F(sel.w1 - sel.w0) * G.clamp01(e)));
         const cw = G.clampLaneAndWidth(lane, width, this.geo.laneMin, this.geo.laneMax);
-        h.view.setViewProgress(1 - 0);                                // 1 - _viewProgressOffset (0)
+        h.view.setViewProgress(F(1 - this.viewProgressOffset));      // 1 - _viewProgressOffset
         h.view.width = cw.width; h.view.laneCenter = cw.center;
         h.view.updateView();
         h.visible = true;

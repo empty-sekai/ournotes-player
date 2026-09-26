@@ -9,8 +9,9 @@ import { F } from "../engine/core.js";
 // powf is evaluated as fround(Math.pow(double)); a correctly rounded powf can differ by 1 ulp.
 
 export class NoteGeo {
-  // s = livenotes/notes.json `settings`
-  constructor(s) {
+  // s = livenotes/notes.json `settings`; viewProgressOffset = LiveGameView.FullInitialize's view progress offset of
+  // JudgePosition (settings.js LiveSettingsMath.viewProgressOffset; 0 at the default)
+  constructor(s, viewProgressOffset = 0) {
     this.laneCount = s.laneCount;                                            // 24
     const W = F(F(s.laneSize[0]) / 100), H = F(F(s.laneSize[1]) / 100);     // CreateLaneViewSettings
     const top = F(s.laneTopRange), bot = F(s.laneBottomRange), tp = F(s.laneTopPosition);
@@ -34,7 +35,7 @@ export class NoteGeo {
     }
     // LiveNoteViewJudgementRoot2D ctor: offsetProgress = EarlyFloatLerp(-0.05, 0.05, laneJudgementPosOffset)
     // = 0 for JudgePosition 0 (lambda: LerpUnclamped(spawn, P, offsetProgress + 1))
-    const off = F(0);
+    const off = F(viewProgressOffset);
     const sp = this.spawn, lerpU = NoteGeo.lerpU2;
     this.J = raw.map((p) => lerpU(sp, p, F(off + 1)));
     // 12 extrapolated positions per side, k = 1..12 (ZLinq Range(1, 12)), factor k + 1

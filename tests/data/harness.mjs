@@ -6,7 +6,8 @@
 //   OURNOTES_DATA=<site dir>           the site (charts.json, charts/, assets/); the tests are skipped without it
 //   OURNOTES_CHARTS=<id>,<id>,...      charts for the full-run test (default: 100001_expert and 100040_expert when
 //                                      present, else the first chart of the site)
-//   OURNOTES_SEEK_CHART=<id>           chart for the seek / speed / stall test (default: 100082_expert when present)
+//   OURNOTES_SEEK_CHART=<id>           chart for the seek / speed / stall test and the settings test (default:
+//                                      100082_expert when present)
 //   OURNOTES_READSET_CHARTS=<id>,... | all   charts for the read-set plan check (default: as OURNOTES_CHARTS)
 //   OURNOTES_JOBS=<n>                  read-set charts checked at a time (default 1)
 import crypto from "node:crypto";
@@ -33,11 +34,12 @@ export const pickCharts = (env, defaults) => {
 };
 
 // A session at the start of the chart, playing, on the music-off clock (the chart clock advances by the game time of
-// each step, so runs are reproducible). Returns { session, audioContext }.
-export const openSession = async (id, { speed = 1, seed = 1 } = {}) => {
+// each step, so runs are reproducible); `settings`: the Live options it boots with. Returns { session, audioContext }.
+export const openSession = async (id, { speed = 1, seed = 1, settings = null } = {}) => {
   const assets = await openChart(path.join(DATA, "charts", `${id}.json`));
   const audioContext = new HeadlessAudioContext();
-  const session = await ChartSession.create({ gl: headlessGL(), assets, audioContext, seed, width: 320, height: 180 });
+  const session = await ChartSession.create({ gl: headlessGL(), assets, audioContext, seed, width: 320, height: 180,
+                                              settings });
   session.setMusic(false);
   if (speed !== 1) session.setSpeed(speed);
   await session.play();

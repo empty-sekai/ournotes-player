@@ -1,4 +1,5 @@
 import { bindAssets, unbindAssets } from "../data/assets.js";
+import { F } from "../engine/core.js";
 import { SOUND_CATEGORY } from "../engine/audio.js";
 import { trackGL } from "../engine/gltrack.js";
 import { ShaderLib } from "../engine/glsl.js";
@@ -7,13 +8,16 @@ import { LiveLightWeightBackground } from "./background.js";
 import { LiveFx } from "./fx.js";
 import { LiveNotes } from "./noteview.js";
 import { LiveRenderer } from "./renderer.js";
+import { LIVE_OPTION_BY_NAME, LiveOptionContext, LiveSettingsError, liveCategoryVolumes, liveDerived, liveNoteEffectName,
+         liveNoteSeMaps, liveOptionItems, liveSettingsChanges } from "./settings.js";
 import { LiveExecutor } from "./simulator.js";
 import { LiveAudio, LiveGameClock } from "./sound.js";
 import { LiveStage } from "./stage.js";
 
-// ChartSession: the chart preview of one live in LightWeight mode (auto play at Perfect, default options, 60 fps),
-// drawn into a WebGL2 context. It has no DOM access: the caller owns the context and its canvas, calls step() at the
-// frame rate (ChartPlayer drives it with requestAnimationFrame) and render() / resize() as needed.
+// ChartSession: the chart preview of one live in LightWeight mode (auto play at Perfect, the game's Live options of
+// `settings` (settings.js), 60 fps), drawn into a WebGL2 context. It has no DOM access: the caller owns the context
+// and its canvas, calls step() at the frame rate (ChartPlayer drives it with requestAnimationFrame) and render() /
+// resize() as needed.
 //
 // Game flow reproduced (states of App.Live's FiniteStateMachine, applied in GameMain's Update):
 //   load        FullInitialize: renderer, stage (intro timeline evaluated at 0), note views, effects
@@ -58,6 +62,16 @@ import { LiveStage } from "./stage.js";
 //           state after the chart, and the sounds still playing (the finish cheer loops by itself) stop with it;
 //           play() resumes it (and starts the chart again).
 //   music / sound effects on and off; a chart without audio files (manifest "audio": false) runs on the game clock.
+//   settings  the game reads the Live options once, when the live boots. setSettings() applies a change at once and
+//           gives the state a live booted with the new values has at the current chart time: options read by the
+//           simulation, the note views or the live UI restart the chart state and re-simulate it to the current chart
+//           time (as a seek); options that are constants of a draw (lane, background, line opacities) and the note
+//           SE maps are replaced; the live category volumes change the playing sounds at once, as in the game's
+//           settings panel. Options that select other files (mirrored score, note design, effect set, quality) need a
+//           new session (ChartPlayer creates it and returns to the chart time).
+//   end of the chart  with a post-music lead (ChartPosition > 0) the chart runs behind the music by the lead and goes
+//           on after the music has ended until the lead is used up (its time then reaches the music length); the
+//           session ends at the next frame.
 
 export const LIVE_CATCHUP_FX_FRAMES = 12;     // catch-up: effects stepped up to this many missed frames
 export const LIVE_CATCHUP_MAX_MS = 2000;      // catch-up: a longer jump of the chart clock is a seek
@@ -69,8 +83,10 @@ export class ChartSession {
   //   assets        AssetStore of the chart (required)
   //   audioContext  an AudioContext to play into, at any sample rate (the waveforms are decoded into its rate; default:
   //                 a 48 kHz one created and closed by the session)
-  //   quality       LiveQuality 0..4 (default: the manifest's `quality`, else 1 = Middle, the game's option default);
-  //                 a chart manifest carries the files of one quality
+  //   settings      Live options by name (settings.js LIVE_OPTIONS; default: the chart data's preset-1 values); values
+  //                 the chart's files do not offer raise LiveSettingsError
+  //   quality       LiveQuality 0..2 (default: the manifest's `quality`, else 1 = Middle, the game's option default);
+  //                 a chart manifest carries the files of the qualities it lists; settings.LiveQuality takes precedence
   //   seed          seed of the particle random stream (default: from the clock, as the game's TickCount)
   //   width, height drawing buffer size in pixels (default: the canvas size)
   // Resolves once the session is at the start of the chart, paused.
@@ -87,7 +103,7 @@ export class ChartSession {
     return s;
   }
 
-  async _load({ gl, assets, audioContext = null, quality, seed, width, height } = {}) {
+  async _load({ gl, assets, audioContext = null, quality, seed, width, height, settings = null } = {}) {
     if (!gl) throw new Error("ChartSession: a WebGL2 context is required");
     if (!assets) throw new Error("ChartSession: an AssetStore is required");
     bindAssets(gl, assets);
@@ -95,8 +111,17 @@ export class ChartSession {
     this._gl = trackGL(gl);
     const live = assets.json("live.json");
     const scene = assets.json(live.scene);
-    const score = assets.json(live.notes);
     const noteAssets = assets.json(live.noteAssets);
+    const audioData = assets.json(live.liveAudio);
+    // Live options: defaults, ranges and the values the chart's files offer, then the settings of this session
+    const ctx = new LiveOptionContext({ live, scene, notes: noteAssets, audio: audioData, info: assets.info || null });
+    if (quality !== undefined && quality !== null) ctx.defaults.LiveQuality = Number(quality);
+    const s = ctx.resolve(settings || {});
+    this.optionContext = ctx;
+    this._settings = s;
+    this.derived = liveDerived(ctx, s);
+    // MirrorChart (4): the score converted with isMirror (SsMusicScoreConverter), a file of its own
+    const score = assets.json(s.MirrorChart ? live.notesMirror : live.notes);
     this.live = live;
     this.score = score; this.noteAssets = noteAssets;
     const loop = new PlayerLoop(60);
@@ -105,8 +130,8 @@ export class ChartSession {
     // FullInitialize: renderer (cameras, RTs, LightWeight background, post), stage (lane + start timeline),
     // simulation, note views, effects. The effects are built after the stage so that their animation hook runs
     // after the timeline evaluation (DirectorUpdateAnimation precedes ParticleSystemBeginUpdateAll).
-    const q = quality ?? (assets.info && assets.info.quality) ?? 1;
-    const renderer = new LiveRenderer(gl, new ShaderLib(gl, "livescene/shaders", assets), scene, loop, { quality: q });
+    const renderer = new LiveRenderer(gl, new ShaderLib(gl, "livescene/shaders", assets), scene, loop,
+                                      { quality: s.LiveQuality, settings: s });
     await renderer.load();
     this.renderer = renderer;
     const c = gl.canvas;
@@ -116,20 +141,27 @@ export class ChartSession {
     await stage.load();
     stage.attach(loop);
     this.stage = stage;
-    this.exec = new LiveExecutor(score, noteAssets.settings);
-    this.notes = new LiveNotes(gl, noteAssets, score, { base: "livenotes" });
+    this.exec = new LiveExecutor(score, noteAssets.settings, this.derived);
+    // NoteDesignId (306): the note skin asset of MasterLiveNoteSkin (SoloLiveResourceLoadStateNode.CreateLoadParameter)
+    const skin = s.NoteDesignId !== ctx.defaults.NoteDesignId
+      ? noteAssets.noteSkins[noteAssets.settings.skins[String(s.NoteDesignId)]] : undefined;
+    this.notes = new LiveNotes(gl, noteAssets, score, { base: "livenotes", settings: s, displayOffsetMs: this.exec.D, skin });
     await this.notes.load();
     this.fx = new LiveFx({ gl, loop, notes: noteAssets, score, scene, introStars: () => stage.intro.stars(),
-                           seed: seed ?? (Date.now() >>> 0) });
+                           seed: seed ?? (Date.now() >>> 0), settings: s, effect: liveNoteEffectName(ctx, s) });
     await this.fx.load();
 
     // live sound: SoundManager with the live's CRI routing, LiveSoundPlayer (cheers, note SE, BGM); every cue of
     // the live's audio table decoded up front
-    this.audio = new LiveAudio(loop, assets.json(live.liveAudio), { assets, context: audioContext });
+    this.audio = new LiveAudio(loop, audioData, { assets, context: audioContext });
     await this.audio.load();
+    this.audio.setCategoryVolumes(liveCategoryVolumes(ctx, s));    // unchanged volumes keep the data's values
+    const noteSe = liveNoteSeMaps(ctx, s);
+    if (noteSe) this.audio.setNoteSe(noteSe);
 
-    // MusicSyncTimeProvider / LivePlayingStateNodeBase state (offsets 0 for a fresh profile)
-    this.clock = { lastMs: -1, hasMusicEverPlayed: false, offsetMs: 0, chartPositionMs: 0,
+    // MusicSyncTimeProvider / LivePlayingStateNodeBase state (offsetMs 0 for a fresh profile; chartPositionMs
+    // LiveSettings.ChartPositionMs of ChartPosition 3)
+    this.clock = { lastMs: -1, hasMusicEverPlayed: false, offsetMs: 0, chartPositionMs: this.derived.chartPositionMs,
                    postMusicBufferMs: 0, postMusicElapsedMs: 0, musicLengthMs: 0 };
     this.state = "load";             // load -> intro -> start -> playing -> ended
     this.startRequested = false;
@@ -205,17 +237,19 @@ export class ChartSession {
     this.exec.resetFrame();
   }
 
-  // catch-up (see the header): the grid frames lastSec + k x deltaTime that the chart clock passed before `chartMs`
-  // (more than half a frame before it), or, with chartMs null (the music has ended), every grid frame still inside
-  // the music; each one simulated as the continuous run's frame would be, without drawing and sounds
+  // catch-up (see the header): the grid frames lastSec + k x deltaTime inside the music that the chart clock passed
+  // before `chartMs` (more than half a frame before it), or, with chartMs null (the music has ended), every grid frame
+  // still inside the music; each one simulated as the continuous run's frame would be, without drawing and sounds.
+  // The frames of the post-music lead are never missed: its chart time advances by one frame's time per frame (the
+  // first lead frame's chart time runs ahead of the music grid by the fraction of a frame the music ended into).
   _catchUp(chartMs) {
     if (this.lastSec === null || this.chartMs === null) return;
-    const dt = this.loop.deltaTime, len = this.clock.musicLengthMs, times = [];
+    const dt = this.loop.deltaTime, len = this.clock.musicLengthMs, cp = this.clock.chartPositionMs, times = [];
     let s = this.lastSec;
     for (;;) {
-      const n = s + dt, t = Math.trunc(n * 1000);
-      if (chartMs !== null ? t > chartMs - dt * 500 : !(n * 1000 < len)) break;
-      if (t >= 1 && t > this.chartMs) times.push([t, n]);
+      const n = s + dt, m = Math.trunc(n * 1000), t = Math.max(m + cp, 0);   // music ms, chart ms (NormalizeTimeMs)
+      if (!(n * 1000 < len) || (chartMs !== null && t > chartMs - dt * 500)) break;
+      if (m >= 1 && t > this.chartMs) times.push([t, n]);
       s = n;
       if (times.length > LIVE_CATCHUP_MAX_MS / (dt * 1000) + 2) break;
     }
@@ -253,7 +287,9 @@ export class ChartSession {
       const lead = Math.max(0, -c.chartPositionMs);
       if (lead < 1) { this.state = "ended"; return null; }         // ShouldContinueUpdateAfterMusicStop false
       const b = c.postMusicBufferMs + lead;
-      if (b >= 1 && c.postMusicElapsedMs < b) c.postMusicElapsedMs += dt * 1000;
+      // the lead is used up: the chart time has stopped at the music length + lead (see the header)
+      if (c.postMusicElapsedMs >= b) { this.state = "ended"; return null; }
+      if (b >= 1 && c.postMusicElapsedMs < b) c.postMusicElapsedMs = F(F(F(dt) * 1000) + c.postMusicElapsedMs);   // float
       t = Math.trunc(Math.min(c.postMusicElapsedMs, b)) + c.musicLengthMs;
       c.sec = t / 1000;
     }
@@ -264,6 +300,24 @@ export class ChartSession {
       this.hold = null;
     }
     return ms;
+  }
+
+  // The chart time the next frame of a re-simulation reaches: _chartMs of the frame after `clk` advances by `dt`,
+  // without changing any state; null: the frame has no live update; Infinity: the frame ends the chart. In the
+  // post-music lead (ChartPosition > 0) the chart time follows the float32 elapsed time, not the game clock.
+  _nextChartMs(clk, len, dt) {
+    const c = this.clock, n = clk.sec + dt;                        // LiveGameClock.advance
+    let t;
+    if (n * 1000 < len) t = Math.trunc(n * 1000);                  // isPlaying, timeMs
+    else {
+      if (!c.hasMusicEverPlayed) return null;
+      const lead = Math.max(0, -c.chartPositionMs), b = c.postMusicBufferMs + lead;
+      if (lead < 1 || c.postMusicElapsedMs >= b) return Infinity;
+      const e = b >= 1 && c.postMusicElapsedMs < b ? F(F(F(dt) * 1000) + c.postMusicElapsedMs) : c.postMusicElapsedMs;
+      t = Math.trunc(Math.min(e, b)) + c.musicLengthMs;
+    }
+    if (t < 1) return null;
+    return Math.max(c.offsetMs + t + c.chartPositionMs, 0);
   }
 
   // Drawing buffer size in pixels (Screen.width x Screen.height: the render targets follow it), applied by the next
@@ -336,6 +390,10 @@ export class ChartSession {
   get audioContext() { return this.audio.sm.ctx; }
   // chart metadata of the manifest (title, bands, level, notes, durationMs, ...) or null
   get chart() { return (this.assets.info && this.assets.info.chart) || null; }
+  // the Live options in effect (frozen, by name; settings.js)
+  get settings() { return this._settings; }
+  // every Live option with its default, value, range and the values this chart offers (settings.js liveOptionItems)
+  optionItems() { return liveOptionItems(this.optionContext, this._settings); }
   durationMs() { return this.audio.musicLengthMs(); }
   positionMs() { return this.started && this.chartMs !== null ? this.chartMs : 0; }
 
@@ -376,12 +434,57 @@ export class ChartSession {
   // the music position the chart has reached (the game clock's own value when the music is off)
   _musicSec() {
     if (!this.audio.musicOn && this.audio.musicStarted) return this.audio.game.sec;
-    return this.chartMs === null ? 0 : this.chartMs / 1000;
+    return this.chartMs === null ? 0 : (this.chartMs - this.clock.chartPositionMs) / 1000;
+  }
+
+  // Changes Live options (by name; the others keep their values, or their defaults with reset). Resolves to the
+  // names changed. See the header for how each kind applies; an option that selects other files raises a
+  // LiveSettingsError with `reload` true (ChartPlayer creates a new session for it).
+  async setSettings(values = {}, { reset = false } = {}) {
+    if (this.disposed) throw new Error("ChartSession: disposed");
+    const ctx = this.optionContext, prev = this._settings;
+    const next = ctx.resolve(values || {}, reset ? null : prev);
+    const ch = liveSettingsChanges(prev, next);
+    if (ch.reload.length) {
+      const e = new LiveSettingsError(`${ch.reload.join(", ")}: select other files; a new session is needed`);
+      e.reload = true; e.settings = next;
+      throw e;
+    }
+    const changed = [...ch.none, ...ch.live, ...ch.noteSe, ...ch.boot];
+    if (!changed.length) return changed;
+    if (this._seekRun) await this._seekRun.catch(() => {});
+    if (this._stepping) await this._stepping;
+    this._settings = next;
+    this.derived = liveDerived(ctx, next);
+    if (ch.live.length) this.audio.setCategoryVolumes(liveCategoryVolumes(ctx, next));
+    if (ch.noteSe.length) this.audio.setNoteSe(liveNoteSeMaps(ctx, next) || this.audio.data.noteSe);
+    const has = (names) => ch.boot.some((n) => names.includes(n));
+    this.renderer.settings = next;
+    if (has(["LaneOpacity", "GuidelineOpacity", "GuidelineCount"])) this.stage.lane.configure(next);
+    if (has(["BackgroundBrightness"])) this.renderer.canvas.configure(next);
+    if (has(["SlideOpacity", "GuideOpacity"])) this.notes.setLineOpacity(next);
+    if (ch.boot.some((n) => LIVE_RESTART.has(n))) await this._restart();
+    if (this.paused && !this.disposed) this.render();              // the state the session stays at
+    return changed;
+  }
+
+  // the chart state of a live booted with the current settings, at the current chart time (setSettings)
+  async _restart() {
+    if (!this.started) {                                           // at the chart start: nothing simulated yet
+      this.exec = new LiveExecutor(this.score, this.noteAssets.settings, this.derived);
+      this.notes.configure(this._settings, this.exec.D);
+      this.fx.resetUI(this._settings);
+      for (const d of this.preDts) this.fx.uiFrame(null, d);
+      this.clock.chartPositionMs = this.derived.chartPositionMs;
+      return;
+    }
+    await this.seek(this.positionMs(), { restart: true });
   }
 
   // Seek to chart time `ms`: the chart-side state of the last frame at or before `ms` on the music-off clock's grid
-  // (see the header). Resolves to the chart time reached.
-  async seek(ms) {
+  // (see the header). Resolves to the chart time reached. restart: from the music start with the current settings
+  // (setSettings) even when `ms` is ahead.
+  async seek(ms, { restart = false } = {}) {
     if (this.seeking) return this.positionMs();
     this.seeking = true;
     let suspended = false;
@@ -396,15 +499,23 @@ export class ChartSession {
       await this.audio.suspend();                                  // no sound while the state is re-simulated
       suspended = true;
       const len = this.durationMs(), dt = this.loop.stepDelta();
-      const target = Math.max(0, Math.min(len, Math.round(ms)));
+      // the end of the chart: a seek to the music length or beyond; a restart of an ended session. A restart keeps
+      // its chart time as it is (with ChartPosition < 0 the chart runs past the music length).
+      const want = Math.max(0, Math.round(ms));
+      const toEnd = restart ? this.state === "ended" : want >= len;
+      const target = restart ? want : Math.min(len, want);
       let sec;
-      if (this.chartMs === null || target < this.chartMs || this.state === "ended") { this._resetChart(len); sec = 0; }
-      else sec = this.lastSec ?? this.chartMs / 1000;             // forward: from the last live update's position
+      if (restart || this.chartMs === null || target < this.chartMs || this.state === "ended") {
+        this._resetChart(len, restart);
+        sec = 0;
+      } else sec = this.lastSec ?? (this.chartMs - this.clock.chartPositionMs) / 1000;   // forward: from the last update
       const clk = new LiveGameClock(sec);
       const src = { isPlayingMusic: () => clk.isPlaying(len), musicTimeMs: () => clk.timeMs() };
       this.hold = null;
       for (let n = 1; this.state === "playing"; n++) {
-        if (target < len && Math.trunc((clk.sec + dt) * 1000) > target) break;   // at the end: until the music ends
+        // stop before the frame whose chart time is past the target (or that ends the chart); at the end: until the
+        // chart ends
+        if (!toEnd && this._nextChartMs(clk, len, dt) > target) break;
         this._simFrame(clk, src, dt);
         if (n % 1200 === 0) await new Promise((r) => setTimeout(r, 0));
       }
@@ -426,13 +537,14 @@ export class ChartSession {
   }
 
   // the state at the music start frame: new executor, note views released, live UI as after load plus the UI's
-  // DOTween / Animator steps of every frame up to the music start, clock gate reset
-  _resetChart(len) {
-    this.exec = new LiveExecutor(this.score, this.noteAssets.settings);
-    this.notes.reset();
-    this.fx.resetUI();
+  // DOTween / Animator steps of every frame up to the music start, clock gate reset. reconfigure: the note views and
+  // the live UI take the current settings (setSettings)
+  _resetChart(len, reconfigure = false) {
+    this.exec = new LiveExecutor(this.score, this.noteAssets.settings, this.derived);
+    if (reconfigure) this.notes.configure(this._settings, this.exec.D); else this.notes.reset();
+    this.fx.resetUI(reconfigure ? this._settings : undefined);
     for (const d of this.preDts) this.fx.uiFrame(null, d);
-    this.clock = { lastMs: -1, hasMusicEverPlayed: false, offsetMs: 0, chartPositionMs: 0,
+    this.clock = { lastMs: -1, hasMusicEverPlayed: false, offsetMs: 0, chartPositionMs: this.derived.chartPositionMs,
                    postMusicBufferMs: 0, postMusicElapsedMs: 0, musicLengthMs: len };
     this.frame = null; this.chartMs = null; this.lastSec = null; this.state = "playing";
   }
@@ -480,3 +592,9 @@ export class ChartSession {
                      "loop", "preDts", "_gl"]) this[k] = null;
   }
 }
+
+// boot options whose change restarts the chart state (read by the simulation, the note views' spawn state or the live
+// UI's state); the other boot options are constants of a draw
+const LIVE_RESTART = new Set(["NoteSpeed", "NoteTiming", "ChartPosition", "JudgePosition", "SimultaneousLineDisplay",
+                              "ComboCountDisplay", "ContinuationEffectDisplay", "JudgeResultPositionType"]);
+for (const n of LIVE_RESTART) if (!LIVE_OPTION_BY_NAME.has(n)) throw new Error(`live option ${n} missing`);

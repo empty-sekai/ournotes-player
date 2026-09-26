@@ -27,7 +27,14 @@
       "properties": {
         "types": { "$ref": "#/$defs/byType", "additionalProperties": { "$ref": "#/$defs/soundId" } },
         "volumes": { "$ref": "#/$defs/byType", "additionalProperties": { "type": "number", "minimum": 0 } },
-        "mutes": { "$ref": "#/$defs/byType", "additionalProperties": { "type": "boolean" } }
+        "mutes": { "$ref": "#/$defs/byType", "additionalProperties": { "type": "boolean" } },
+        "patternId": { "type": "integer", "minimum": 1, "description": "Optional: the note sound set of types (default 1)." },
+        "groups": {
+          "type": "object",
+          "description": "Optional: note sound set id -> LiveNoteSeType -> sound id (the NoteSePatternId / individual note sound options).",
+          "propertyNames": { "pattern": "^[1-9][0-9]*$" },
+          "additionalProperties": { "$ref": "#/$defs/byType", "additionalProperties": { "$ref": "#/$defs/soundId" } }
+        }
       }
     },
     "liveSe": { "$ref": "#/$defs/byType", "additionalProperties": { "$ref": "#/$defs/soundId" } },

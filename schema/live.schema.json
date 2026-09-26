@@ -10,6 +10,7 @@
     "difficulty": { "type": "string" },
     "scene": { "$ref": "#/$defs/path", "description": "Live scene (usually livescene/scene.json)." },
     "notes": { "$ref": "#/$defs/path", "description": "Score notes of the chart (e.g. score/0001_03.notes.json)." },
+    "notesMirror": { "$ref": "#/$defs/path", "description": "Optional: the score converted mirrored (the MirrorChart option), same format as notes." },
     "noteAssets": { "$ref": "#/$defs/path", "description": "Note, effect and UI assets (usually livenotes/notes.json)." },
     "liveAudio": { "$ref": "#/$defs/path", "description": "Sound definitions (usually audio/live-audio.json)." }
   },

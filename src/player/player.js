@@ -1,6 +1,8 @@
 import { AssetStore } from "../data/assets.js";
 import { ChartSession } from "../live/session.js";
+import { liveSettingsChanges } from "../live/settings.js";
 import { ChartControls, PLAYER_CSS } from "./controls.js";
+import { formatString, playerStrings } from "./strings.js";
 
 // ChartPlayer: a ChartSession on a canvas inside a host element. It creates the canvas and its WebGL2 context, keeps
 // the drawing buffer at the element's size in device pixels (ResizeObserver, devicePixelRatio), drives the session
@@ -12,7 +14,12 @@ import { ChartControls, PLAYER_CSS } from "./controls.js";
 //   await player.play();          // from a user gesture: it resumes the AudioContext
 //
 // Events (CustomEvent, `detail` as noted): ready, play, pause, seeked {time}, timeupdate {time} (at most every 250 ms
-// while playing, and after a seek), ended, error {error}, progress {loaded, total} (bytes, while loading).
+// while playing, and after a seek), ended, error {error}, progress {loaded, total} (bytes, while loading),
+// settingschange {settings, changed} (after the Live options changed, from the API or the settings panel).
+//
+// Live options (the game's settings, src/live/settings.js): `settings` at creation, setSettings() later. A change
+// applies as ChartSession.setSettings describes; an option that selects other files (mirrored score, note design,
+// effect set, quality) re-creates the session and returns to the chart time, playing if it was.
 
 const TIMEUPDATE_MS = 250;
 const MAX_STEPS = 4;              // steps per animation frame at most (a late frame catches up to 4 frames of game time)
@@ -25,6 +32,9 @@ export class ChartPlayer extends EventTarget {
   //   autoplay     start playing once loaded (default false); a browser that blocks audio without a user gesture
   //                keeps the player paused until play() is called from a gesture
   //   speed        playback speed (default 1), music / se (default true)
+  //   settings     Live options by name (see ChartSession; default: the chart's defaults)
+  //   lang         language of the controls (BCP 47; default: the nearest `lang` attribute of the host, else the
+  //                document's; English when there is no table for it)
   //   quality, seed, audioContext   passed to ChartSession
   //   pixelRatio   device pixels per CSS pixel of the drawing buffer (default window.devicePixelRatio)
   //   signal       an AbortSignal that cancels the loading
@@ -51,6 +61,9 @@ export class ChartPlayer extends EventTarget {
     this.disposed = false;
     this._abort = new AbortController();
     const doc = host.ownerDocument || document;
+    const el = host.nodeType === 11 ? host.host : host, near = el && el.closest ? el.closest("[lang]") : null;   // 11: a ShadowRoot
+    this._lang = opts.lang || (near && near.getAttribute("lang")) || (doc.documentElement && doc.documentElement.lang) || "en";
+    this.strings = playerStrings(this._lang);
     const root = this.root = doc.createElement("div");
     root.className = "ournotes-player";
     root.style.cssText = "display:block;position:relative;width:100%;height:100%;overflow:hidden;background:#000;outline:none;";
@@ -69,12 +82,12 @@ export class ChartPlayer extends EventTarget {
 
   async _init() {
     const o = this.opts, signal = o.signal ? anySignal([o.signal, this._abort.signal]) : this._abort.signal;
-    this._status("loading…");
+    this._status(this.strings.loading);
     const mb = (n) => (n / 1048576).toFixed(1);
     const assets = o.assets || await AssetStore.fromManifest(o.src, {
       signal,
       onProgress: (loaded, total) => {
-        this._status(`loading ${mb(loaded)} / ${mb(total)} MB`);
+        this._status(formatString(this.strings.loadingMB, { loaded: mb(loaded), total: mb(total) }));
         this._emit("progress", { loaded, total });
       },
     });
@@ -87,7 +100,7 @@ export class ChartPlayer extends EventTarget {
     this.canvas.addEventListener("webglcontextlost", this._onLost);
     const [w, h] = this._pixelSize();
     const session = await ChartSession.create({ gl, assets, audioContext: o.audioContext, quality: o.quality, seed: o.seed,
-                                                width: w, height: h });
+                                                width: w, height: h, settings: o.settings || null });
     if (this.disposed) { await session.dispose(); throw abortError(); }
     this.session = session;
     if (o.speed !== undefined && o.speed !== null && Number(o.speed) !== 1) session.setSpeed(Number(o.speed));
@@ -120,6 +133,23 @@ export class ChartPlayer extends EventTarget {
   set se(on) { this._need().setSe(!!on); this._changed(); }
   get audioAvailable() { return !!this.session && this.session.audioAvailable; }
   get chart() { return this.session ? this.session.chart : null; }
+  // the Live options in effect (frozen object by name; null until ready). Setting it replaces them (the names not
+  // given take their defaults); invalid values throw a LiveSettingsError at once.
+  get settings() { return this.session ? this.session.settings : null; }
+  set settings(v) {
+    const s = this._need();
+    s.optionContext.resolve(v || {});
+    this.setSettings(v || {}, { reset: true }).catch((e) => this._fail(e));
+  }
+  // every Live option with its default, value, range and the values this chart offers (ChartSession.optionItems)
+  optionItems() { return this._need().optionItems(); }
+  // language of the controls
+  get lang() { return this._lang; }
+  set lang(v) {
+    this._lang = String(v || "en");
+    this.strings = playerStrings(this._lang);
+    if (this._ui && this.session) { this._ui.dispose(); this._ui = new ChartControls(this); }
+  }
   // the control bar on / off
   get controls() { return !!this._ui; }
   set controls(on) {
@@ -162,6 +192,62 @@ export class ChartPlayer extends EventTarget {
     return t;
   }
 
+  // Changes Live options by name (the others keep their values; with reset, their defaults). Resolves to the names
+  // changed; a settingschange event follows when any did. Invalid values reject with a LiveSettingsError and change
+  // nothing.
+  async setSettings(values = {}, { reset = false } = {}) {
+    this._need();
+    if (this._applying) await this._applying.catch(() => {});
+    const run = (async () => {
+      const cur = this._need();
+      const next = cur.optionContext.resolve(values || {}, reset ? null : cur.settings);
+      const ch = liveSettingsChanges(cur.settings, next);
+      const changed = ch.reload.length ? await this._reload(next, ch) : await cur.setSettings(next);
+      if (changed.length) {
+        this._emit("settingschange", { settings: this.settings, changed });
+        this._changed();
+      }
+      return changed;
+    })();
+    this._applying = run;
+    try { return await run; } finally { if (this._applying === run) this._applying = null; }
+  }
+
+  // a new session with settings `next` at the chart time of the current one, playing if it was (options that select
+  // other files); on failure the previous settings are loaded again and the error is thrown
+  async _reload(next, ch) {
+    const old = this.session, o = this.opts, prev = old.settings, assets = old.assets;
+    const t = old.positionMs(), started = old.started, wasPlaying = old.playing;
+    const speed = old.speed, music = old.musicOn, se = old.seOn;
+    this._reloading = true;
+    const create = (settings) => {
+      const [w, h] = this._pixelSize();
+      return ChartSession.create({ gl: this.gl, assets, audioContext: o.audioContext, quality: o.quality, seed: o.seed,
+                                   width: w, height: h, settings });
+    };
+    try {
+      await old.dispose();
+      this.session = null;
+      let s, err = null;
+      try { s = await create(next); } catch (e) { err = e; s = await create(prev); }
+      if (this.disposed) { await s.dispose(); throw abortError(); }
+      this.session = s;
+      if (speed !== 1) s.setSpeed(speed);
+      if (!music) s.setMusic(false);
+      if (!se) s.setSe(false);
+      if (started) await s.seek(t); else s.render();
+      if (err) throw err;
+      if (wasPlaying) {
+        this._announced = false;
+        await this._autoplay();
+      }
+      return [...ch.none, ...ch.live, ...ch.noteSe, ...ch.boot, ...ch.reload];
+    } finally {
+      this._reloading = false;
+      this._changed();
+    }
+  }
+
   // stops the player and removes it from the host; the WebGL context is released
   async dispose() {
     if (this.disposed) return;
@@ -195,7 +281,7 @@ export class ChartPlayer extends EventTarget {
 
   _fail(e) {
     this._running = false;
-    this._status(`error: ${e && e.message ? e.message : e}`);
+    this._status(formatString(this.strings.error, { message: e && e.message ? e.message : e }));
     this._emit("error", { error: e });
   }
 
@@ -241,17 +327,18 @@ export class ChartPlayer extends EventTarget {
   // animation frame runs the steps that are due (at most 4, drawing only the last), so game time keeps real time on
   // a display slower than 60 Hz. No step runs while paused or busy (seek).
   _drive() {
-    const s = this.session, dt = s.loop.fixedDelta;
     let acc = 0, last = performance.now(), lastUpdate = 0;
     this._running = true;
     const tick = async (now) => {
       if (!this._running || this.disposed) return;
-      if (s.paused || s.busy) { acc = 0; last = now; this._raf = requestAnimationFrame(tick); return; }
+      const s = this.session;                                     // a reload replaces the session
+      if (!s || this._reloading || s.paused || s.busy) { acc = 0; last = now; this._raf = requestAnimationFrame(tick); return; }
+      const dt = s.loop.fixedDelta;
       acc = Math.min(acc + (now - last) / 1000, dt * MAX_STEPS);
       last = now;
       let n = 0;
       try {
-        while (acc >= dt && n < MAX_STEPS && !s.paused && !s.seeking && !this.disposed) {
+        while (acc >= dt && n < MAX_STEPS && !s.paused && !s.seeking && !this.disposed && !this._reloading) {
           acc -= dt; n++;
           await s.step({ draw: !(acc >= dt && n < MAX_STEPS) });   // a further step follows: no draw for this one
         }

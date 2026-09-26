@@ -28,9 +28,14 @@ arithmetic. What matches the game frame for frame and what is a feature of the p
 
 ## Viewer controls
 
-The control bar has play / pause, the position with seeking, the speed (0.5–1.5×), and music and sound effect
-switches; it hides while playing and shows on pointer movement, a tap or a key. Keyboard, while the player has the
-focus: Space or K play / pause, Left / Right back / forward 5 s, Up / Down speed, M music, S sound effects.
+The control bar holds the viewer controls: play / pause, the position with seeking, the playback speed (0.5–1.5×),
+then the note speed (− / + step it by 0.1, with Shift by 1, as the game's note speed buttons before a live do; the value
+can also be typed) and a Settings button that opens the settings panel; it hides while playing and shows on pointer movement, a tap or a key. The settings panel has the game's own Live settings (note speed, judgement and note timing, lane and UI display,
+volumes, ...) in the game's groups, with the game's ranges and defaults; it lists the settings the chart's data
+supports (see [docs/api.md](docs/api.md#live-settings)). The controls are in five languages (English, Japanese,
+Korean, Simplified and Traditional Chinese) and follow the page's language. Keyboard, while the player has the focus:
+Space or K play / pause, Left / Right back / forward 5 s, Up / Down playback speed, [ / ] note speed −0.1 / +0.1 (with
+Shift ±1), Escape closes the settings panel.
 
 A seek re-simulates the chart frame by frame from the start (or from the current position) to the target: judgements,
 combo, notes and UI are those of an uninterrupted run at that time.
