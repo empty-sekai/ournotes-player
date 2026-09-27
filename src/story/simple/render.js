@@ -56,18 +56,19 @@ export const cameraTargetDesc = (host) => (host && host.cameraTarget ? host.came
 
 // The GL side: Live2D drawings of the loaded characters and the slots' capture textures.
 export class SimpleCaptureRenderer {
-  // lib: the ShaderLib of the story's shaders (the characters' materials); resources: scene.json resources (the
-  // Cubism mask materials); assets: the story's AssetStore
-  constructor(gl, lib, resources, loop, { assets } = {}) {
-    this.gl = gl; this.lib = lib; this.resources = resources; this.loop = loop; this.assets = assets;
+  // assets: the story's AssetStore
+  constructor(gl, loop, { assets } = {}) {
+    this.gl = gl; this.loop = loop; this.assets = assets;
     if (!gl.getExtension("EXT_color_buffer_float")) throw new Error("EXT_color_buffer_float is required");
     gl.frontFace(gl.CW);                    // Unity's front-face convention with its world-to-camera matrix
     this.drawings = new Map();              // Live2DCharacter -> Live2DDrawing
     this.white = null;
   }
 
-  addCharacter(ch, dir) {
-    const g = new Live2DDrawing(this.gl, this.lib, ch, { dir, resources: this.resources, white: this.white, assets: this.assets });
+  // a character's drawing with its model's shaders (`lib`), texture directory (`dir`) and Cubism mask materials
+  // (`resources`, model.json resources), as StoryRenderer.addCharacter
+  addCharacter(ch, { lib, dir, resources }) {
+    const g = new Live2DDrawing(this.gl, lib, ch, { dir, resources, white: this.white, assets: this.assets });
     this.drawings.set(ch, g);
     return g;
   }

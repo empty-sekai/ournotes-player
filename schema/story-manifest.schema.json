@@ -5,9 +5,27 @@
   "description": "The logical files of one story (common files and one group per language) and where their bytes are; the file entries are those of a chart manifest. See docs/story-data-format.md.",
   "type": "object",
   "required": ["format", "advId", "story", "language", "audio", "audioFormat", "fonts", "requires", "files", "languages"],
+  "anyOf": [
+    { "properties": { "format": { "const": "ournotes.story-manifest/1" } } },
+    { "properties": { "format": { "const": "ournotes.story-manifest/2" } }, "required": ["root", "models"] }
+  ],
   "properties": {
-    "format": { "const": "ournotes.story-manifest/1" },
+    "format": {
+      "description": "ournotes.story-manifest/2: the Live2D models are model manifests of the site (models); /1: the models' files are among the story's files.",
+      "enum": ["ournotes.story-manifest/1", "ournotes.story-manifest/2"]
+    },
     "advId": { "type": "integer", "minimum": 1 },
+    "root": {
+      "description": "Format /2: the site root relative to the manifest: \"../\" for stories/<advId>.json, \"../../\" for stories/<region>/<advId>.json.",
+      "type": "string",
+      "pattern": "^(\\.\\./)+$"
+    },
+    "models": {
+      "description": "Format /2: model id -> the path of its model manifest relative to the site root (models/<id>.json), keys sorted: the Live2D models the story's Character rows use.",
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z0-9_]+$" },
+      "additionalProperties": { "type": "string", "pattern": "^models/[a-z0-9_]+\\.json$" }
+    },
     "story": { "$ref": "#/$defs/facts" },
     "regions": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9_-]+$" }, "minItems": 1 },
     "language": { "$ref": "#/$defs/language" },
@@ -72,16 +90,32 @@
       "type": "object",
       "propertyNames": { "pattern": "^[A-Za-z0-9_][^\\\\]*$" },
       "additionalProperties": {
-        "anyOf": [{ "$ref": "#/$defs/whole" }, { "$ref": "#/$defs/parts" }]
+        "anyOf": [{ "$ref": "#/$defs/whole" }, { "$ref": "#/$defs/encoded" }, { "$ref": "#/$defs/parts" }]
       }
     },
     "asset": { "type": "string", "pattern": "^assets/[0-9a-f]{64}\\.[a-z0-9]+$" },
-    "size": { "type": "integer", "minimum": 0 },
+    "encodedAsset": {
+      "description": "An asset stored gzip- or brotli-encoded: the SHA-256 of its decoded bytes, the logical file's extension, then .gz or .br.",
+      "type": "string",
+      "pattern": "^assets/[0-9a-f]{64}\\.[a-z0-9]+\\.(gz|br)$"
+    },
+    "size": { "description": "The byte count of the file (decoded).", "type": "integer", "minimum": 0 },
+    "stored": { "description": "The byte count of an encoded asset as stored (less than size).", "type": "integer", "minimum": 0 },
     "whole": {
       "type": "object",
       "required": ["asset", "size"],
       "additionalProperties": false,
       "properties": { "asset": { "$ref": "#/$defs/asset" }, "size": { "$ref": "#/$defs/size" } }
+    },
+    "encoded": {
+      "type": "object",
+      "required": ["asset", "size", "stored"],
+      "additionalProperties": false,
+      "properties": {
+        "asset": { "$ref": "#/$defs/encodedAsset" },
+        "size": { "$ref": "#/$defs/size" },
+        "stored": { "$ref": "#/$defs/stored" }
+      }
     },
     "parts": {
       "type": "object",
@@ -92,10 +126,21 @@
           "type": "array",
           "minItems": 1,
           "items": {
-            "type": "array",
-            "prefixItems": [{ "type": "string" }, { "$ref": "#/$defs/asset" }, { "$ref": "#/$defs/size" }],
-            "minItems": 3,
-            "maxItems": 3
+            "anyOf": [
+              {
+                "type": "array",
+                "prefixItems": [{ "type": "string" }, { "$ref": "#/$defs/asset" }, { "$ref": "#/$defs/size" }],
+                "minItems": 3,
+                "maxItems": 3
+              },
+              {
+                "type": "array",
+                "prefixItems": [{ "type": "string" }, { "$ref": "#/$defs/encodedAsset" }, { "$ref": "#/$defs/size" },
+                                { "$ref": "#/$defs/stored" }],
+                "minItems": 4,
+                "maxItems": 4
+              }
+            ]
           }
         },
         "size": { "$ref": "#/$defs/size" }

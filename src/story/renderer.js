@@ -14,8 +14,9 @@ import { Live2DDrawing } from "../live2d/drawing.js";
 // the same gamma-space values. The offscreen field targets are RGBA16F as the WebGL2 substitute for
 // R16G16B16A16_UNorm.
 
-// `scene`: the session's scene objects {camera, field, background, volume, fieldRenderer, stageData, resources,
-// postTextures, session}; `lib`: the ShaderLib of the story's shaders; `assets`: the story's AssetStore.
+// `scene`: the session's scene objects {camera, field, background, volume, fieldRenderer, stageData, postTextures,
+// session}; `lib`: the ShaderLib of the story's shaders (stage, post-processing); `assets`: the story's AssetStore.
+// Each character draws with its model's own shaders (addCharacter).
 export class StoryRenderer {
   constructor(gl, lib, scene, quality, loop, { assets } = {}) {
     this.gl = gl; this.lib = lib; this.scene = scene; this.quality = quality; this.loop = loop; this.assets = assets;
@@ -81,10 +82,12 @@ export class StoryRenderer {
     return b;
   }
 
-  // a character's drawing (its buffers now, its textures and programs in load())
-  addCharacter(ch, dir) {
-    const g = new Live2DDrawing(this.gl, this.lib, ch, { dir, resources: this.scene.resources,
-                                                        white: this.tex ? this.tex.white : null, assets: this.assets });
+  // a character's drawing (its buffers now, its textures and programs in load()): `lib` the ShaderLib of its model's
+  // shaders, `dir` the directory its texture paths are relative to, `resources` its model's Cubism mask materials
+  // (model.json resources)
+  addCharacter(ch, { lib, dir, resources }) {
+    const g = new Live2DDrawing(this.gl, lib, ch, { dir, resources, white: this.tex ? this.tex.white : null,
+                                                    assets: this.assets });
     this.characters.push({ ch, gl: g });
     return g;
   }
@@ -257,8 +260,12 @@ export class StoryRenderer {
     return items;
   }
 
+  // the keywords the renderer adds to every character draw: _ADDITIONAL_LIGHTS_VERTEX at Best (UniversalRP_Best's
+  // per-vertex additional lights), none at the other qualities
+  static characterKeywords(quality) { return quality.additionalLightsVertex ? ["_ADDITIONAL_LIGHTS_VERTEX"] : []; }
+
   _characterItems(filter) {
-    const kw = this.quality.additionalLightsVertex ? ["_ADDITIONAL_LIGHTS_VERTEX"] : [];
+    const kw = StoryRenderer.characterKeywords(this.quality);
     const items = [];
     for (const c of this.characters) {
       if (!c.ch.isShowing || (filter && !filter(c.ch))) continue;

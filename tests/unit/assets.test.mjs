@@ -1,8 +1,10 @@
-// AssetStore (src/data/assets.js): in-memory files, and loading a chart manifest with whole and split files
-// (docs/data-format.md "File entries"). A fake fetch serves a synthetic site; no game data.
+// AssetStore (src/data/assets.js): in-memory files, and loading a chart manifest with whole and split files, stored
+// as they are or gzip / brotli encoded (docs/data-format.md "File entries"). A fake fetch serves a synthetic site; no
+// game data.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AssetStore, TEXT_FILE } from "../../src/data/assets.js";
+import { brotliCompressSync, brotliDecompressSync, gunzipSync, gzipSync } from "node:zlib";
+import { AssetStore, TEXT_FILE, assetEncoding, decodeAsset } from "../../src/data/assets.js";
 
 const enc = new TextEncoder();
 
@@ -126,4 +128,115 @@ test("fromManifest: an explicit base for asset paths", async () => {
   const s = await AssetStore.fromManifest("https://cdn.example.test/m/1_easy.json",
                                           { ...site(moved), base: "https://cdn.example.test/data/" });
   assert.deepEqual(s.json("live.json"), { scene: "s.json" });
+});
+
+// ------------------------------------------------------------------------------------------------ encoded assets
+// a manifest with an encoded whole file, an encoded part and a file stored as it is; `served`: what the server sends
+// for the encoded assets ("encoded": the stored bytes; "decoded": the file, as with Content-Encoding)
+const encodedFixture = (encoding = "gzip", served = "encoded") => {
+  const ext = encoding === "gzip" ? "gz" : "br";
+  const zip = (s) => new Uint8Array(encoding === "gzip" ? gzipSync(enc.encode(s)) : brotliCompressSync(enc.encode(s)));
+  const scene = JSON.stringify({ scene: "x".repeat(400) }), part = JSON.stringify({ list: Array(200).fill(1) });
+  const rebuilt = `{"settings":${part},"small":[1]}`;
+  const z1 = zip(scene), z2 = zip(part);
+  const man = {
+    format: 3, musicId: 1, difficulty: "easy",
+    files: {
+      "live.json": { asset: `assets/a.json.${ext}`, size: size(scene), stored: z1.byteLength },
+      "notes.json": { parts: [["settings", `assets/p.json.${ext}`, size(part), z2.byteLength], ["small", "assets/s.json", 3]],
+                      size: size(rebuilt) },
+      "tex/x.png": { asset: "assets/b.png", size: 3 },
+    },
+  };
+  const files = {
+    [`${ROOT}charts/1_easy.json`]: JSON.stringify(man),
+    [`${ROOT}assets/a.json.${ext}`]: served === "encoded" ? z1 : scene,
+    [`${ROOT}assets/p.json.${ext}`]: served === "encoded" ? z2 : part,
+    [`${ROOT}assets/s.json`]: "[1]",
+    [`${ROOT}assets/b.png`]: new Uint8Array([1, 2, 3]),
+  };
+  return { man, files, scene, rebuilt, z1, z2 };
+};
+
+test("fromManifest: gzip assets decoded by the player, progress in stored bytes", async () => {
+  const { files, scene, rebuilt, z1, z2 } = encodedFixture("gzip");
+  const progress = [];
+  const s = await AssetStore.fromManifest(`${ROOT}charts/1_easy.json`, { ...site(files), onProgress: (a, b) => progress.push([a, b]) });
+  assert.equal(s.text("live.json"), scene);
+  assert.equal(s.text("notes.json"), rebuilt);                 // an encoded part (4 items) and a plain one
+  assert.deepEqual([...s.bytes("tex/x.png")], [1, 2, 3]);
+  const total = z1.byteLength + z2.byteLength + 3 + 3;
+  assert.deepEqual(progress.at(-1), [total, total]);
+  assert.equal(assetEncoding("assets/a.json.gz"), "gzip");
+  assert.equal(assetEncoding("assets/a.moc3.br"), "br");
+  assert.equal(assetEncoding("assets/a.json"), null);
+});
+
+test("fromManifest: an asset the server already decoded (Content-Encoding) is used as it is", async () => {
+  for (const encoding of ["gzip", "br"]) {
+    const { files, scene, rebuilt } = encodedFixture(encoding, "decoded");
+    let calls = 0;
+    const s = await AssetStore.fromManifest(`${ROOT}charts/1_easy.json`, { ...site(files), decode: async () => { calls++; throw new Error("no"); } });
+    assert.equal(s.text("live.json"), scene);
+    assert.equal(s.text("notes.json"), rebuilt);
+    assert.equal(calls, 0);
+  }
+});
+
+test("fromManifest: a length that is neither the stored nor the decoded size fails; so does a wrong decoded size", async () => {
+  {
+    const { files, z1 } = encodedFixture("gzip");
+    files[`${ROOT}assets/a.json.gz`] = z1.slice(0, z1.byteLength - 1);
+    await assert.rejects(AssetStore.fromManifest(`${ROOT}charts/1_easy.json`, site(files)), /live\.json: \d+ bytes, manifest \d+ stored, \d+/);
+  }
+  {
+    const { man, files } = encodedFixture("gzip");
+    man.files["live.json"].size += 1;
+    files[`${ROOT}charts/1_easy.json`] = JSON.stringify(man);
+    await assert.rejects(AssetStore.fromManifest(`${ROOT}charts/1_easy.json`, site(files)), /live\.json: \d+ bytes decoded, manifest \d+/);
+  }
+  {
+    const { man, files } = encodedFixture("gzip");
+    man.files["tex/x.png"].stored = 3;                          // a stored count on an asset that is not encoded
+    man.files["tex/x.png"].size = 9;
+    files[`${ROOT}charts/1_easy.json`] = JSON.stringify(man);
+    await assert.rejects(AssetStore.fromManifest(`${ROOT}charts/1_easy.json`, site(files)), /no \.gz \/ \.br name/);
+  }
+});
+
+test("fromManifest: brotli without DecompressionStream(\"brotli\") needs Content-Encoding: br; an injected decoder", async () => {
+  const { files, scene, rebuilt } = encodedFixture("br");
+  const Saved = globalThis.DecompressionStream;
+  globalThis.DecompressionStream = class extends Saved {
+    constructor(format) { if (format === "brotli") throw new TypeError("unsupported"); super(format); }
+  };
+  try {
+    await assert.rejects(AssetStore.fromManifest(`${ROOT}charts/1_easy.json`, site(files)),
+                         /a \.br asset must be served with Content-Encoding: br/);
+    await assert.rejects(decodeAsset(new Uint8Array(1), "br"), /Content-Encoding: br/);
+  } finally { globalThis.DecompressionStream = Saved; }
+  const seen = [];
+  const decode = async (bytes, encoding) => { seen.push(encoding); return brotliDecompressSync(bytes); };   // a Node Buffer
+  const s = await AssetStore.fromManifest(`${ROOT}charts/1_easy.json`, { ...site(files), decode });
+  assert.deepEqual(seen, ["br", "br"]);
+  assert.equal(s.text("live.json"), scene);
+  assert.equal(s.text("notes.json"), rebuilt);
+  await assert.rejects(AssetStore.fromManifest(`${ROOT}charts/1_easy.json`, { ...site(files), decode: async () => { throw new Error("bad data"); } }),
+                       /live\.json: assets\/a\.json\.br: bad data/);
+});
+
+test("decodeAsset: gzip through DecompressionStream; an unknown encoding", async () => {
+  const text = "y".repeat(1000);
+  assert.equal(new TextDecoder().decode(await decodeAsset(new Uint8Array(gzipSync(enc.encode(text))), "gzip")), text);
+  await assert.rejects(decodeAsset(new Uint8Array(1), "zstd"), /unknown content encoding zstd/);
+});
+
+test("fromManifest: bytes from a decoder that returns a Node Buffer are copied by bytes()", async () => {
+  const bin = new Uint8Array(300).fill(7), z = new Uint8Array(gzipSync(bin));
+  const man = { format: 3, files: { "x.bin": { asset: "assets/x.bin.gz", size: 300, stored: z.byteLength } } };
+  const files = { [`${ROOT}charts/1_easy.json`]: JSON.stringify(man), [`${ROOT}assets/x.bin.gz`]: z };
+  const s = await AssetStore.fromManifest(`${ROOT}charts/1_easy.json`, { ...site(files), decode: async (b) => gunzipSync(b) });
+  const a = s.bytes("x.bin");
+  a[0] = 1;
+  assert.equal(s.bytes("x.bin")[0], 7);
 });

@@ -10,6 +10,7 @@ import { cubismCore } from "../live2d/cubism.js";
 import { motionSyncCore } from "../live2d/motionsync.js";
 import { AdvBackgroundField, AdvCamera, AdvCharacterField, AdvFieldRendererManager, AdvGlobalVolume, AdvQuality } from "./field.js";
 import { ADV_PLAYBACK_MODE, STORY_FRAME_RATE, StoryCommandError, checkStoryUI, createStoryContext } from "./interfaces.js";
+import { storyModels } from "./models.js";
 import { StoryCharacters, StoryPlayerCore } from "./player-core.js";
 import { STORY_LANGUAGES, advViewport, storyLines, storyStart } from "./params.js";
 import { speakerName } from "./commands/talk.js";
@@ -29,10 +30,10 @@ import { resumeCurrentVideoIfNeeded, seekStoryVideo, storyVideo, storyVideoPosit
 //
 // Game flow reproduced:
 //   load    AdvEpisodeResourceLoader.Preload: the episode's cue sheets, the Character rows' models (Init, Warmup, the
-//           hide that ends it; the player loop runs meanwhile, as the game warms characters up while loading), the
-//           stages with their particle groups; the talk window. An Overlay episode is played by SimpleStorySession
-//           (the game's SimpleAdvPlayer); an episode with a command, stage feature, talk window or text this player
-//           does not reproduce is refused before its characters load.
+//           hide that ends it; the player loop runs meanwhile, as the game warms characters up while loading; the
+//           models are read as models.js describes), the stages with their particle groups; the talk window. An
+//           Overlay episode is played by SimpleStorySession (the game's SimpleAdvPlayer); an episode with a command,
+//           stage feature, talk window or text this player does not reproduce is refused before its characters load.
 //   play    AdvPlayer.Play (player-core.js): the initialize rows, the episode's rows, the finalize rows; auto or manual
 //           advance, the playback speed, the shortcut (start at a line).
 //   frames  AdvPlayer.OnUpdate (the sound manager, the character controllers, the motion waits), the Animators,
@@ -42,7 +43,6 @@ import { resumeCurrentVideoIfNeeded, seekStoryVideo, storyVideo, storyVideoPosit
 export { STORY_FRAME_RATE, STORY_LANGUAGES, advViewport, storyLines };
 
 const dirname = (p) => { const i = p.lastIndexOf("/"); return i < 0 ? "" : p.slice(0, i); };
-const join = (...parts) => parts.filter(Boolean).join("/").replace(/\/+/g, "/");
 
 // every text the episode can show: the Talk lines and their speaker names, the Location captions, the title
 export const storyTexts = (episode, player, masterIds, localize, titleTextId = 0) => {
@@ -157,7 +157,7 @@ export class StorySession {
       background: new AdvBackgroundField(scene.backgroundField, manager),
       volume: new AdvGlobalVolume(scene.globalVolume, quality),
       fieldRenderer: new AdvFieldRendererManager(loop, quality),
-      stageData: new Map(), resources: scene.resources,
+      stageData: new Map(),
       postTextures: scene.postTextures[scene.shaders.cameraRenderers[0]],
       session: null,
     };
@@ -213,22 +213,21 @@ export class StorySession {
     await audio.preload(Object.keys(episode.sounds).map(Number));
 
     // renderer and characters: the Character rows' preload, keyed TargetName-TargetAssetIndex (the first model of a
-    // key is kept); IgnoreData rows are not preloaded
-    const renderer = this.renderer = gl ? new StoryRenderer(gl, new ShaderLib(gl, "shaders", store), sc, quality, loop,
-                                                            { assets: store }) : null;
+    // key is kept); IgnoreData rows are not preloaded. The story's shaders draw the stage and the post-processing,
+    // each model's own shaders its character (the story's in a story of manifest format /1, models.js).
+    const storyLib = gl ? new ShaderLib(gl, "shaders", store) : null;
+    const renderer = this.renderer = gl ? new StoryRenderer(gl, storyLib, sc, quality, loop, { assets: store }) : null;
     if (renderer) renderer.filmGrain = opts.filmGrain ?? 0;
+    const modelOf = storyModels(gl, store, story, what, { lib: storyLib, resources: scene.resources });
     for (const c of episode.commands) {
       if (c.cmd !== "Character" || c.IgnoreData) continue;
       if (characters.has(c.TargetName, c.TargetAssetIndex || 0)) continue;
-      const address = `Character/Live2D/${c.TargetAssetName}`;
-      const m = story.models[address];
-      if (!m) throw new Error(`${what}: model ${address} is not in the story`);
-      const ch = new Live2DCharacter(store.json(join(m.dir, m.prefab)), store.arrayBuffer(join(m.dir, m.moc3)), loop,
-                                     { random, motionSync });
+      const { model, lib } = modelOf(`Character/Live2D/${c.TargetAssetName}`);
+      const ch = new Live2DCharacter(store.json(model.prefab), store.arrayBuffer(model.moc3), loop, { random, motionSync });
       ch.setParent(sc.field.poolRoot);
       sc.field.characterRoots.add(ch.root);
       characters.add(c.TargetName, c.TargetAssetIndex || 0, ch);
-      if (renderer) renderer.addCharacter(ch, m.dir);
+      if (renderer) renderer.addCharacter(ch, { lib, dir: model.textureDir, resources: model.resources });
     }
     if (renderer) await renderer.load("");
     await ui.load();

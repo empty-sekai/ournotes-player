@@ -3,7 +3,8 @@
 // Live2D characters (load, warmup, frames), the story UI's timing and layout.
 //
 //   OURNOTES_STORY=<path>       a story manifest of a site (stories/<advId>.json), or a directory with a story's logical
-//                               files (story.json, episode.json, scene.json, ...); skipped without it
+//                               files (story.json, episode.json, scene.json, ...; its models in story.json modelsDir);
+//                               skipped without it
 //   OURNOTES_STORY_LANG=<lang>  the language to load from a manifest (default: the manifest's)
 //   CUBISM_CORE=<file>          Live2D's live2dcubismcore.min.js (skipped without it; not part of this repository)
 //   MOTIONSYNC_CORE=<file>      Live2D's live2dcubismmotionsynccore.min.js (optional: without it lip sync is missing)
@@ -20,8 +21,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import { test } from "node:test";
-import { pathToFileURL } from "node:url";
-import { DirStore, HeadlessAudioContext, fileFetch, headlessGL, headlessImages } from "../../scripts/lib/headless.mjs";
+import { HeadlessAudioContext, headlessGL, headlessImages, openStory } from "../../scripts/lib/headless.mjs";
 import { storyState } from "../../scripts/lib/story-state.mjs";
 
 const DIR = process.env.OURNOTES_STORY || "", CORE = process.env.CUBISM_CORE || "", MS = process.env.MOTIONSYNC_CORE || "";
@@ -42,10 +42,7 @@ if (!SKIP) {
 
 // the story's store, loaded once for every run
 let storeLoad = null;
-const openStore = () => (storeLoad ||= DIR.endsWith(".json")
-  ? import("../../src/story/assets.js").then(({ loadStoryStore }) =>
-      loadStoryStore(pathToFileURL(DIR).href, { fetch: fileFetch, lang: LANG }))
-  : Promise.resolve(new DirStore(DIR)));
+const openStore = () => (storeLoad ||= openStory(DIR, { lang: LANG }));
 
 const hash = (x) => crypto.createHash("sha1").update(typeof x === "string" ? x : JSON.stringify(x)).digest("hex").slice(0, 16);
 const arr = (a) => Array.from(a, (v) => (Number.isFinite(v) ? v : String(v)));

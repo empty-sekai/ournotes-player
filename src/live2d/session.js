@@ -8,6 +8,7 @@ import { GLTex } from "../engine/texture.js";
 import { Live2DCharacter } from "./character.js";
 import { cubismCore } from "./cubism.js";
 import { Live2DDrawing } from "./drawing.js";
+import { modelIndex } from "./model.js";
 
 // ModelSession: one Live2D model of the game's ADV, running idle as the story shows a character (auto eye blink,
 // breath, physics, the default motion replayed, motions and expressions on request), drawn into a WebGL2 context. It
@@ -48,8 +49,6 @@ export const NEUTRAL_AMBIENT = {
 };
 export const CAMERA_NEAR = 0.3, CAMERA_FAR = 1000, CAMERA_DISTANCE = 10;   // Unity's camera defaults; camera at z = -10
 
-const dirname = (p) => { const i = p.lastIndexOf("/"); return i < 0 ? "" : p.slice(0, i); };
-
 export class ModelSession {
   constructor() {
     this.disposed = false;
@@ -87,25 +86,21 @@ export class ModelSession {
     bindAssets(gl, assets);
     this.gl = gl; this.assets = assets;
     this._gl = trackGL(gl);
-    const index = assets.json("model.json");
-    if (index.format !== 1) throw new Error(`model.json: format ${index.format} is not supported (1 expected)`);
-    for (const k of ["moc3", "prefab", "shaders"])
-      if (typeof index[k] !== "string" || !index[k]) throw new Error(`model.json: "${k}" missing`);
-    if (!/(^|\/)shaders\.json$/.test(index.shaders)) throw new Error("model.json: \"shaders\" must name a shaders.json");
-    const prefab = assets.json(index.prefab);
+    const model = modelIndex(assets);
+    const prefab = assets.json(model.prefab);
     this.info = assets.info;
     this.seed = seed ?? (Date.now() >>> 0);
     const loop = this.loop = new PlayerLoop(MODEL_FRAME_RATE);
-    const ch = this.character = new Live2DCharacter(prefab, assets.arrayBuffer(index.moc3), loop,
+    const ch = this.character = new Live2DCharacter(prefab, assets.arrayBuffer(model.moc3), loop,
                                                     { random: new UnityRandom(this.seed) });
     this.motions = [...ch.clips.keys()];
     this.expressions = ch.expressions.map((e) => e.name);
     for (const [name, list] of [[motion, this.motions], [expression, this.expressions]])
       if (name && !list.includes(name)) throw new Error(`${ch.name}: no ${list === this.motions ? "motion" : "expression"} "${name}"`);
-    const lib = new ShaderLib(gl, dirname(index.shaders), assets);
+    const lib = new ShaderLib(gl, model.shaderDir, assets);
     gl.frontFace(gl.CW);                          // Unity's front-face convention with its world-to-camera matrix
     this.white = GLTex.solid(gl, [255, 255, 255, 255], "white");
-    const drawing = this.drawing = new Live2DDrawing(gl, lib, ch, { dir: dirname(index.prefab), resources: index.resources,
+    const drawing = this.drawing = new Live2DDrawing(gl, lib, ch, { dir: model.textureDir, resources: model.resources,
                                                                     white: this.white, assets });
     await drawing.loadTextures();
     drawing.prepare();

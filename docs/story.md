@@ -33,7 +33,7 @@ mouth from the CRI Lips analysis in the story's own data ([crilips.md](crilips.m
 
 | Import | Contents |
 |---|---|
-| `ournotes-player/story` | `StoryPlayer`, `StorySession`, `AssetStore`, `loadStoryStore`, `fetchStoryManifest`, `defineOurnotesStory`, `OurnotesStoryElement`, `registerCommand`, `registeredCommands`, `STORY_FRAME_RATE` (30), the game's enums (`ADV_COMMAND`, `ADV_PLAYBACK_SPEED`, `ADV_PLAYBACK_MODE`, `ADV_CANVAS_LAYER`) |
+| `ournotes-player/story` | `StoryPlayer`, `StorySession`, `AssetStore`, `loadStoryStore`, `fetchStoryManifest`, `defineOurnotesStory`, `OurnotesStoryElement`, `registerCommand`, `registeredCommands`, `STORY_FRAME_RATE` (30), `STORY_MANIFEST_FORMAT` / `STORY_MANIFEST_FORMATS` (the current story manifest format and the ones the player reads), the game's enums (`ADV_COMMAND`, `ADV_PLAYBACK_SPEED`, `ADV_PLAYBACK_MODE`, `ADV_CANVAS_LAYER`) |
 | `ournotes-player/story/element` | the same exports; importing it defines `<ournotes-story>` |
 
 Browser bundles in `dist/`: `ournotes-player.story.js` (ESM, the API), `ournotes-player.story.element.js` (ESM, defines
@@ -139,8 +139,11 @@ while (!s.ended) { await s.step(); }                                            
 ```
 
 `StorySession.create(gl, store, options)`: `gl` is a WebGL2 context used by this session alone, or `null` (nothing is
-drawn; the characters, the UI and the timing still run). `store` holds one language of the story (`loadStoryStore`
-merges the manifest's common files with one language group). Options: `lang`, `quality` (0–4, the game's
+drawn; the characters, the UI and the timing still run). `store` holds one language of the story:
+`loadStoryStore(url, {lang, base, fetch, signal, onProgress, decode})` merges the manifest's common files with one
+language group and, for a manifest of format `/2`, the files of the models it lists under `live2d/<id>/`; its options
+other than `lang` are those of `AssetStore.fromManifest`
+([story-data-format.md](story-data-format.md#loading-a-story)). Options: `lang`, `quality` (0–4, the game's
 `BaseQualityMode`; the quality option gives Best 4, High 3, Middle 2), `filmGrain` (the film grain's intensity
 multiplier, 1 the game's; default 0, none), `seed`, `auto`, `speed`, `line` (or `row`: the `Index` of the row to
 start at, with the shortcut to it), `voice`, `sound`, `audioContext`, `title`, `autoplay`, `onCommand`, `onLine`,

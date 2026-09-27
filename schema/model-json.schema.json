@@ -2,11 +2,19 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/empty-sekai/ournotes-player/main/schema/model-json.schema.json",
   "title": "Model index file (model.json)",
-  "description": "The logical file model.json of a Live2D model: the paths of its moc3, prefab and shader index, and the Cubism mask materials. See docs/data-format.md.",
+  "description": "The logical file model.json of a Live2D model: the paths of its moc3, prefab and shader index, and the Cubism mask materials; format 2 adds motionSync. See docs/data-format.md.",
   "type": "object",
   "required": ["format", "moc3", "prefab", "shaders", "resources"],
+  "anyOf": [
+    { "properties": { "format": { "const": 1 } } },
+    { "properties": { "format": { "const": 2 } }, "required": ["motionSync"] }
+  ],
   "properties": {
-    "format": { "const": 1 },
+    "format": { "enum": [1, 2] },
+    "motionSync": {
+      "description": "Format 2: the prefab's root has a CubismMotionSyncController with a Live2DMotionSyncCriAudioInput.",
+      "type": "boolean"
+    },
     "name": { "type": "string" },
     "key": { "type": "string" },
     "moc3": { "type": "string", "pattern": "\\.moc3$" },

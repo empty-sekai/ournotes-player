@@ -46,6 +46,10 @@ export interface FromManifestOptions {
   base?: string | URL;
   /** Requests in flight at a time (default 6). */
   concurrency?: number;
+  /** Decoder of the encoded assets (`.gz`: "gzip", `.br`: "br") fetched with their stored length (default:
+   *  `DecompressionStream`; brotli where the browser can construct `DecompressionStream("brotli")`, else such an asset
+   *  must be served with `Content-Encoding: br`). */
+  decode?: (bytes: Uint8Array, encoding: "gzip" | "br") => Promise<Uint8Array | ArrayBuffer>;
 }
 
 type PathMap<T> = Map<string, T> | Record<string, T>;

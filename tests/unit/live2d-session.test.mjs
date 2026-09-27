@@ -133,11 +133,11 @@ const pass = (blend) => ({ state: {
 const litPass = pass([V(1, "_SrcColor"), V(10, "_DstColor"), V(1, "_SrcAlpha"), V(10, "_DstAlpha")]);
 const maskPass = pass([V(1), V(1), V(1), V(1)]);
 
-const modelFiles = ({ format = 1, physics = true, mipCount = 1, opacity, missing = false } = {}) => {
+const modelFiles = ({ format = 1, motionSync, physics = true, mipCount = 1, opacity, missing = false } = {}) => {
   const lit = "Live2D Cubism/Lit-URP-ADV-optimize", mask = "Live2D Cubism/Mask";
   const text = {
-    "model.json": JSON.stringify({ format, name: "model", moc3: "model.moc3", prefab: "model.prefab.json",
-      shaders: "shaders/shaders.json", resources: {
+    "model.json": JSON.stringify({ format, ...(motionSync === undefined ? {} : { motionSync }), name: "model",
+      moc3: "model.moc3", prefab: "model.prefab.json", shaders: "shaders/shaders.json", resources: {
         cubismMask: { material: "Mask", shader: { shader: mask }, keywords: [], floats: { _Cull: 0 }, colors: {} },
         cubismMaskCulling: { material: "MaskCulling", shader: { shader: mask }, keywords: [], floats: { _Cull: 1 }, colors: {} } } }),
     "model.prefab.json": JSON.stringify(prefab({ physics, mipCount, opacity, missing })),
@@ -332,7 +332,7 @@ test("a mipmapped texture gets its other levels generated", () => withCore(async
   }
 }));
 
-test("errors: no Core, unknown format, unknown initial motion; a disposed session", async () => {
+test("errors: no Core, unknown format, unknown initial motion; a disposed session; model.json formats 1 and 2", async () => {
   const saved = globalThis.Live2DCubismCore;
   delete globalThis.Live2DCubismCore;
   try {
@@ -340,7 +340,9 @@ test("errors: no Core, unknown format, unknown initial motion; a disposed sessio
   } finally { if (saved) globalThis.Live2DCubismCore = saved; }
   await withCore(async () => {
     const gl = headlessGL();
-    await assert.rejects(ModelSession.create({ gl, assets: modelFiles({ format: 2 }) }), /format 2 is not supported/);
+    await assert.rejects(ModelSession.create({ gl, assets: modelFiles({ format: 3 }) }), /model\.json: format 3 is not supported/);
+    await assert.rejects(ModelSession.create({ gl, assets: modelFiles({ format: 2 }) }), /model\.json: "motionSync" missing/);
+    await (await ModelSession.create({ gl, assets: modelFiles({ format: 2, motionSync: false }) })).dispose();
     await assert.rejects(ModelSession.create({ gl, assets: modelFiles(), motion: "mtn_none" }), /no motion "mtn_none"/);
     const s = await ModelSession.create({ gl, assets: modelFiles(), motion: "mtn_turn", expression: "exp_closed" });
     assert.equal(s.motion, "mtn_turn");

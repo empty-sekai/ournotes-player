@@ -5,12 +5,39 @@
 //                                  assets it lists, all fetched before the session starts. A large JSON file is listed
 //                                  per top-level key ({parts: [[key, asset, size], ...], size}); its text is rebuilt as
 //                                  {"k1":t1,"k2":t2,...} from the parts' raw texts (numbers stay exactly as stored).
+//                                  An encoded asset (assets/<sha256>.<ext>.gz or .br) has its stored byte count too
+//                                  ({asset, size, stored}, [key, asset, size, stored]); it is decoded here unless the
+//                                  server already did (Content-Encoding).
 //   new AssetStore({ text, bytes, info })   in memory: path -> string and path -> Uint8Array / ArrayBuffer.
 // Text files are the .json and .glsl files; every other file is binary.
 
 export const TEXT_FILE = /\.(json|glsl)$/;
 
 const entries = (m) => (m instanceof Map ? [...m.entries()] : Object.entries(m || {}));
+
+// the content encoding of an asset by its name: "gzip" (.gz), "br" (.br), or null (stored as it is)
+export const assetEncoding = (asset) => {
+  const m = /\.(gz|br)$/.exec(String(asset));
+  return m ? (m[1] === "gz" ? "gzip" : "br") : null;
+};
+
+// The default decoder of fromManifest: DecompressionStream("gzip"), and DecompressionStream("brotli") where the browser
+// can construct it. A browser without brotli decoding gets .br assets only through the server's Content-Encoding.
+export const decodeAsset = async (bytes, encoding) => {
+  const format = encoding === "gzip" ? "gzip" : encoding === "br" ? "brotli" : null;
+  if (!format) throw new Error(`unknown content encoding ${encoding}`);
+  let stream = null;
+  try { stream = new DecompressionStream(format); } catch { stream = null; }
+  if (!stream) {
+    throw new Error(encoding === "br"
+      ? "this browser cannot decode brotli: a .br asset must be served with Content-Encoding: br"
+      : "DecompressionStream(\"gzip\") is not available: serve the .gz assets with Content-Encoding: gzip");
+  }
+  return new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(stream)).arrayBuffer());
+};
+
+// a plain Uint8Array over the bytes a decoder returns (a Node Buffer's slice() would share its memory)
+const u8 = (b) => (b instanceof Uint8Array ? new Uint8Array(b.buffer, b.byteOffset, b.byteLength) : new Uint8Array(b));
 
 export class AssetStore {
   // text: path -> string; bytes: path -> Uint8Array | ArrayBuffer; info: the chart manifest without `files` (or null)
@@ -23,14 +50,19 @@ export class AssetStore {
 
   // Fetches the manifest at `url`, then every asset it lists (`concurrency` requests at a time). Asset paths in the
   // manifest are relative to `base`, by default the directory above the manifest's directory (the site layout
-  // charts/<id>.json + assets/<sha256>.<ext>). Every asset's byte size is checked against the manifest.
+  // charts/<id>.json + assets/<sha256>.<ext>). An encoded asset whose fetched length is its `stored` count is decoded;
+  // one whose length is already its `size` (the server decoded it) is used as it is; any other length fails. Every
+  // file's decoded byte size is checked against the manifest.
   //   fetch        the fetch function (default globalThis.fetch)
-  //   onProgress   (loadedBytes, totalBytes) after each asset
+  //   onProgress   (loadedBytes, totalBytes) after each asset; an encoded asset counts its stored bytes
   //   signal       an AbortSignal: aborts the requests and rejects with its reason
+  //   decode       (bytes, encoding) -> Promise<Uint8Array | ArrayBuffer>: the decoder of "gzip" and "br" assets
+  //                (default decodeAsset)
   static async fromManifest(url, { fetch = globalThis.fetch, onProgress = null, signal = null, base = null,
-                                   concurrency = 6 } = {}) {
+                                   concurrency = 6, decode = decodeAsset } = {}) {
     if (!url) throw new Error("no chart manifest URL");
     if (typeof fetch !== "function") throw new Error("no fetch function");
+    if (typeof decode !== "function") throw new Error("no decode function");
     const here = globalThis.document ? globalThis.document.baseURI : globalThis.location ? globalThis.location.href : undefined;
     const manifestUrl = new URL(String(url), here);
     const root = base ? new URL(String(base), here) : new URL("../", manifestUrl);
@@ -42,20 +74,31 @@ export class AssetStore {
     };
     const man = await (await get(manifestUrl.href)).json();
     if (!man || typeof man.files !== "object") throw new Error(`${manifestUrl.href}: not a chart manifest`);
-    const jobs = new Map();                                // asset -> {size, path}: each asset fetched once
-    for (const [path, f] of Object.entries(man.files))
-      for (const [asset, size] of f.parts ? f.parts.map((p) => [p[1], p[2]]) : [[f.asset, f.size]]) jobs.set(asset, { size, path });
+    const jobs = new Map();                                // asset -> {size, stored, path}: each asset fetched once
+    for (const [path, f] of Object.entries(man.files)) {
+      const list = f.parts ? f.parts.map((p) => [p[1], p[2], p[3]]) : [[f.asset, f.size, f.stored]];
+      for (const [asset, size, stored] of list) jobs.set(asset, { size, stored, path });
+    }
     const list = [...jobs.entries()];
-    const total = list.reduce((n, [, j]) => n + j.size, 0);
+    const weight = (j) => j.stored ?? j.size;
+    const total = list.reduce((n, [, j]) => n + weight(j), 0);
     const got = new Map(), dec = new TextDecoder("utf-8");
     let next = 0, loaded = 0;
     const worker = async () => {
       while (next < list.length) {
         const [asset, j] = list[next++];
-        const buf = new Uint8Array(await (await get(new URL(asset, root).href)).arrayBuffer());
-        if (buf.byteLength !== j.size) throw new Error(`${j.path}: ${buf.byteLength} bytes, manifest ${j.size}`);
+        const raw = new Uint8Array(await (await get(new URL(asset, root).href)).arrayBuffer());
+        let buf = raw;
+        if (j.stored !== undefined && raw.byteLength === j.stored) {
+          const encoding = assetEncoding(asset);
+          if (!encoding) throw new Error(`${j.path}: ${asset} has a stored size but no .gz / .br name`);
+          try { buf = u8(await decode(raw, encoding)); } catch (e) { throw new Error(`${j.path}: ${asset}: ${e.message}`); }
+          if (buf.byteLength !== j.size) throw new Error(`${j.path}: ${buf.byteLength} bytes decoded, manifest ${j.size}`);
+        } else if (raw.byteLength !== j.size) {
+          throw new Error(`${j.path}: ${raw.byteLength} bytes, manifest ${j.stored !== undefined ? `${j.stored} stored, ` : ""}${j.size}`);
+        }
         got.set(asset, buf);
-        loaded += j.size;
+        loaded += weight(j);
         if (onProgress) onProgress(loaded, total);
       }
     };

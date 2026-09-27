@@ -13,6 +13,7 @@ import { cubismCore } from "../../live2d/cubism.js";
 import { motionSyncCore } from "../../live2d/motionsync.js";
 import { AdvFieldRendererManager, AdvQuality } from "../field.js";
 import { ADV_PLAYBACK_MODE, STORY_FRAME_RATE, StoryCommandError, createStoryContext } from "../interfaces.js";
+import { storyModels } from "../models.js";
 import { StoryCharacters } from "../player-core.js";
 import { STORY_LANGUAGES, storyLines } from "../params.js";
 import { speakerName } from "../commands/talk.js";
@@ -54,7 +55,6 @@ const REFERENCE = { x: 1920, y: 1080 };     // the host widgets' CanvasScaler re
 // 2 the game's validator refused the episode and nothing was shown
 export const SIMPLE_END_REASON = Object.freeze({ completed: 0, stopped: 1, invalid: 2 });
 
-const join = (...parts) => parts.filter(Boolean).join("/").replace(/\/+/g, "/");
 const dirname = (p) => { const i = p.lastIndexOf("/"); return i < 0 ? "" : p.slice(0, i); };
 
 // the texts the simple window shows: Talk lines and their speaker names
@@ -155,19 +155,18 @@ export class SimpleStorySession {
     const manager = new Transform("AdvManager");
     const pool = new Transform("Pool", manager);
     const characters = this.characters = new StoryCharacters();
-    const storyLib = gl ? new ShaderLib(gl, "shaders", store) : null;     // the story's shaders (characters, URP post)
-    const renderer = this.renderer = gl ? new SimpleCaptureRenderer(gl, storyLib, scene.resources, loop, { assets: store }) : null;
+    const storyLib = gl ? new ShaderLib(gl, "shaders", store) : null;     // the story's shaders (URP post)
+    const renderer = this.renderer = gl ? new SimpleCaptureRenderer(gl, loop, { assets: store }) : null;
+    // each character's model and the shaders it draws with (models.js)
+    const modelOf = storyModels(gl, store, story, what, { lib: storyLib, resources: scene.resources });
     for (const c of episode.commands) {
       if (c.cmd !== "Character" || c.IgnoreData) continue;
       if (characters.has(c.TargetName, c.TargetAssetIndex || 0)) continue;
-      const address = `Character/Live2D/${c.TargetAssetName}`;
-      const m = story.models[address];
-      if (!m) throw new Error(`${what}: model ${address} is not in the story`);
-      const ch = new Live2DCharacter(store.json(join(m.dir, m.prefab)), store.arrayBuffer(join(m.dir, m.moc3)), loop,
-                                     { random, motionSync });
+      const { model, lib } = modelOf(`Character/Live2D/${c.TargetAssetName}`);
+      const ch = new Live2DCharacter(store.json(model.prefab), store.arrayBuffer(model.moc3), loop, { random, motionSync });
       ch.setParent(pool);
       characters.add(c.TargetName, c.TargetAssetIndex || 0, ch);
-      if (renderer) renderer.addCharacter(ch, m.dir);
+      if (renderer) renderer.addCharacter(ch, { lib, dir: model.textureDir, resources: model.resources });
     }
     // one CameraTargetRenderer per slot under the runtime parent (the host manager's transform)
     const desc = cameraTargetDesc(host);

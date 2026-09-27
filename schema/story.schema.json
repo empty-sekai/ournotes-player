@@ -11,17 +11,28 @@
     "scene": { "$ref": "#/$defs/path" },
     "ui": { "$ref": "#/$defs/path" },
     "models": {
+      "description": "Model address (the address the Character rows name) -> the model: its model id (story manifest /2; the model's files are under live2d/<id>/ of the story's file set), or {dir, moc3, prefab} (story manifest /1; the model's files are in dir among the story's files).",
       "type": "object",
       "propertyNames": { "pattern": "^Character/Live2D/[^/]+/[^/]+/model/[^/]+$" },
       "additionalProperties": {
-        "type": "object",
-        "required": ["dir", "moc3", "prefab"],
-        "properties": {
-          "dir": { "$ref": "#/$defs/path" },
-          "moc3": { "type": "string", "pattern": "^[^/\\\\]+\\.moc3$" },
-          "prefab": { "type": "string", "pattern": "^[^/\\\\]+\\.json$" }
-        }
+        "anyOf": [
+          { "type": "string", "pattern": "^[a-z0-9_]+$" },
+          {
+            "type": "object",
+            "required": ["dir", "moc3", "prefab"],
+            "properties": {
+              "dir": { "$ref": "#/$defs/path" },
+              "moc3": { "type": "string", "pattern": "^[^/\\\\]+\\.moc3$" },
+              "prefab": { "type": "string", "pattern": "^[^/\\\\]+\\.json$" }
+            }
+          }
+        ]
       }
+    },
+    "modelsDir": {
+      "description": "A story directory only (not a site): the directory holding the models (<modelsDir>/<id>/model.json, ...), relative to the story directory, \"/\"-separated.",
+      "type": "string",
+      "minLength": 1
     },
     "audio": {
       "type": "object",

@@ -137,10 +137,10 @@ button.onclick = () => player.play();   // 浏览器要求在用户操作中开�
 ## 数据
 
 播放器读取一个静态站点：
-- `charts.json` 与 `charts/`；
-- `models.json` 与 `models/`；
-- `stories.json` 与 `stories/`；
-- 内容寻址的资源文件。
+- `charts.json` 与 `charts/`：谱面；
+- `models.json` 与 `models/`：Live2D 模型，模型查看器与剧情共用；
+- `stories.json` 与 `stories/`：剧情，每集的清单列出它用到的模型；
+- 内容寻址的资源文件：JSON、GLSL、moc3 等在更小时以 gzip（或 brotli）编码存储，由播放器解码。
 
 nnnotes 从使用者自己的游戏文件生成这样的站点，例如：
 
@@ -148,8 +148,9 @@ nnnotes 从使用者自己的游戏文件生成这样的站点，例如：
 nnnotes web out/site --all --all-live2d --all-stories --player <ournotes-player 目录>
 ```
 
-- 托管方式（路径、CORS、压缩、缓存）：[docs/embedding.md](docs/embedding.md#hosting-the-data)
-- 校验：`npm run validate-data -- <站点目录>` 按数据格式与 `schema/` 检查谱面、模型与剧情。
+- 播放器也读取较早格式的数据：未编码的资源，以及把模型文件放在每集剧情之内的剧情清单（`ournotes.story-manifest/1`）。
+- 托管方式（路径、CORS、编码资源、缓存）：[docs/embedding.md](docs/embedding.md#hosting-the-data)。以 brotli 编码的站点要在 Chromium 系浏览器中播放，需以 `Content-Encoding: br` 提供 `.br` 资源。
+- 校验：`npm run validate-data -- <站点目录>` 按数据格式与 `schema/` 检查谱面、模型与剧情，包括剧情与其模型之间的对应。
 
 ## 文档
 

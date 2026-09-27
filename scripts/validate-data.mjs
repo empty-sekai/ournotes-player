@@ -3,25 +3,30 @@
 //
 //   node scripts/validate-data.mjs <site dir> [chart id | model id ...]
 //
-// Checks, per chart: the manifest (schema, agreement with charts.json), every asset (present, byte size, SHA-256
-// matching its name), the rebuilt text of split JSON files, live.json, the score, audio/live-audio.json (schema, sound
+// Checks, per chart: the manifest (schema, agreement with charts.json), every asset (present, byte size, SHA-256 of
+// the decoded bytes matching its name; an encoded asset's stored length, its decoded size), the rebuilt text of split
+// JSON files, live.json, the score, audio/live-audio.json (schema, sound
 // id references, waveform files and their FLAC / MP4 headers), livescene/scene.json and livenotes/notes.json (the
 // structures the player reads, animation references, node order), both shader directories (index, parsed shader data,
 // GLSL ES 3.00 stage blocks) and the texture descriptors (PNG present where required, size as described).
 // Live2D models (models.json, models/<id>.json): the manifest (schema, agreement with models.json), every asset,
-// model.json, the moc3 header, the prefab (the components the model viewer reads, clip and fade references, drawable
-// materials and textures), the shader index and programs, and that the manifest lists exactly the files the viewer
-// reads.
+// model.json (its motionSync against the prefab), the moc3 header, the prefab (the components the model viewer reads,
+// clip and fade references, drawable materials and textures), the shader index and programs (with model.json format
+// 2 also the variants the story renderer adds a keyword to), and that the manifest lists exactly the files the viewer
+// and the story player read.
 // charts.json of a site of several regions: an id at most once per region (an entry without `regions` serves every
 // region, so its id only once), every entry's regions among the index's `regions`, text languages among `languages`.
 // Without charts.json the manifests are charts/*.json and charts/<region>/*.json. A models.json entry's key and model
 // facts (group, canvas, textures) must equal its manifest's `key` and `model` where both have them, and its character,
 // names and label where either has them.
 // Stories (stories.json, stories/<advId>.json, stories/<region>/<advId>.json; docs/story-data-format.md): the manifest
-// (schema, language groups, agreement with stories.json), every asset of the common files and of each language group,
-// story.json, episode.json, the required commands against the episode's rows and the player settings, the cue sheets
-// (cues.json, waveform files and their FLAC / MP4 headers), the Live2D models (moc3 header, prefab, textures, shader
-// variants), the Animator controller and clip references of the media files, both shader directories, texture
+// (schema, root, language groups, agreement with stories.json), every asset of the common files and of each language
+// group, story.json, episode.json, the required commands against the episode's rows and the player settings, the cue
+// sheets (cues.json, waveform files and their FLAC / MP4 headers), the Live2D models (manifest format /2: the model
+// manifests the manifest lists, each valid as a model, one per model story.json names, with the shader variants the
+// story renderer draws at every quality, no story file under live2d/; format /1: each model's moc3 header, prefab,
+// textures and the story's shader variants), the Animator controller and clip references of the media files, both
+// shader directories, texture
 // descriptors, and per language ui/ui.json, ui/languages.json and ui/fonts.json (text bindings, the dialog, chat
 // window and frame bindings, font assets with their fallbacks and missing glyph, fallback materials, sprite assets,
 // glyph pages, text material shaders). An Overlay story built with open fonts: its host (host/host.json and, per
@@ -33,6 +38,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import zlib from "node:zlib";
 import { animRecordProblems } from "../src/story/features/clips.js";
 import { ADV_COMMAND } from "../src/story/interfaces.js";
 import { compile } from "./lib/json-schema.mjs";
@@ -48,7 +54,14 @@ const S = {
 
 const TEXT_FILE = /\.(json|glsl)$/;
 const STORY_HOST_FORMAT = "ournotes.story-host/1";
+const STORY_MANIFEST_SITED = "ournotes.story-manifest/2";
 const extOf = (p) => (p.match(/\.([A-Za-z0-9]+)$/) || [])[1]?.toLowerCase() ?? "";
+// encoded assets (assets/<sha256>.<ext>.gz / .br): the encoding, the logical file's extension, the extensions that may
+// be encoded (every other file is stored as it is)
+const encodingOf = (asset) => ({ gz: "gzip", br: "br" })[(String(asset).match(/\.(gz|br)$/) || [])[1]] ?? null;
+const assetExt = (asset) => extOf(String(asset).replace(/\.(gz|br)$/, ""));
+const COMPRESSIBLE = new Set(["json", "glsl", "moc3", "atlas", "skel", "bin", "wav", "glb"]);
+const decodeSync = (b, encoding) => (encoding === "gzip" ? zlib.gunzipSync(b) : zlib.brotliDecompressSync(b));
 const has = (o, k) => o !== null && typeof o === "object" && Object.prototype.hasOwnProperty.call(o, k);
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 
@@ -95,27 +108,45 @@ class Site {
     this.assetCheck = new Map();      // asset -> error string | null
     this.bufCache = new Map();        // asset -> Buffer (small binaries only)
     this.derived = new Map();         // "<kind>|<signature>" -> cached per-file result
+    this.models = new Map();          // model manifest path -> {model, errs, missing} (the models stories use)
+    this.modelIds = null;             // the ids of models.json (null without it)
   }
 
   file(rel) { return path.join(this.dir, ...rel.split("/")); }
 
-  // present, byte size, content hash
-  checkAsset(asset, size) {
-    const key = `${asset}|${size}`;
+  // present; an encoded asset (.gz / .br) with `stored` equal to its length, less than `size`, of an extension that may
+  // be encoded; the decoded bytes of `size` bytes, their SHA-256 the asset's name
+  checkAsset(asset, size, stored) {
+    const key = `${asset}|${size}|${stored}`;
     if (!this.assetCheck.has(key)) {
       let err = null;
       try {
-        const b = fs.readFileSync(this.file(asset));
-        const sha = crypto.createHash("sha256").update(b).digest("hex");
-        if (b.length !== size) err = `${asset}: ${b.length} bytes, manifest ${size}`;
-        else if (path.basename(asset).split(".")[0] !== sha) err = `${asset}: content SHA-256 is ${sha}`;
+        const raw = fs.readFileSync(this.file(asset)), enc = encodingOf(asset);
+        if (enc && stored === undefined) err = `${asset}: an encoded asset without stored`;
+        else if (!enc && stored !== undefined) err = `${asset}: stored ${stored} on an asset that is not encoded (.gz / .br)`;
+        else if (enc && raw.length !== stored) err = `${asset}: ${raw.length} bytes, manifest stored ${stored}`;
+        else if (enc && !(stored < size)) err = `${asset}: stored ${stored} is not less than size ${size}`;
+        else if (enc && !COMPRESSIBLE.has(assetExt(asset))) err = `${asset}: .${assetExt(asset)} files are stored as they are, not encoded`;
+        else {
+          let b = raw;
+          if (enc) try { b = decodeSync(raw, enc); } catch (e) { b = null; err = `${asset}: not ${enc} data (${e.message})`; }
+          if (b) {
+            const sha = crypto.createHash("sha256").update(b).digest("hex");
+            if (b.length !== size) err = `${asset}: ${b.length} bytes${enc ? " decoded" : ""}, manifest ${size}`;
+            else if (path.basename(asset).split(".")[0] !== sha) err = `${asset}: content SHA-256 is ${sha}`;
+          }
+        }
       } catch (e) { err = `${asset}: ${e.code === "ENOENT" ? "missing" : e.message}`; }
       this.assetCheck.set(key, err);
     }
     return this.assetCheck.get(key);
   }
 
-  bytes(asset) { return fs.readFileSync(this.file(asset)); }
+  // the decoded bytes of an asset
+  bytes(asset) {
+    const raw = fs.readFileSync(this.file(asset)), enc = encodingOf(asset);
+    return enc ? decodeSync(raw, enc) : raw;
+  }
 
   // cached result of fn() per kind and content signature
   once(kind, sig, fn) {
@@ -123,12 +154,26 @@ class Site {
     if (!this.derived.has(k)) this.derived.set(k, fn());
     return this.derived.get(k);
   }
+
+  // the model of a model manifest a story lists, validated once (without its models.json entry)
+  model(id, manifest) {
+    if (!this.models.has(manifest)) {
+      let r, model = null;
+      try {
+        model = new Model(this, id, JSON.parse(fs.readFileSync(this.file(manifest), "utf8")), manifest);
+        r = { model, errs: model.run(null), missing: false };
+      } catch (e) { r = { model, errs: [e.code === "ENOENT" ? "missing" : e.message], missing: e.code === "ENOENT" }; }
+      this.models.set(manifest, r);
+    }
+    return this.models.get(manifest);
+  }
 }
 
 // ------------------------------------------------------------------------------------------------ one chart
 class Chart {
-  constructor(site, id, man) {
+  constructor(site, id, man, where = null) {
     this.site = site; this.id = id; this.man = man; this.errs = [];
+    this.where = where;             // the manifest's path in the site
     this.files = isObj(man.files) ? man.files : {};
     this.checked = new Set();       // logical files already parsed by a check
   }
@@ -209,18 +254,18 @@ class Chart {
         if (!p.endsWith(".json")) this.err(p, "only JSON files may be split into parts");
         const keys = new Set();
         let total = 2 + f.parts.length - 1;        // braces and commas
-        for (const [k, a, size] of f.parts) {
+        for (const [k, a, size, stored] of f.parts) {
           if (keys.has(k)) this.err(p, `part key ${k} twice`);
           keys.add(k);
-          if (extOf(a) !== "json") this.err(p, `part ${k}: ${a} is not a .json asset`);
-          const e = this.site.checkAsset(a, size);
+          if (assetExt(a) !== "json") this.err(p, `part ${k}: ${a} is not a .json asset`);
+          const e = this.site.checkAsset(a, size, stored);
           if (e) this.err(p, e);
           total += Buffer.byteLength(JSON.stringify(k)) + 1 + size;
         }
         if (total !== f.size) this.err(p, `rebuilt text is ${total} bytes, manifest ${f.size}`);
       } else {
-        if (extOf(f.asset) !== extOf(p)) this.err(p, `asset extension .${extOf(f.asset)} differs from the file's`);
-        const e = this.site.checkAsset(f.asset, f.size);
+        if (assetExt(f.asset) !== extOf(p)) this.err(p, `asset extension .${assetExt(f.asset)} differs from the file's`);
+        const e = this.site.checkAsset(f.asset, f.size, f.stored);
         if (e) this.err(p, e);
       }
     }
@@ -483,15 +528,21 @@ function modelPrefab(pf) {
   }
   if (!drawables) errs.push("no CubismDrawable nodes");
   if (pf.nodes.some((n) => n.components.some((c) => c.class === "CubismPosePart"))) errs.push("pose parts are not supported");
-  return { errs, textures: dedupe(textures), keywordSets: [...kw.values()], masked };
+  // a MotionSync controller with a CRI audio input on the root (CubismMotionSyncController.fromPrefab's test)
+  const motionSync = comp("CubismMotionSyncController").length > 0 && comp("Live2DMotionSyncCriAudioInput").length > 0;
+  return { errs, textures: dedupe(textures), keywordSets: [...kw.values()], masked, motionSync };
 }
 
+// the keyword the story renderer adds to every character draw at Best (StoryRenderer.characterKeywords); a model's
+// Lit variants hold each material keyword set with and without it
+const STORY_LIGHTS = "_ADDITIONAL_LIGHTS_VERTEX";
+
 class Model extends Chart {
-  run(entry) {
-    const m = this.man;
-    for (const e of S.model(m)) this.err("manifest", e);
-    if (!isObj(m.files)) return this.errs;
-    if (entry) {
+  // a models.json entry against the manifest: the problems found (not added to the model's own)
+  entryErrors(entry) {
+    const m = this.man, saved = this.errs;
+    this.errs = [];
+    try {
       if (entry.id !== m.id) this.err("models.json", `id ${entry.id}, manifest id ${m.id}`);
       if (has(entry, "key") && has(m, "key") && entry.key !== m.key) this.err("models.json", "key differs from the manifest");
       if (isObj(m.model))
@@ -505,10 +556,22 @@ class Model extends Chart {
       const total = Object.values(this.files).reduce((n, f) => n + (f.size || 0), 0);
       if (has(entry, "bytes") && entry.bytes !== total) this.err("models.json", `bytes ${entry.bytes}, manifest files total ${total}`);
       if (has(entry, "files") && entry.files !== Object.keys(this.files).length) this.err("models.json", `files ${entry.files}, manifest ${Object.keys(this.files).length}`);
-    }
+      return this.errs;
+    } finally { this.errs = saved; }
+  }
+
+  // the model's own checks (entry: its models.json entry, checked too)
+  run(entry) {
+    const m = this.man;
+    for (const e of S.model(m)) this.err("manifest", e);
+    if (!isObj(m.files)) return this.errs;
+    const name = this.where ? path.posix.basename(this.where, ".json") : null;
+    if (name !== null && has(m, "id") && m.id !== name) this.err("manifest", `id ${m.id}, expected ${name} (the manifest's name)`);
+    if (entry) this.errs.push(...this.entryErrors(entry));
     this.checkAssets();
     if (this.errs.length) return this.errs;
-    const idx = this.json("modeljson", "model.json", (v) => ({ errs: S.modelJson(v), v: S.modelJson(v).length ? null : v })).v;
+    const mj = this.json("modeljson", "model.json", (v) => ({ errs: S.modelJson(v), v: S.modelJson(v).length ? null : v }));
+    const idx = mj && mj.v;
     if (!idx) return this.errs;
     for (const k of ["moc3", "prefab", "shaders"]) if (!this.has(idx[k])) this.err("model.json", `${k}: ${idx[k]} not in the manifest`);
     if (this.errs.length) return this.errs;
@@ -516,6 +579,8 @@ class Model extends Chart {
     if (moc.length < 8 || moc.toString("latin1", 0, 4) !== "MOC3") this.err(idx.moc3, "not a moc3 file");
     const pf = this.json("prefab", idx.prefab, modelPrefab);
     if (!pf || pf.errs.length) return this.errs;
+    if (idx.format >= 2 && idx.motionSync !== pf.motionSync)
+      this.err("model.json", `motionSync ${idx.motionSync}, the prefab's root ${pf.motionSync ? "has" : "has no"} MotionSync controller with a CRI audio input`);
     const read = new Set(["model.json", idx.moc3, idx.prefab]);
     const dir = dirOf(idx.prefab);
     for (const d of pf.textures) {
@@ -534,21 +599,26 @@ class Model extends Chart {
     if (this.errs.length > before) return this.errs;
     read.add(idx.shaders);
     const list = JSON.parse(this.text(idx.shaders));
+    // the variants read: the model viewer's (each material keyword set of the Lit shader, the mask shader's without
+    // keywords) and the story renderer's at Best (each set with STORY_LIGHTS: required from model.json format 2)
     const need = [[LIT_SHADER, pf.keywordSets], ...(pf.masked ? [[MASK_SHADER, [[]]]] : [])];
     for (const [name, sets] of need) {
       const rec = list.find((r) => r.name === name);
       if (!rec) { this.err(idx.shaders, `${name} not in the index`); continue; }
       read.add(inDir(sdir, rec.parsed));
-      const vs = rec.variants.filter((v) => v.subShader === 0 && v.pass === 0);
-      const known = new Set(vs.flatMap((v) => v.keywords));
       for (const set of sets) {
-        const want = set.filter((k) => known.has(k)).sort().join(" ");
-        const v = vs.find((x) => [...x.keywords].sort().join(" ") === want);
-        if (!v) this.err(idx.shaders, `${name}: no variant for [${want}]`);
-        else read.add(inDir(sdir, v.file));
+        const v = variantFor(list, name, set);
+        if (v.error) this.err(idx.shaders, v.error);
+        else read.add(inDir(sdir, v.variant.file));
+        if (name !== LIT_SHADER) continue;
+        const s = storyVariant(list, set);
+        if (!s.error) read.add(inDir(sdir, s.variant.file));
+        else if (idx.format >= 2) this.err(idx.shaders, s.error);
       }
     }
-    for (const p of Object.keys(this.files)) if (!read.has(p)) this.err(p, "listed but not read by the model viewer");
+    for (const p of Object.keys(this.files)) if (!read.has(p)) this.err(p, "listed but read by neither the model viewer nor the story player");
+    // what a story using the model checks (Story.checkModels)
+    this.index = idx; this.prefabInfo = pf; this.shaderList = list; this.shaderDir = sdir;
     return this.errs;
   }
 }
@@ -617,9 +687,21 @@ function variantFor(list, name, keywords) {
   return v ? { variant: v } : { error: `${name}: no variant for [${want}]` };
 }
 
+// the Lit variant the story renderer draws a material keyword set with at Best (quality 4): the set with STORY_LIGHTS,
+// which the variant must hold (the pick drops keywords no variant uses: without it the draw would lack the additional
+// lights)
+function storyVariant(list, keywords) {
+  const r = variantFor(list, LIT_SHADER, [...keywords, STORY_LIGHTS]);
+  if (!r.error && r.variant.keywords.includes(STORY_LIGHTS)) return r;
+  const want = [...new Set([...keywords, STORY_LIGHTS])].sort().join(" ");
+  return { error: `${LIT_SHADER}: no variant for [${want}] (the story renderer's keywords at quality 4)` };
+}
+
 class Story extends Chart {
-  constructor(site, id, man) {
-    super(site, id, man);
+  constructor(site, id, man, where = null) {
+    super(site, id, man, where);
+    // manifest format /2: the models in model manifests of the site (format /1: their files among the story's)
+    this.sited = man.format === STORY_MANIFEST_SITED;
     this.common = this.files;
     this.groups = isObj(man.languages) ? man.languages : {};
     this.lang = null;                 // the language group being checked (error prefix)
@@ -699,6 +781,17 @@ class Story extends Chart {
 
   checkGroups() {
     const m = this.man;
+    if (this.sited) {
+      // root: the site root seen from the manifest (stories/<advId>.json, stories/<region>/<advId>.json)
+      if (this.where) {
+        const root = "../".repeat(this.where.split("/").length - 1);
+        if (m.root !== root) this.err("manifest", `root ${JSON.stringify(m.root)}, the site root from ${this.where} is ${JSON.stringify(root)}`);
+      }
+      // the store the player builds: the common files, one group and the models' files under live2d/<id>/
+      for (const [where, files] of [["files", m.files], ...Object.entries(m.languages).map(([l, g]) => [`languages.${l}`, isObj(g) ? g.files : null])])
+        for (const p of Object.keys(isObj(files) ? files : {}))
+          if (p.startsWith("live2d/")) this.err("manifest", `${where}: ${p}: live2d/ holds the files of the models (manifest models)`);
+    }
     if (!has(m.languages, m.language)) this.err("manifest", `language ${m.language} is not a key of languages`);
     for (const [lang, g] of Object.entries(m.languages)) {
       if (!isObj(g) || !isObj(g.files)) continue;
@@ -720,8 +813,20 @@ class Story extends Chart {
     for (const k of ["audio", "audioFormat", "fonts"]) if (e[k] !== m[k]) this.err("stories.json", `${k} ${JSON.stringify(e[k])}, manifest ${JSON.stringify(m[k])}`);
     if (isObj(m.story)) for (const [k, v] of Object.entries(m.story)) if (!sameJson(e[k], v)) this.err("stories.json", `${k} differs from the manifest's story.${k}`);
     if ((has(e, "regions") || has(m, "regions")) && !sameJson(e.regions, m.regions)) this.err("stories.json", "regions differ from the manifest");
-    const size = { common: sizeOf(m.files), languages: Object.fromEntries(Object.entries(this.groups).map(([l, g]) => [l, sizeOf(g.files || {})])) };
-    if (!sameJson(e.size, size)) this.err("stories.json", `size ${JSON.stringify(e.size)}, manifest files ${JSON.stringify(size)}`);
+    const size = { common: sizeOf(m.files), ...(this.sited ? { models: this.modelsSize() } : {}),
+                   languages: Object.fromEntries(Object.entries(this.groups).map(([l, g]) => [l, sizeOf(g.files || {})])) };
+    if (size.models !== null && !sameJson(e.size, size)) this.err("stories.json", `size ${JSON.stringify(e.size)}, manifest files ${JSON.stringify(size)}`);
+  }
+
+  // the sum of size over the files of the listed model manifests (null while one of them is missing or unreadable)
+  modelsSize() {
+    let n = 0;
+    for (const [id, p] of Object.entries(isObj(this.man.models) ? this.man.models : {})) {
+      const r = p === `models/${id}.json` ? this.site.model(id, p) : null;
+      if (!r || !r.model) return null;
+      n += sizeOf(isObj(r.model.man.files) ? r.model.man.files : {});
+    }
+    return n;
   }
 
   // the files every language shares: story.json, episode.json, scene.json, commands, sounds, models, shaders, textures
@@ -751,10 +856,12 @@ class Story extends Chart {
     if (m.requires.motionSync !== lipSync) this.err("manifest", `requires.motionSync ${m.requires.motionSync}, the episode ${lipSync ? "has" : "has no"} lip-synced Talk rows`);
 
     this.checkSounds(story, episode);
-    const models = Object.entries(story.models).map(([key, md]) => this.checkModel(key, md)).filter(Boolean);
+    const models = this.sited ? this.checkModels(story, episode)
+      : Object.entries(story.models).map(([key, md]) => this.checkEmbeddedModel(key, md)).filter(Boolean);
     if (this.has("shaders/shaders.json")) this.checkShaders("shaders");
     else if (models.length) this.err("shaders/shaders.json", "not in the manifest");
-    if (models.length && this.has("shaders/shaders.json")) {
+    // format /1: the story's shaders draw its models
+    if (!this.sited && models.length && this.has("shaders/shaders.json")) {
       const list = JSON.parse(this.text("shaders/shaders.json"));
       const sets = new Map();
       for (const r of models) for (const k of r.keywordSets) sets.set(k.join(" "), k);
@@ -854,8 +961,50 @@ class Story extends Chart {
     }
   }
 
-  // a Live2D model of story.json: moc3 header, prefab (as the model viewer reads it), atlas pages
-  checkModel(key, md) {
+  // the Live2D models (story.json models: address -> id; the manifest's models: id -> models/<id>.json): the same ids
+  // in both, keys sorted, each Character row's model among them, each model manifest present (listed in models.json
+  // when the site has one) and valid as a model, with the variants the story renderer draws its materials with at
+  // every quality (the set; the set with STORY_LIGHTS at Best; the mask shader's without keywords). Returns the valid
+  // models.
+  checkModels(story, episode) {
+    const m = this.man, listed = isObj(m.models) ? m.models : {}, out = [];
+    const ids = Object.keys(listed);
+    if (ids.some((k, i) => i > 0 && k <= ids[i - 1])) this.err("manifest", "models: keys not sorted");
+    for (const [address, id] of Object.entries(story.models))
+      if (typeof id !== "string") this.err("story.json", `models.${address}: not a model id (a story of ${STORY_MANIFEST_SITED} names its models by id)`);
+      else if (!has(listed, id)) this.err("story.json", `models.${address}: model ${id} is not in the manifest's models`);
+    const named = new Set(Object.values(story.models));
+    for (const id of ids) if (!named.has(id)) this.err("manifest", `models.${id}: no model address of story.json names it`);
+    const rows = new Set();
+    for (const c of episode.commands) {
+      if (c.cmd !== "Character" || truthy(c.IgnoreData)) continue;
+      const address = `Character/Live2D/${c.TargetAssetName}`;
+      if (!has(story.models, address) && !rows.has(address)) this.err(story.episode, `row ${c.i}: model ${address} is not in story.json models`);
+      rows.add(address);
+    }
+    for (const [id, p] of Object.entries(listed)) {
+      if (p !== `models/${id}.json`) { this.err("manifest", `models.${id}: ${p}, expected models/${id}.json`); continue; }
+      if (this.site.modelIds && !this.site.modelIds.has(id)) this.err("manifest", `models.${id}: not in models.json`);
+      const r = this.site.model(id, p);
+      if (r.missing) { this.err("manifest", `models.${id}: ${p} missing`); continue; }
+      if (r.errs.length) {
+        this.err(p, `not a valid model (${r.errs.length} problem${r.errs.length > 1 ? "s" : ""}): ${r.errs.slice(0, 3).join("; ")}`);
+        continue;
+      }
+      const md = r.model, list = md.shaderList, where = `${p}: ${inDir(md.shaderDir, "shaders.json")}`;
+      for (const set of md.prefabInfo.keywordSets) {
+        for (const v of [variantFor(list, LIT_SHADER, set), storyVariant(list, set)]) if (v.error) this.err(where, v.error);
+      }
+      if (md.prefabInfo.masked) { const v = variantFor(list, MASK_SHADER, []); if (v.error) this.err(where, v.error); }
+      out.push(md);
+    }
+    return out;
+  }
+
+  // a Live2D model of a story of manifest format /1 (story.json models: address -> {dir, moc3, prefab}, its files
+  // among the story's common files): moc3 header, prefab (as the model viewer reads it), atlas pages
+  checkEmbeddedModel(key, md) {
+    if (!isObj(md)) { this.err("story.json", `models.${key}: not {dir, moc3, prefab} (a story of format /1 holds its models' files)`); return null; }
     const moc = inDir(md.dir, md.moc3), pf = inDir(md.dir, md.prefab);
     for (const p of [moc, pf]) if (!has(this.common, p)) { this.err("story.json", `models.${key}: ${p} is not a common file`); return null; }
     const asset = this.files[moc].asset;
@@ -1137,15 +1286,21 @@ function storyIndexErrors(index) {
 
 const storyId = (manifest) => manifest.replace(/^stories\//, "").replace(/\.json$/, "");
 
-// run one kind of manifest: prints the failures, returns the number valid
+// run one kind of manifest: prints the failures, returns the number valid. Models run once (Site.model: the stories
+// that use a model share its result), their models.json entries checked beside.
 function runAll(site, list, Kind) {
   let ok = 0;
   for (const { id, manifest, entry } of list) {
     let errs;
-    try {
-      const man = JSON.parse(fs.readFileSync(site.file(manifest), "utf8"));
-      errs = new Kind(site, id, man).run(entry);
-    } catch (e) { errs = [`${manifest}: ${e.message}`]; }
+    if (Kind === Model) {
+      const r = site.model(id, manifest);
+      errs = !r.model ? [`${manifest}: ${r.errs[0]}`] : entry ? [...r.model.entryErrors(entry), ...r.errs] : r.errs;
+    } else {
+      try {
+        const man = JSON.parse(fs.readFileSync(site.file(manifest), "utf8"));
+        errs = new Kind(site, id, man, manifest).run(entry);
+      } catch (e) { errs = [`${manifest}: ${e.message}`]; }
+    }
     if (errs.length) {
       console.log(`FAIL ${id}`);
       for (const e of errs.slice(0, 30)) console.log(`  ${e}`);
@@ -1185,6 +1340,7 @@ function main(argv) {
     const ids = new Set();
     for (const e of index.models) { if (ids.has(e.id)) out.push(`models.json: id ${e.id} twice`); ids.add(e.id); }
     models = index.models.map((e) => ({ id: e.id, manifest: e.manifest, entry: e }));
+    site.modelIds = ids;
   } else if (fs.existsSync(site.file("models"))) {
     models = fs.readdirSync(site.file("models")).filter((f) => f.endsWith(".json")).sort()
       .map((f) => ({ id: f.slice(0, -5), manifest: `models/${f}`, entry: null }));

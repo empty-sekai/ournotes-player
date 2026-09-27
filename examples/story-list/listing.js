@@ -63,12 +63,12 @@ export const groupLabel = (s, lang) => {
   }
 };
 
-// Bytes a player fetches to start the entry in `lang`: the common files and that language's group (the manifest's
-// default language when the entry has no group for `lang`).
+// Bytes a player fetches to start the entry in `lang`: the common files, that language's group (the manifest's
+// default language when the entry has no group for `lang`) and the models the story references.
 export const firstLoad = (s, lang) => {
   const size = s.size || {}, groups = size.languages || {};
   const l = lang in groups ? lang : s.language;
-  return (size.common || 0) + (groups[l] || 0);
+  return (size.common || 0) + (groups[l] || 0) + (size.models || 0);
 };
 
 // The manifest path of a story in a region: the manifest of the region's entry, else stories/<advId>.json.

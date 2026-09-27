@@ -2,7 +2,8 @@
 // particles, videos, chat, ...) through StorySession in Node (gl = null: nothing is drawn, no sound is played), with
 // Live2D Cubism Core. Every row of the episodes runs, the feature commands included.
 //
-//   OURNOTES_STORY_DIRS=<dir>,<dir>,...   story directories (story.json, episode.json, scene.json, ...); or
+//   OURNOTES_STORY_DIRS=<dir>,<dir>,...   story directories (story.json, episode.json, scene.json, ...; the models in
+//                                         story.json modelsDir); or
 //   OURNOTES_STORY_ROOT=<dir> [OURNOTES_STORY_IDS=<id>,<id>,...]   a directory of story directories named by ADV id
 //                                         (all of them without OURNOTES_STORY_IDS); skipped without either
 //   CUBISM_CORE=<file>                    Live2D's live2dcubismcore.min.js (skipped without it; not in this repository)
@@ -21,7 +22,7 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { test } from "node:test";
-import { DirStore } from "../../scripts/lib/headless.mjs";
+import { storyDirStore } from "../../scripts/lib/headless.mjs";
 import { createStoryUILayers } from "../../src/story/interfaces.js";
 
 const CORE = process.env.CUBISM_CORE || "", MS = process.env.MOTIONSYNC_CORE || "";
@@ -87,7 +88,7 @@ const run = async (dir, { seed = 1, maxFrames = 30 * 60 * 40 } = {}) => {
   const { StorySession } = await import("../../src/story/session.js");
   const features = await import("../../src/story/features/index.js");
   const names = new Set(await FEATURE_NAMES());
-  const store = new DirStore(dir);
+  const store = storyDirStore(dir);
   const trace = [], states = [];
   let s = null;
   s = await StorySession.create(null, store, {

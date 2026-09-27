@@ -69,26 +69,42 @@ A site is a directory served over HTTP(S):
 ```
 charts.json                  list of the charts (the chart-list example reads it)
 charts/<musicId>_<difficulty>.json    one manifest per chart
-assets/<sha256>.<ext>        every file of every chart, named by its content hash
+models.json, models/<id>.json         the Live2D models (the model viewer and the stories read them)
+stories.json, stories/<advId>.json    the stories
+assets/<sha256>.<ext>        every file of every chart, model and story, named by its content hash
+assets/<sha256>.<ext>.gz     the same, stored gzip-encoded (.br: brotli-encoded)
 ```
 
 A manifest lists the files of one chart and the asset that holds each one; the format is in
-[data-format.md](data-format.md). The player fetches the manifest, then every asset it lists, before the chart starts.
-A chart is about 40–45 MB; charts share most of their assets (stage, notes, effects), so a browser that caches them
-downloads much less for the second chart.
+[data-format.md](data-format.md) (stories: [story-data-format.md](story-data-format.md)). The player fetches the
+manifest, then every asset it lists, before the chart starts. A chart is about 40–45 MB; charts share most of their
+assets (stage, notes, effects), so a browser that caches them downloads much less for the second chart.
 
 Serving notes:
 
-- **Paths.** Asset paths in a manifest are relative to the site root, the directory above `charts/`. A manifest served
-  from somewhere else needs `AssetStore.fromManifest(url, { base })`.
+- **Paths.** Asset paths in a manifest are relative to the site root. For a chart or model manifest the player takes
+  the directory above the manifest's directory (`charts/..`, `models/..`). A story manifest of format `/2` names the
+  site root in its `root`, so `stories/<region>/<advId>.json` works too, and the model manifests it uses are found
+  from there; for one of format `/1` the player takes the directory above the manifest's directory. A manifest served
+  from somewhere else needs `AssetStore.fromManifest(url, { base })` (`loadStoryStore(url, { base })` for a story).
 - **CORS.** A page on another origin than the site needs `Access-Control-Allow-Origin` (for example `*`) on the
   manifests and the assets. No credentials are sent, and the requests are simple GETs (no preflight).
-- **Compression.** Serve `.json` and `.glsl` compressed (`Content-Encoding: gzip` or `br`); they are most of the file
-  count and compress well. The PNG and audio files are already compressed. The manifest's sizes are those of the
-  decoded files, which is what `fetch` returns.
+- **Encoded assets.** The JSON, GLSL and moc3 assets (and the other kinds listed in
+  [data-format.md](data-format.md#site-layout)) are stored encoded where that makes them smaller: `.gz`, or `.br` in a
+  site built with brotli. The manifest gives each one's stored and decoded byte counts. Served as plain files, they
+  are decoded by the player with the browser's `DecompressionStream`: gzip in current browsers, brotli where
+  `DecompressionStream("brotli")` exists (Firefox and Safari; not Chromium-based browsers). The server may instead
+  send them with the matching `Content-Encoding` (`gzip` for `.gz`, `br` for `.br`) and a type of the logical file;
+  the browser then decodes them and the player takes them as they arrive. A brotli site that Chromium-based browsers
+  must play has to be served that way, with `Content-Encoding: br` on the `.br` assets. A server must not compress
+  the encoded assets again.
+- **Compression of the other files.** Manifests, index files and plain `.json` / `.glsl` assets compress well with
+  the server's own `Content-Encoding`; the PNG and audio files are already compressed. The manifest's sizes are those
+  of the decoded files.
 - **Caching.** Assets never change under their name: `Cache-Control: public, max-age=31536000, immutable`. Manifests
-  and `charts.json` change when the site is rebuilt: a short max-age or revalidation.
-- **Types.** `application/json`, `image/png`, `audio/flac`, `audio/mp4` (`.m4a`), `text/plain` (`.glsl`).
+  and the index files change when the site is rebuilt: a short max-age or revalidation.
+- **Types.** `application/json`, `image/png`, `audio/flac`, `audio/mp4` (`.m4a`), `text/plain` (`.glsl`); an encoded
+  asset served as a plain file can be `application/octet-stream` (`application/gzip` for `.gz`).
 
 ## Browser requirements
 

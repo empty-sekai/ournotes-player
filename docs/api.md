@@ -180,10 +180,14 @@ the chart. The context serves this session alone while it lives (one session per
 
 The files of one chart, loaded before the session starts and read synchronously by it.
 
-- `AssetStore.fromManifest(url, {fetch, onProgress, signal, base, concurrency})`: fetches the manifest, then every asset
-  it lists (6 requests at a time), and checks each asset's size against the manifest. Asset paths are relative to
-  `base`, by default the directory above the manifest's directory (the site layout `charts/<id>.json` +
-  `assets/<sha256>.<ext>`).
+- `AssetStore.fromManifest(url, {fetch, onProgress, signal, base, concurrency, decode})`: fetches the manifest, then
+  every asset it lists (6 requests at a time), and checks each file's size against the manifest. Asset paths are
+  relative to `base`, by default the directory above the manifest's directory (the site layout `charts/<id>.json` +
+  `assets/<sha256>.<ext>`). An encoded asset (`.gz`, `.br`) fetched with its stored length is decoded by `decode`
+  (`(bytes, "gzip" | "br") => Promise<Uint8Array | ArrayBuffer>`; default: the browser's `DecompressionStream`,
+  brotli only where `DecompressionStream("brotli")` can be constructed, else the load fails asking for the asset to
+  be served with `Content-Encoding: br`); one that arrives decoded (the server's `Content-Encoding`) is taken as it
+  is. `onProgress(loaded, total)` counts stored bytes ([data-format.md](data-format.md#file-entries)).
 - `new AssetStore({text, bytes, info})`: in memory, from `path -> string` and `path -> Uint8Array | ArrayBuffer` maps
   (`Map` or plain object) and the manifest metadata.
 - `has(path)`, `text(path)`, `json(path)`, `bytes(path)` (a copy), `arrayBuffer(path)`, `image(path)` (PNG to

@@ -37,11 +37,17 @@ Contents:
   charts/<musicId>_<difficulty>.json   chart manifest, one per chart
   charts/<region>/<id>.json            a region's own manifest of a chart (a site of several regions, see below)
   assets/<sha256>.<ext>                file contents, content-addressed
+  assets/<sha256>.<ext>.gz             the same, stored gzip-encoded (or .br: brotli-encoded)
 ```
 
-- `<sha256>` is the lowercase hex SHA-256 of the asset's bytes, `<ext>` the extension of the logical file it holds
-  (`json`, `glsl`, `png`, `flac`, `m4a`). Identical contents are stored once and shared between charts, so assets can
-  be served with long-lived, immutable caching.
+- `<sha256>` is the lowercase hex SHA-256 of the file's bytes (the decoded bytes of an encoded asset), `<ext>` the
+  extension of the logical file it holds (`json`, `glsl`, `png`, `flac`, `m4a`, …). Identical contents are stored
+  once and shared between charts, so assets can be served with long-lived, immutable caching.
+- An asset may be stored encoded: gzip (`.gz`) or brotli (`.br`) after its extension, where that makes it smaller.
+  Only these kinds of file are encoded: `json` (split parts included), `glsl`, `moc3`, `atlas`, `skel`, `bin`, `wav`,
+  `glb`; PNG and audio files are stored as they are. The manifest entry gives both byte counts
+  ([File entries](#file-entries)); the player decodes an encoded asset itself unless the server already did (see
+  [docs/embedding.md](embedding.md#hosting-the-data)).
 - Asset paths in a manifest are relative to the site root. When a page loads a manifest by URL, the player resolves
   asset paths against the directory above the manifest's directory (`charts/..`) unless it is given another base
   (see [docs/api.md](api.md)).
@@ -106,7 +112,7 @@ and where their bytes are.
 
 ```json
 {
-  "format": 2,
+  "format": 3,
   "musicId": 100001,
   "difficulty": "expert",
   "chart": { "title": "…", "level": 25, "notes": 768, "durationMs": 99989, "…": "…" },
@@ -115,9 +121,10 @@ and where their bytes are.
   "flows": ["direct"],
   "quality": 1,
   "files": {
-    "live.json": { "asset": "assets/5203…cba0.json", "size": 466 },
-    "livenotes/notes.json": { "parts": [["settings", "assets/45be…f418.json", 1691],
-                                        ["prefabs", "assets/f367…e839.json", 735095], "…"], "size": 4192212 },
+    "live.json": { "asset": "assets/5203…cba0.json.gz", "size": 466, "stored": 301 },
+    "livescene/textures/lane_base-d14cea1c.png": { "asset": "assets/9b1e…07aa.png", "size": 181236 },
+    "livenotes/notes.json": { "parts": [["settings", "assets/45be…f418.json.gz", 1691, 612],
+                                        ["prefabs", "assets/f367…e839.json.gz", 735095, 70118], "…"], "size": 4192212 },
     "…": "…"
   }
 }
@@ -125,7 +132,7 @@ and where their bytes are.
 
 | Key | Type | Read by the player | Meaning |
 |---|---|---|---|
-| `format` | `2` | no | Version of this layout. |
+| `format` | `3` \| `2` | no | Version of this layout: 3, whose assets may be encoded; 2, the earlier version, every asset stored as it is. The player reads both. |
 | `musicId`, `difficulty` | integer, string | no | The chart. |
 | `chart` | object | yes | The chart's facts (title, bands, level, note count, duration, …; on a site of several languages also `language`, `titles`, `bandNames` as in [charts.json](#chartsjson)), handed to the page as they are (see [docs/api.md](api.md)). The player does not interpret them. |
 | `regions` | string[] | no | Optional. The regions this manifest serves (see [Several regions](#several-regions)). |
@@ -138,12 +145,16 @@ and where their bytes are.
 
 ### File entries
 
-A file entry has one of two forms:
+A file entry has one of these forms:
 
 - **Whole file**: `{ "asset": "assets/<sha256>.<ext>", "size": <bytes> }`.
-- **Split JSON object**: `{ "parts": [[key, asset, size], ...], "size": <bytes> }`. A large JSON file whose top level
-  is an object is stored per top-level key: each part's asset holds the raw JSON text of that key's value. The file's
-  text is rebuilt as
+- **Whole file, encoded**: `{ "asset": "assets/<sha256>.<ext>.gz", "size": <bytes>, "stored": <stored bytes> }` (or
+  `.br`). `size` is the byte count of the file, `stored` that of the asset as stored (the encoded bytes). An asset is
+  encoded only when that makes it smaller, so `stored` is less than `size`; `stored` is present exactly when the
+  asset name ends in `.gz` or `.br`.
+- **Split JSON object**: `{ "parts": [[key, asset, size], ...], "size": <bytes> }`; a part whose asset is encoded is
+  `[key, asset, size, stored]`. A large JSON file whose top level is an object is stored per top-level key: each
+  part's asset holds the raw JSON text of that key's value. The file's text is rebuilt as
 
   ```
   "{" + join(parts.map(([key, asset]) => JSON.stringify(key) + ":" + text(asset)), ",") + "}"
@@ -152,11 +163,18 @@ A file entry has one of two forms:
   and its UTF-8 length must equal `size`. The parts are concatenated as text, never re-serialized, so every number
   stays exactly as written (see [Conventions](#conventions)).
 
+Encoded assets are gzip streams (RFC 1952) or brotli streams (RFC 7932) of the file's bytes; `<sha256>` is the
+SHA-256 of the decoded bytes, so an asset name is the same whatever the encoding.
+
 Rules:
 
 - Logical paths are relative, use `/`, and are unique. Paths ending in `.json` or `.glsl` are UTF-8 text; every other
   file is binary.
-- Every asset's byte length must equal its `size`; the player checks it while loading.
+- The player checks every asset while loading: an encoded asset whose fetched length is its `stored` count is decoded
+  (gzip with the browser's `DecompressionStream`, brotli where the browser can construct
+  `DecompressionStream("brotli")`); one whose fetched length is already `size` (the server sent it with
+  `Content-Encoding`, and the browser decoded it) is used as it is; any other length fails the load. The file's byte
+  length must then equal its `size`.
 - The player fetches every listed file before the chart starts (several requests at a time), so a manifest should list
   only what a chart needs: files the player does not read are fetched but unused.
 
@@ -457,13 +475,14 @@ texture pixels from the bottom left, `border` as (left, bottom, right, top).
 ## Live2D models
 
 The model viewer ([live2d.md](live2d.md)) reads one Live2D model at a time from the same kind of site: one manifest
-per model next to the chart manifests, sharing `assets/`.
+per model next to the chart manifests, sharing `assets/`. The story player reads the same model manifests for the
+characters of a story ([story-data-format.md](story-data-format.md#live2d-models)).
 
 ```
 <site>/
   models.json              model index (for listings; the viewer does not read it)
   models/<id>.json         model manifest, one per model
-  assets/<sha256>.<ext>    file contents, shared with the charts
+  assets/<sha256>.<ext>    file contents (or .gz / .br encoded), shared with the charts and stories
 ```
 
 `<id>` is the model's name, `[a-z0-9_]+` (e.g. `adv_live2d_rana_003_casual_spring_01`). The viewer resolves the asset
@@ -493,11 +512,13 @@ paths of a manifest against `models/..`, the site root, as for charts.
 ### Model manifest
 
 `models/<id>.json` ([schema](../schema/model.schema.json)):
-`{ "format": 2, "id": "…", "key": "…", "model": { … }, "files": { … } }`. `files` maps logical paths to file entries
-exactly as in a [chart manifest](#file-entries) (whole files or split JSON objects, with the same checks). The viewer
-reads `files`; `id`, `key` and `model` are handed to the page (`ModelPlayer.info`) as they are. `model` holds facts
-about the model, all optional: `group` (as in models.json), `canvas` (the moc3 canvas, as in models.json), `textures`
-(the atlas page count), `nodes` (the node count of the prefab), and `character`, `names`, `label` (as in
+`{ "format": 3, "id": "…", "key": "…", "model": { … }, "files": { … } }`. `format` 3 is the current version (its
+assets may be encoded, its `model.json` has format 2); the viewer and the story player also read format 2, the earlier
+version. `id` is the name of the manifest (`models/<id>.json`). `files` maps logical paths to file entries exactly as
+in a [chart manifest](#file-entries) (whole files, encoded or not, and split JSON objects, with the same checks). The
+viewer reads `files`; `id`, `key` and `model` are handed to the page (`ModelPlayer.info`) as they are. `model` holds
+facts about the model, all optional: `group` (as in models.json), `canvas` (the moc3 canvas, as in models.json),
+`textures` (the atlas page count), `nodes` (the node count of the prefab), and `character`, `names`, `label` (as in
 models.json); producers may add their own. Where a models.json entry has `key`, `group`, `canvas` or `textures`, they
 equal the manifest's `key` and `model` values; `character`, `names` and `label` are in both or in neither, with equal
 values.
@@ -512,27 +533,29 @@ The logical files, all read when the model loads:
 | `textures/<page>-<hash>.png` | The atlas pages the drawables use, as named by their texture descriptors (relative to the prefab's directory). |
 | `shaders/shaders.json`, `shaders/…` | The two Live2D shaders, in the layout of the chart's [shader directories](#shaders). |
 
-A manifest lists exactly these files: every texture a drawable uses, and only the shader variants below.
+A manifest lists exactly these files: every texture a drawable uses, and only the shader variants below (those the
+viewer draws with and those the story renderer draws with).
 
 ### model.json
 
 ([schema](../schema/model-json.schema.json))
 
 ```json
-{ "format": 1, "name": "adv_live2d_rana_003_casual_spring_01", "key": "Character/Live2D/003_adv/…",
+{ "format": 2, "name": "adv_live2d_rana_003_casual_spring_01", "key": "Character/Live2D/003_adv/…",
   "moc3": "adv_live2d_rana_003_casual_spring_01.moc3", "prefab": "adv_live2d_rana_003_casual_spring_01.prefab.json",
   "textures": ["textures/texture_00-abf131f7.png", "textures/texture_01-259653a7.png"],
-  "shaders": "shaders/shaders.json",
+  "shaders": "shaders/shaders.json", "motionSync": true,
   "resources": { "cubismMask": { "material": "Mask", "shader": { "shader": "Live2D Cubism/Mask" }, "floats": { "_Cull": 0 }, "…": "…" },
                  "cubismMaskCulling": { "material": "MaskCulling", "shader": { "shader": "Live2D Cubism/Mask" }, "floats": { "_Cull": 1 }, "…": "…" } } }
 ```
 
 | Key | Read | Meaning |
 |---|---|---|
-| `format` | yes | `1`, the version of this file; the viewer refuses other values. |
+| `format` | yes | `2`, the version of this file (`1`, the earlier version, has no `motionSync`); the viewer and the story player refuse other values. |
 | `moc3`, `prefab` | yes | Paths of the moc3 and the prefab. |
 | `shaders` | yes | Path of the shader index, a file named `shaders.json`; the paths inside it are relative to its directory. |
-| `resources.cubismMask`, `resources.cubismMaskCulling` | yes | The Cubism mask materials (`Live2D/Cubism/Materials/Mask` and `MaskCulling` of the game's resources), inline materials as in [node lists](#node-lists); their shader is "Live2D Cubism/Mask". The viewer reads `shader`, `floats` and `colors`. |
+| `resources.cubismMask`, `resources.cubismMaskCulling` | yes | The Cubism mask materials (`Live2D/Cubism/Materials/Mask` and `MaskCulling` of the game's resources), inline materials as in [node lists](#node-lists); their shader is "Live2D Cubism/Mask". The viewer and the story player read `shader`, `floats` and `colors`. |
+| `motionSync` | no | Format 2: `true` when the prefab's root has a `CubismMotionSyncController` with a `Live2DMotionSyncCriAudioInput` (a model whose mouth follows a voice through MotionSync). A fact for pages; the players take the controller from the prefab. |
 | `name`, `key`, `textures` | no | The model's name, the asset key, the atlas pages. |
 
 ### The model prefab
@@ -570,11 +593,14 @@ moc3).
 ### Model shaders
 
 `shaders/shaders.json` lists "Live2D Cubism/Lit-URP-ADV-optimize" and, for a model with masked drawables,
-"Live2D Cubism/Mask", with only the GLES3 variants the viewer runs (subshader 0, pass 0):
+"Live2D Cubism/Mask", with only the GLES3 variants the players run (subshader 0, pass 0):
 
 - "Live2D Cubism/Lit-URP-ADV-optimize": for each distinct keyword set of the drawables' materials (restricted to the
-  keywords its variants use), the variant with exactly that set. The viewer does not enable `_ADDITIONAL_LIGHTS` or
-  `_ADDITIONAL_LIGHTS_VERTEX`, so the variants with those keywords are not read.
+  keywords its variants use), the variant with exactly that set, and the variant with that set plus
+  `_ADDITIONAL_LIGHTS_VERTEX`. The viewer draws with the first; the story renderer adds `_ADDITIONAL_LIGHTS_VERTEX`
+  at quality 4 (Best: per-vertex additional lights) and draws with the second there, with the first at the other
+  qualities. A model whose `model.json` has format 1 may lack the second; the viewer does not need it, a story does.
+  No player enables `_ADDITIONAL_LIGHTS`, so the variants with it are not read.
 - "Live2D Cubism/Mask": its variant without keywords, when some drawable is masked (a material with `CUBISM_MASK_ON`).
 
 ## Conventions
@@ -604,8 +630,10 @@ failures and a summary. A site without `charts.json` is validated from the manif
 `charts/<region>/`. Per chart:
 
 - the manifest (schema, agreement with `charts.json`);
-- every asset: present, byte size, SHA-256 equal to its name, extension matching the logical file; split JSON files
-  rebuild to their `size`, and every JSON file parses;
+- every asset: present; an encoded asset (`.gz`, `.br`) of a kind that may be encoded, with `stored` equal to its
+  length and less than `size`, that decodes; the (decoded) bytes of `size` bytes with a SHA-256 equal to the asset's
+  name; the extension matching the logical file; `stored` only on encoded assets; split JSON files rebuild to their
+  `size`, and every JSON file parses;
 - `live.json` and the score (schema, unique ids, line and pair references);
 - `audio/live-audio.json` (schema, the sound ids above present in `sounds`, category volumes, loop points) and every
   waveform file (FLAC `STREAMINFO` sample rate, channels and length equal to the layer's; `.m4a` is an MP4 file);
@@ -616,11 +644,13 @@ failures and a summary. A site without `charts.json` is validated from the manif
 - textures: the lane skin, background, jacket and film grain PNGs are present, and every PNG a descriptor refers to
   has the described size and `mipCount` 1.
 
-Per model: the manifest (schema, agreement with `models.json`: `id`, `key`, the model facts, `bytes`, `files`), every
-asset as for charts, `model.json`, the moc3 header, the prefab (the components and fields above, clip and fade
+Per model: the manifest (schema, agreement with `models.json`: `id`, `key`, the model facts, `bytes`, `files`; without
+`models.json`, `id` equal to the manifest's name), every asset as for charts, `model.json` (with format 2, its
+`motionSync` as the prefab gives it), the moc3 header, the prefab (the components and fields above, clip and fade
 references, one Lit material and a texture descriptor per drawable), the drawables' PNGs (present, described size,
-`mipCount` at most a full chain), the shader index and programs, and that the manifest lists exactly the files the
-viewer reads.
+`mipCount` at most a full chain), the shader index and programs with the variants above (those with
+`_ADDITIONAL_LIGHTS_VERTEX` required from `model.json` format 2), and that the manifest lists exactly the files the
+viewer and the story player read.
 
 It needs Node.js 20 or later and no dependencies. The opt-in data tests (`OURNOTES_DATA=<site dir> npm run test:data`)
 go further and run charts through the player in Node (see [CONTRIBUTING.md](../CONTRIBUTING.md)).

@@ -92,6 +92,10 @@
           "additionalProperties": false,
           "properties": {
             "common": { "$ref": "#/$defs/size" },
+            "models": {
+              "description": "Present for a story manifest of format /2: the sum of size over the files of the model manifests it lists.",
+              "$ref": "#/$defs/size"
+            },
             "languages": {
               "type": "object",
               "propertyNames": { "$ref": "#/$defs/language" },

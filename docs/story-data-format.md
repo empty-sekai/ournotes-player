@@ -4,9 +4,9 @@ The story player plays one story episode (a scripted scene with Live2D character
 music) from a set of **logical files** that the embedding page supplies, usually as a static **site** served over
 HTTP, the same kind of site that serves charts and Live2D models ([data-format.md](data-format.md)). This document
 describes the story part of that data: the site layout, the story index, the story manifest with its per-language file
-groups, and every logical file as far as the player reads it. Producing the data is outside this repository; the
-[nnnotes](https://github.com/MetaSekaiLab/nnnotes) toolkit produces it from game files the user supplies
-(`nnnotes web SITE --story <id>` / `--all-stories`).
+groups, the Live2D models it uses, and every logical file as far as the player reads it. Producing the data is outside
+this repository; the [nnnotes](https://github.com/MetaSekaiLab/nnnotes) toolkit produces it from game files the user
+supplies (`nnnotes web SITE --story <id>` / `--all-stories`).
 
 Machine-readable schemas are in [`schema/`](../schema): [stories.schema.json](../schema/stories.schema.json),
 [story-manifest.schema.json](../schema/story-manifest.schema.json), [story.schema.json](../schema/story.schema.json),
@@ -44,15 +44,19 @@ Contents:
   stories.json                     story index (for listings; the player does not need it)
   stories/<advId>.json             story manifest, one per story
   stories/<region>/<advId>.json    a region's own manifest of a story (a site of several regions)
+  models.json, models/<id>.json    the Live2D models, the stories' among them (data-format.md "Live2D models")
   story/                           the story page and the story bundle, when the site was built with them
-  assets/<sha256>.<ext>            file contents, content-addressed, shared with the charts and models
+  assets/<sha256>.<ext>[.gz|.br]   file contents, content-addressed, shared with the charts and models
 ```
 
 - Assets follow the rules of the chart site ([Site layout](data-format.md#site-layout)): `<sha256>` is the lowercase
-  hex SHA-256 of the bytes, `<ext>` the extension of the logical file, identical contents are stored once. Stories
-  share the models, shaders, stage textures, cue sheets, UI textures and glyph pages they have in common.
-- Asset paths in a manifest are relative to the site root. A player that loads a manifest by URL resolves them
-  against the directory above the manifest's directory (`stories/..`), as for charts.
+  hex SHA-256 of the (decoded) bytes, `<ext>` the extension of the logical file, identical contents are stored once,
+  and an asset may be stored gzip- or brotli-encoded. Stories share the shaders, stage textures, cue sheets, UI
+  textures and glyph pages they have in common, and the model manifests of the models they use.
+- Asset and model manifest paths in a story manifest are relative to the site root. A player that loads a manifest by
+  URL finds the site root through the manifest's `root` (format `/2`: `../` for `stories/<advId>.json`, `../../` for
+  `stories/<region>/<advId>.json`); for a manifest of format `/1` it takes the directory above the manifest's
+  directory.
 - `<advId>` is the story's episode id (a decimal integer, the game's `MasterAdv` id).
 
 ## stories.json
@@ -72,7 +76,8 @@ does not.
                  "commands": ["Bgm", "Character", "…"], "commandCount": 412,
                  "language": "en", "languages": ["ja", "en", "zh-Hant", "zh-Hans", "ko"],
                  "audio": true, "audioFormat": "aac", "fonts": "open",
-                 "size": { "common": 30154311, "languages": { "ja": 410233, "…": 0 } }, "regions": ["tw"] } ] }
+                 "size": { "common": 20413220, "models": 9741091, "languages": { "ja": 410233, "…": 0 } },
+                 "regions": ["tw"] } ] }
 ```
 
 | Key | Type | Meaning |
@@ -89,7 +94,7 @@ An entry holds the manifest's [story facts](#story-facts) and:
 |---|---|---|
 | `id` | string | The `advId` as a decimal string. |
 | `manifest` | string | Path of the story manifest, relative to the site root. |
-| `size` | object | `common`: the sum of `size` over the manifest's `files`; `languages`: per language, the sum over that language group's `files` (download sizes before shared assets are deduplicated). |
+| `size` | object | `common`: the sum of `size` over the manifest's `files`; `models` (a manifest of format `/2`): the sum of `size` over the `files` of the model manifests it lists; `languages`: per language, the sum over that language group's `files` (decoded sizes, before shared assets are deduplicated). |
 | `regions` | string[] | Optional. The regions the manifest serves (the manifest's `regions`). An entry without it serves every region. |
 | `audio`, `audioFormat`, `fonts` | | Copies of the manifest keys of the same name. |
 
@@ -134,12 +139,14 @@ A group comes from one row of the game's story tables that names the episode (`_
 ## Story manifest
 
 `stories/<advId>.json`, or `stories/<region>/<advId>.json` on a site of several regions
-([schema](../schema/story-manifest.schema.json)), lists the logical files of one story and where their bytes are.
+([schema](../schema/story-manifest.schema.json)), lists the logical files of one story, where their bytes are, and
+the Live2D models the story uses.
 
 ```json
 {
-  "format": "ournotes.story-manifest/1",
+  "format": "ournotes.story-manifest/2",
   "advId": 10462,
+  "root": "../",
   "story": { "advId": 10462, "titles": { "…": "…" }, "commands": ["…"], "…": "…" },
   "language": "en",
   "audio": true,
@@ -147,10 +154,11 @@ A group comes from one row of the game's story tables that names the episode (`_
   "fonts": "open",
   "requires": { "commands": ["Bgm", "Character", "…"], "cubismCore": true, "motionSync": true },
   "files": {
-    "story.json": { "asset": "assets/2f0c…91aa.json", "size": 1155 },
-    "scene.json": { "parts": [["player", "assets/b1d2…77e0.json", 36212], "…"], "size": 171904 },
+    "story.json": { "asset": "assets/2f0c…91aa.json.gz", "size": 1155, "stored": 402 },
+    "scene.json": { "parts": [["player", "assets/b1d2…77e0.json.gz", 36212, 3810], "…"], "size": 171904 },
     "…": "…"
   },
+  "models": { "adv_live2d_rana_003_casual_spring_01": "models/adv_live2d_rana_003_casual_spring_01.json" },
   "languages": {
     "en": { "files": { "ui/ui.json": { "parts": ["…"], "size": 68113 },
                        "ui/fonts.json": { "asset": "assets/…", "size": 52011 },
@@ -163,8 +171,9 @@ A group comes from one row of the game's story tables that names the episode (`_
 
 | Key | Type | Read by the player | Meaning |
 |---|---|---|---|
-| `format` | `"ournotes.story-manifest/1"` | yes | Version of this document; the player refuses other values. |
+| `format` | `"ournotes.story-manifest/2"` \| `"ournotes.story-manifest/1"` | yes | Version of this document. `/2`: the Live2D models are model manifests of the site (`models`); `/1`, the earlier version: the models' files are among the story's common files (below). The player reads both and refuses other values. |
 | `advId` | integer | no | The episode id. |
+| `root` | string | yes | Format `/2`: the site root relative to the manifest, `"../"` for `stories/<advId>.json`, `"../../"` for `stories/<region>/<advId>.json`. |
 | `story` | object | no | The [story facts](#story-facts), handed to the page as they are. |
 | `regions` | string[] | no | Optional. The regions this manifest serves. |
 | `language` | string | yes | The default language: the language the player loads when the page names none. One of the keys of `languages`. |
@@ -172,15 +181,16 @@ A group comes from one row of the game's story tables that names the episode (`_
 | `audioFormat` | `"aac"` \| `"flac"` \| `null` | no | Format of every waveform file: AAC-LC in an MP4 container (`.m4a`) or FLAC; `null` without audio. |
 | `fonts` | `"open"` \| `"game"` | no | Where the glyphs of the [font assets](#fonts-uifontsjson) come from: font files of the producer's choice (`open`) or the game's own font assets (`game`). The format is the same; the player does not distinguish them. |
 | `requires` | object | yes | What the player needs to play the story: `commands` (equal to the facts' `commands`; a player that lacks one of them refuses the story before loading its files, naming them), `cubismCore` (`true`: the page must provide Live2D Cubism Core), `motionSync` (`true`: a Talk row maps a voice onto a character's lip sync, which needs Live2D's MotionSync Core with voices on). |
-| `files` | object | yes | The common files: logical path → [file entry](data-format.md#file-entries). |
+| `files` | object | yes | The common files: logical path → [file entry](data-format.md#file-entries). With format `/2` none of them is under `live2d/`. |
+| `models` | object | yes | Format `/2`: model id → the path of its [model manifest](data-format.md#model-manifest) relative to the site root (`models/<id>.json`), keys sorted: the models of the story's Character rows (the ids of `story.json` `models`). |
 | `host` | object | no | Optional. An Overlay episode (`playbackMode` 1) with open fonts: the screen the game plays it over and the simple talk window ([story-simple.md](story-simple.md)): `kind` (`home`: a home spot talk; `afterlive`: the reward phase of a live result), `doc` (`host/host.json`), `ui` (`ui/simple/ui.json`). The player finds these files by path. Absent for a Normal episode and for an Overlay episode with game fonts, which then has no host data and no simple talk window (the simple player refuses it). |
 | `languages` | object | yes | Language → `{ files }`: the files of that language (below). At least one language. |
 
 File entries are exactly those of a chart manifest ([File entries](data-format.md#file-entries)): whole files
-`{ asset, size }` and split JSON objects `{ parts, size }`, with the same rules (paths relative with `/`, `.json` and
-`.glsl` are UTF-8 text, every size checked). The producer stores `scene.json` and `ui/ui.json` split per top-level key
-whatever their size, so the parts that stories and languages share are stored once; other JSON files are split as in
-the chart sites (above 512 KiB).
+`{ asset, size }`, encoded whole files `{ asset, size, stored }` and split JSON objects `{ parts, size }`, with the
+same rules (paths relative with `/`, `.json` and `.glsl` are UTF-8 text, encoded assets decoded, every size checked).
+The producer stores `scene.json` and `ui/ui.json` split per top-level key whatever their size, so the parts that
+stories and languages share are stored once; other JSON files are split as in the chart sites (above 512 KiB).
 
 ### Language groups
 
@@ -198,12 +208,19 @@ the fonts documents and glyph pages are always language files. Rules:
 
 ## Loading a story
 
-A player plays a story from one language at a time: the union of `files` and `languages[<language>].files`. The
-logical paths are the same in every language, so the reader code does not change with the language. Loading with the
-chart loader works on that union: `AssetStore.fromManifest` reads the `files` of the manifest it fetches, so a story
-loader passes it the manifest with `files` replaced by the union (for example through its `fetch` option), or fetches
-the entries itself; the entry forms and checks are the same. A language switch loads the other language's group and
-keeps the common files.
+A player plays a story from one language at a time. Its file set is the union of
+
+- `files`,
+- `languages[<language>].files`,
+- with format `/2`, for every model of `models`, the `files` of its model manifest under `live2d/<id>/` (the model's
+  `model.json` is `live2d/<id>/model.json`).
+
+The logical paths are the same in every language, so the reader code does not change with the language. The model
+manifests are fetched together once the story manifest is read; their paths, like the asset paths, are relative to the
+site root (`root`). Loading with the chart loader works on that union: `AssetStore.fromManifest` reads the `files` of
+the manifest it fetches, so a story loader passes it the manifest with `files` replaced by the union (for example
+through its `fetch` option), or fetches the entries itself; the entry forms and checks are the same. A language switch
+loads the other language's group and keeps the common files and the models.
 
 Every listed file is fetched before the story starts. A manifest lists the files the player's data (this document)
 names: shader directories keep only the GLES3 programs (GLSL ES 3.00) of the shaders they list; SPIR-V containers,
@@ -216,9 +233,9 @@ GLSL ES 3.10 programs and the `streams.json` of the sound directories are left o
 | `story.json` | Index: the paths of the files below. | common |
 | `episode.json` | The episode: command rows, texts, sounds, cue sheets, videos, master data row, title. | common |
 | `scene.json` | Player graphics, cameras, ADV fields, volumes, player settings, stages. | common |
-| `shaders/shaders.json`, `shaders/…` | Shaders of the scene, the stages, the models and the media files ([Shaders](data-format.md#shaders)). | common |
+| `shaders/shaders.json`, `shaders/…` | Shaders of the scene, the stages and the media files (format `/1`: also of the models) ([Shaders](data-format.md#shaders)). | common |
 | `textures/*.png` | Textures of the scene and the media files ([Textures](data-format.md#textures)); paths relative to the story root. | common |
-| `live2d/<model>/…` | The Live2D models ([Live2D models](#live2d-models)). | common |
+| `live2d/<id>/…` | The Live2D models ([Live2D models](#live2d-models)): format `/2`, the files of the model manifests; format `/1`, `live2d/<model>/…` among the common files. | model manifests (`/2`), common (`/1`) |
 | `audio/<sheet>/cues.json`, `audio/<sheet>/<cue>.m4a` or `.flac` | Sounds per cue sheet ([Sounds](#sounds)). | common |
 | `ui/ui.json` | The story UI: front canvas nodes, sprites, materials, clips, controllers, transitions, text records ([Story UI](#story-ui-uiuijson)). | language (common when equal) |
 | `ui/textures/*.png`, `ui/shaders/…` | Packed UI textures and the UI shaders, including the TextMeshPro distance-field shader. | common |
@@ -231,8 +248,8 @@ GLSL ES 3.10 programs and the `streams.json` of the sound directories are left o
 | `ui/simple/ui.json`, `ui/simple/fonts.json`, `ui/simple/fonts/*.png`, `ui/simple/shaders/…` | With a `host`: the simple talk window in the story UI record format, its fonts and glyph pages in the format of `ui/fonts.json` and its text shader (paths relative to `ui/simple/`). | language (`ui.json` and the shaders common when equal) |
 
 The directory names are fixed: `ui/fonts.json` and `ui/languages.json` are found by path, the UI's texture and
-shader paths are relative to `ui/`, a model's paths to its directory, the scene's and the media files' texture paths
-to the story root.
+shader paths are relative to `ui/`, a model's paths to its directory (`live2d/<id>/`, or the `dir` of a format `/1`
+model), the scene's and the media files' texture paths to the story root.
 
 ## story.json
 
@@ -240,7 +257,7 @@ to the story root.
 
 ```json
 { "advId": 10462, "episode": "episode.json", "scene": "scene.json", "ui": "ui/ui.json",
-  "models": { "Character/Live2D/001_adv/…/model/…": { "dir": "live2d/…", "moc3": "….moc3", "prefab": "….prefab.json" } },
+  "models": { "Character/Live2D/003_adv/…/model/…": "adv_live2d_rana_003_casual_spring_01" },
   "audio": { "sound_bgm_adv_…": "audio/sound_bgm_adv_…" },
   "frames": null, "effects": null, "postEffects": null, "stills": null, "talkWindows": null, "chat": null,
   "videos": null, "crilips": null }
@@ -250,7 +267,8 @@ to the story root.
 |---|---|
 | `advId` | The episode id. |
 | `episode`, `scene`, `ui` | Paths of [episode.json](#episodejson), [scene.json](#scenejson) and [ui/ui.json](#story-ui-uiuijson). |
-| `models` | Model key (the address the episode's Character rows name, `Character/Live2D/<group>/<name>/model/<name>`) → `dir` (the model directory), `moc3` and `prefab` (file names in it). |
+| `models` | Model key (the address the episode's Character rows name, `Character/Live2D/<group>/<name>/model/<name>`) → the model. Format `/2`: its model id (the files under `live2d/<id>/`, [Live2D models](#live2d-models)). Format `/1`: `{ dir, moc3, prefab }`, the model directory among the common files and the file names of the moc3 and the prefab in it. |
+| `modelsDir` | Only in a story directory (a story's logical files as files on disk, outside a site): the directory holding its models, `<modelsDir>/<id>/model.json` and the files it names, relative to the story directory with `/`. A reader of the directory maps `live2d/<id>/…` there. Not in a site. |
 | `audio` | Cue sheet name → its directory. Empty when the manifest's `audio` is `false`. |
 | `frames`, `effects`, `postEffects`, `stills`, `talkWindows`, `chat` | Path of the media file of that kind, `null` when the episode does not use it. |
 | `videos` | `videos/videos.json`, or `null` when the episode has no video. |
@@ -291,7 +309,7 @@ scene, [Live scene](data-format.md#live-scene-livescenescenejson)). Keys read:
 | `settings.playerSettings` | `AdvPlayerSettings`: `_initializeEpisodes`, `_finalizeEpisodes` (rows with `Command` values, run before and after the episode), `_focusDataSettingsMap`, `_defaultFocusDataSettingsKey`, `_defaultPanV2FocusSlideRate`, `_defaultTransitionAssetAddress`, `_waitTalkTextUnitTime`, `_minTalkDisplayTime`, `_waitAfterVoiceTime`, `_targetNameSplitKey`, the `_allow*` flags, wait and shake values. |
 | `settings.masterIdSettings` | `AdvMasterIdSettings`: `_unknownCharacterNameTextId`, `_splitCharacterNameTextId`. |
 | `stages` | Stage key (the address after `Adv/Stage/`) → the stage prefab (node list) of every stage the episode uses. |
-| `resources` | `cubismMask`, `cubismMaskCulling`: the Cubism mask materials (as in [model.json](data-format.md#modeljson)). |
+| `resources` | Format `/1`: `cubismMask`, `cubismMaskCulling`, the Cubism mask materials of the story's models (as in [model.json](data-format.md#modeljson)). Not read with format `/2`: each model has its own in its `model.json`. |
 | `postTextures` | Renderer name → post-processing textures (`filmGrainTex`, …) as texture descriptors. |
 | `shaders.cameraRenderers` | The shader names each camera renderer draws with. |
 
@@ -321,10 +339,21 @@ decoded PCM of the voice file; with AAC data its samples differ from the game's 
 
 ## Live2D models
 
-`live2d/<model>/`: per model the moc3, the prefab (`<name>.prefab.json`) and the atlas pages under `textures/`, in the
-form of a model site's files ([The model prefab](data-format.md#the-model-prefab); texture paths relative to the
-model directory, atlas pages may be mipmapped). The shaders the drawables use are in the story's `shaders/`. The same
-model in two stories is stored once.
+Format `/2`: each model is a model of the site ([Live2D models](data-format.md#live2d-models)): its manifest
+`models/<id>.json`, listed in `models.json`, and its files, which the player loads under `live2d/<id>/`. The story
+player reads them as the model viewer does: `model.json` names the moc3, the prefab (texture paths relative to the
+prefab's directory) and the shader index; a character draws with its model's own shaders and with the Cubism mask
+materials of its `model.json` `resources`. The story renderer adds `_ADDITIONAL_LIGHTS_VERTEX` to every character draw
+at quality 4, so each model's shaders hold, for every keyword set its drawables use, the set and the set with
+`_ADDITIONAL_LIGHTS_VERTEX` ([Model shaders](data-format.md#model-shaders)). A model the stories share is one
+manifest.
+
+Format `/1`: `live2d/<model>/` among the story's common files holds per model the moc3, the prefab
+(`<name>.prefab.json`) and the atlas pages under `textures/`, in the form of a model site's files (texture paths
+relative to the model directory, atlas pages may be mipmapped). The shaders the drawables use are in the story's
+`shaders/`, the mask materials in `scene.json` `resources`.
+
+In both formats a character's MotionSync controller comes from its prefab.
 
 ## Story UI (`ui/ui.json`)
 
@@ -633,15 +662,23 @@ node scripts/validate-data.mjs <site dir> [chart id | model id | story id ...]
 Besides the charts and models, validates `stories.json` and every story (or the given story ids; a story id is the
 `advId`, or `<region>/<advId>` for a region's own manifest). Per story:
 
-- the manifest (schema, the language group rules above, agreement with `stories.json`: facts, sizes, `regions`);
-- every asset of `files` and of every language group, as for charts (present, byte size, SHA-256 equal to its name,
-  extension matching the logical file, split JSON rebuilt to its `size`, JSON parses);
-- `story.json` and `episode.json` (schemas; every path `story.json` names is in the common files; the models' moc3
-  header, their prefabs as the model viewer reads them, their atlas pages, and a `shaders/` variant for every
-  drawable material; every cue sheet the episode's cue sheet table names has its `cues.json` when `audio` is true, and
-  every file a `cues.json` names is present with the manifest's `audioFormat`, FLAC `STREAMINFO` or MP4 header
-  agreeing with the cue; without audio no cue sheet and no waveform file); `story.json` `crilips`, when set, only
-  with audio, both files common, the descriptor float32 little-endian with every block inside `crilips.bin`;
+- the manifest (schema, the language group rules above, agreement with `stories.json`: facts, sizes, `regions`;
+  with format `/2`, `root` as the manifest's place in the site gives it and no file under `live2d/`);
+- every asset of `files` and of every language group, as for charts (present, an encoded asset's stored length and
+  decoding, byte size, SHA-256 of the decoded bytes equal to its name, extension matching the logical file, split JSON
+  rebuilt to its `size`, JSON parses);
+- `story.json` and `episode.json` (schemas; every path `story.json` names is in the common files; every cue sheet the
+  episode's cue sheet table names has its `cues.json` when `audio` is true, and every file a `cues.json` names is
+  present with the manifest's `audioFormat`, FLAC `STREAMINFO` or MP4 header agreeing with the cue; without audio no
+  cue sheet and no waveform file); `story.json` `crilips`, when set, only with audio, both files common, the
+  descriptor float32 little-endian with every block inside `crilips.bin`;
+- the models. Format `/2`: `models` keys sorted, each path `models/<id>.json`, the same ids as `story.json` `models`
+  (which names them by id), each Character row's model among them, each model manifest present (in `models.json` when
+  the site has one) and valid as a model ([Validation](data-format.md#validation)), and its shaders holding the
+  variants the story renderer draws with at every quality (each keyword set, and with `_ADDITIONAL_LIGHTS_VERTEX`; the
+  mask shader's without keywords). Format `/1`: `story.json` `models` in the `{ dir, moc3, prefab }` form, each
+  model's moc3 header, its prefab as the model viewer reads it, its atlas pages, and a `shaders/` variant for every
+  drawable material;
 - `requires.commands` equal to the facts' `commands` and to the command names of the episode's rows without
   `IgnoreData` together with the player settings' initialize and finalize rows; `requires.motionSync` as the
   episode's rows give it;

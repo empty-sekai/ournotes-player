@@ -91,3 +91,37 @@ test("model display names: schemas, and equal in models.json and the manifest wh
     "models.json: label differs from the manifest's model.label",
   ]);
 });
+
+test("chart and model manifests: formats 2 and 3, file entries stored as they are or encoded", () => {
+  const a = "a".repeat(64);
+  const files = { "live.json": { asset: `assets/${a}.json.gz`, size: 100, stored: 60 },
+                  "x.glsl": { asset: `assets/${a}.glsl.br`, size: 100, stored: 40 },
+                  "t.png": { asset: `assets/${a}.png`, size: 10 },
+                  "n.json": { parts: [["k", `assets/${a}.json.gz`, 50, 20], ["l", `assets/${a}.json`, 5]], size: 63 } };
+  for (const format of [2, 3]) {
+    assert.deepEqual(schema("manifest")(manifest({ format, files })), []);
+    assert.deepEqual(schema("model")({ format, id: "m1", files }), []);
+  }
+  for (const format of [1, 4]) {
+    assert.ok(schema("manifest")(manifest({ format })).some((e) => e.includes("/format")));
+    assert.ok(schema("model")({ format, id: "m1", files: {} }).some((e) => e.includes("/format")));
+  }
+  assert.ok(schema("manifest")(manifest({ files: { "live.json": { asset: `assets/${a}.json.gz`, size: 100 } } })).length > 0);
+  assert.ok(schema("model")({ format: 3, id: "m1", files: { "n.json": { parts: [["k", `assets/${a}.json`, 5, 4]], size: 9 } } }).length > 0);
+  // model.json: format 2 states motionSync
+  const mj = { format: 2, motionSync: false, moc3: "m.moc3", prefab: "m.prefab.json", shaders: "shaders/shaders.json",
+               resources: { cubismMask: { shader: { shader: "Live2D Cubism/Mask" }, floats: { _Cull: 0 } },
+                            cubismMaskCulling: { shader: { shader: "Live2D Cubism/Mask" }, floats: { _Cull: 1 } } } };
+  assert.deepEqual(schema("model-json")(mj), []);
+  const { motionSync, ...noSync } = mj;
+  assert.equal(motionSync, false);
+  assert.deepEqual(schema("model-json")({ ...noSync, format: 1 }), []);
+  assert.ok(schema("model-json")(noSync).length > 0);
+  assert.ok(schema("model-json")({ ...mj, format: 3 }).some((e) => e.includes("/format")));
+});
+
+test("a model manifest's id is its name without models.json", () => {
+  const r = site({ "models/m1.json": { format: 3, id: "m2", files: {} } });
+  assert.equal(r.status, 1);
+  assert.ok(r.lines.includes("manifest: id m2, expected m1 (the manifest's name)"), r.lines.join("\n"));
+});

@@ -183,10 +183,18 @@ export interface StoryManifestInfo {
   loadedLanguage?: StoryLanguage;
   audio?: boolean;
   requires?: { commands?: string[]; cubismCore?: boolean; motionSync?: boolean };
+  /** Format /2: the site root, relative to the manifest. */
+  root?: string;
+  /** Format /2: model id -> the path of its model manifest, relative to the site root. */
+  models?: Record<string, string>;
   [key: string]: unknown;
 }
 
-export const STORY_MANIFEST_FORMAT: "ournotes.story-manifest/1";
+/** The current story manifest format. */
+export const STORY_MANIFEST_FORMAT: "ournotes.story-manifest/2";
+/** The story manifest formats the player reads: /1 (the models' files among the story's) and /2 (the models in model
+ *  manifests of the site). */
+export const STORY_MANIFEST_FORMATS: readonly ["ournotes.story-manifest/1", "ournotes.story-manifest/2"];
 
 /** Fetches a story manifest; refuses a story whose commands this player lacks. */
 export function fetchStoryManifest(url: string | URL, options?: { fetch?: typeof globalThis.fetch; signal?: AbortSignal | null }):
@@ -199,7 +207,9 @@ export interface LoadStoryOptions extends FromManifestOptions {
   manifest?: { url: string; manifest: any } | null;
 }
 
-/** The AssetStore of one language of a story: the manifest's common files and that language's files. */
+/** The AssetStore of one language of a story: the manifest's common files and that language's files; with format /2
+ *  also the files of the model manifests it lists, under live2d/<id>/. `base` defaults to the manifest's `root`
+ *  (format /2) or the directory above the manifest's directory (format /1). */
 export function loadStoryStore(url: string | URL, options?: LoadStoryOptions): Promise<AssetStore>;
 
 /** A talk log entry (AdvTalkHelper.AddLogEntry): Talk, Location, subtitles and chat rows, also those the shortcut

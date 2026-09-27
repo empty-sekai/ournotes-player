@@ -2,12 +2,14 @@
 // on disk. Nothing is drawn or played; the session runs its full logic (simulation, views, effects, draw calls) so
 // that everything it reads and every GL call it makes can be observed.
 //
-//   import { headlessGL, HeadlessAudioContext, openChart } from "./lib/headless.mjs";
+//   import { headlessGL, HeadlessAudioContext, openChart, openStory } from "./lib/headless.mjs";
 //   const assets = await openChart("site/charts/100001_expert.json");     // or a directory with live.json
 //   const session = await ChartSession.create({ gl: headlessGL(), assets, audioContext: new HeadlessAudioContext() });
+//   const store = await openStory("site/stories/10462.json", { lang: "en" });   // or a story directory
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import zlib from "node:zlib";
 import { AssetStore, TEXT_FILE } from "../../src/data/assets.js";
 
 // ---- WebGL2 ---------------------------------------------------------------------------------------------------------
@@ -150,6 +152,13 @@ export const headlessImages = (store) => {
   return store;
 };
 
+// the decoder of encoded site assets (AssetStore.fromManifest `decode`) with node:zlib: gzip and brotli
+export const nodeDecode = async (bytes, encoding) => {
+  if (encoding === "gzip") return zlib.gunzipSync(bytes);
+  if (encoding === "br") return zlib.brotliDecompressSync(bytes);
+  throw new Error(`unknown content encoding ${encoding}`);
+};
+
 export const fileFetch = async (u) => {
   const b = fs.readFileSync(fileURLToPath(String(u)));
   return { ok: true, status: 200, json: async () => JSON.parse(b.toString("utf8")),
@@ -172,11 +181,13 @@ export const storeFromDir = (dir, info = null) => {
 };
 
 // the files under `dir` as storeFromDir has them, each read when it is first asked for (has, text, bytes, ...); a
-// path names a file by its exact name, "/"-separated, without "." or ".." segments
+// path names a file by its exact name, "/"-separated, without "." or ".." segments. `mounts`: logical directory ->
+// directory on disk whose files appear under it instead (a story directory's models: "live2d" -> its models directory)
 export class DirStore extends AssetStore {
-  constructor(dir, info = null) {
+  constructor(dir, info = null, { mounts = {} } = {}) {
     super({ info });
     this.dir = dir;
+    this.mounts = new Map(Object.entries(mounts).map(([k, d]) => [k.replace(/\/+$/, ""), d]));
     this._entries = new Map();            // directory -> Map(name -> is a directory)
   }
 
@@ -189,11 +200,17 @@ export class DirStore extends AssetStore {
     return m;
   }
 
+  // the directory on disk and the path's segments below it
+  _where(p) {
+    for (const [m, d] of this.mounts) if (p.startsWith(`${m}/`)) return [d, p.slice(m.length + 1).split("/")];
+    return [this.dir, p.split("/")];
+  }
+
   _load(p) {
     if (typeof p !== "string" || this._text.has(p) || this._bin.has(p)) return;
-    const parts = p.split("/");
+    const [root, parts] = this._where(p);
     if (parts.some((x) => !x || x === "." || x === "..")) return;
-    let f = this.dir;
+    let f = root;
     for (let i = 0; i < parts.length; i++) {
       if (this._entriesOf(f).get(parts[i]) !== (i < parts.length - 1)) return;   // missing, or a file / directory mix-up
       f = path.join(f, parts[i]);
@@ -210,19 +227,46 @@ export class DirStore extends AssetStore {
     const walk = (d, pre) => {
       for (const [name, isDir] of this._entriesOf(d)) {
         const p = pre ? `${pre}/${name}` : name;
+        if (this.mounts.has(p)) continue;                               // a mount replaces the directory of its path
         if (isDir) walk(path.join(d, name), p); else this._load(p);
       }
     };
     walk(this.dir, "");
+    for (const [m, d] of this.mounts) {
+      const sub = (dd, pre) => {
+        for (const [name, isDir] of this._entriesOf(dd)) {
+          const p = `${pre}/${name}`;
+          if (isDir) sub(path.join(dd, name), p); else this._load(p);
+        }
+      };
+      sub(d, m);
+    }
     return super.list(prefix).sort();
   }
 }
+
+// a story directory (story.json, episode.json, ...) as a store: with story.json `modelsDir` (the models directory,
+// relative to the story directory), its models' files under live2d/<model id>/
+export const storyDirStore = (dir, info = null) => {
+  const index = JSON.parse(fs.readFileSync(path.join(dir, "story.json"), "utf8"));
+  const mounts = typeof index.modelsDir === "string" ? { live2d: path.resolve(dir, ...index.modelsDir.split("/")) } : {};
+  return new DirStore(dir, info, { mounts });
+};
+
+// a story: a manifest file (site/stories/<advId>.json, the site's models and assets beside it) loaded in one language
+// (default: the manifest's), or a story directory (storyDirStore)
+export const openStory = async (where, { lang = null } = {}) => {
+  const p = path.resolve(where);
+  if (fs.statSync(p).isDirectory()) return headlessImages(storyDirStore(p));
+  const { loadStoryStore } = await import("../../src/story/assets.js");
+  return headlessImages(await loadStoryStore(pathToFileURL(p).href, { fetch: fileFetch, lang, decode: nodeDecode }));
+};
 
 // a chart manifest file (site/charts/<id>.json, assets under site/assets) or a directory holding live.json (its files
 // read on demand)
 export const openChart = async (where) => {
   const p = path.resolve(where);
   const store = fs.statSync(p).isDirectory() ? new DirStore(p)
-    : await AssetStore.fromManifest(pathToFileURL(p).href, { fetch: fileFetch });
+    : await AssetStore.fromManifest(pathToFileURL(p).href, { fetch: fileFetch, decode: nodeDecode });
   return headlessImages(store);
 };

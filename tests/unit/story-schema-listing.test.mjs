@@ -69,6 +69,7 @@ test("first download, region manifests, query strings", () => {
   assert.equal(firstLoad(s1, "ja"), 1048576 + 524288);
   assert.equal(firstLoad(s1, "ko"), 1048576 + 262144);           // no ko group: the default language's
   assert.equal(firstLoad(s2tw, "zh-Hant"), 150);
+  assert.equal(firstLoad({ language: "ja", size: { common: 10, languages: { ja: 5 }, models: 100 } }, "ja"), 115);
   assert.equal(manifestFor(index, 2, "tw"), "stories/tw/2.json");
   assert.equal(manifestFor(index, "2", "jp"), "stories/2.json");
   assert.equal(manifestFor(index, 9, "jp"), "stories/9.json");

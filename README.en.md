@@ -175,10 +175,11 @@ the data. It is a model viewer; the story's stage, camera and text are not part 
 
 The player reads a static site:
 
-- `charts.json` and `charts/`;
-- `models.json` and `models/`;
-- `stories.json` and `stories/`;
-- the content-addressed asset files.
+- `charts.json` and `charts/`: the charts;
+- `models.json` and `models/`: the Live2D models, shared by the model viewer and the stories;
+- `stories.json` and `stories/`: the stories, each manifest listing the models it uses;
+- the content-addressed asset files: JSON, GLSL, moc3 and a few other kinds are stored gzip- (or brotli-) encoded
+  where that makes them smaller, and the player decodes them.
 
 nnnotes builds such a site from the user's own game files, for example:
 
@@ -186,9 +187,13 @@ nnnotes builds such a site from the user's own game files, for example:
 nnnotes web out/site --all --all-live2d --all-stories --player <ournotes-player dir>
 ```
 
-- Hosting (paths, CORS, compression, caching): [docs/embedding.md](docs/embedding.md#hosting-the-data)
+- The player also reads data in the earlier formats: assets stored as they are, and story manifests that hold the
+  models' files inside each story (`ournotes.story-manifest/1`).
+- Hosting (paths, CORS, encoded assets, caching): [docs/embedding.md](docs/embedding.md#hosting-the-data). A site
+  encoded with brotli plays in Chromium-based browsers only when its `.br` assets are served with
+  `Content-Encoding: br`.
 - Validation: `npm run validate-data -- <site dir>` checks the charts, models and stories against the data formats and
-  the schemas in `schema/`.
+  the schemas in `schema/`, including each story against its models.
 
 ## Documentation
 

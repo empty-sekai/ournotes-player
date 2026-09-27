@@ -12,6 +12,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { compile } from "../../scripts/lib/json-schema.mjs";
+import { encode, modelFiles, modelManifest, putFiles, sha256 } from "./site-fixture.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const script = path.join(here, "..", "..", "scripts", "validate-data.mjs");
@@ -96,7 +97,13 @@ const language = (lang, mode, field) => ({ format: "ournotes.story-language/1", 
 
 // ------------------------------------------------------------------------------------------------ the site
 // logical files -> a content-addressed site with stories/7.json and stories.json; `edit(parts)` changes the pieces
-// before they are stored
+// before they are stored:
+//   common, groups, man   the story's common files, language groups and manifest keys
+//   models                model id -> its logical files (models/<id>.json; the manifest's models list them all)
+//   modelsIndex           write models.json listing the models (true), or the ids of a list
+//   encoding              "gzip" | "br": every compressible asset encoded where that is smaller
+//   where                 the manifest's path (stories/7.json; stories/<region>/7.json for a region's own)
+//   index                 false: no stories.json; a function: edits the stories.json entry
 function buildSite(edit = () => {}) {
   const common = {
     "story.json": { advId: 7, episode: "episode.json", scene: "scene.json", ui: "ui/ui.json", models: {}, audio: { sheet_a: "audio/sheet_a" },
@@ -115,27 +122,34 @@ function buildSite(edit = () => {}) {
   }
   const facts = { advId: 7, asset: "adv_script_7", sheetName: "s", playbackMode: 0, titles: { ja: "T", en: "T" }, groups: [],
                   commands: ["Bgm", "TalkWindow", "Talk"].sort(), commandCount: 3, language: "en", languages: ["ja", "en"] };
-  const man = { format: "ournotes.story-manifest/1", advId: 7, story: facts, language: "en", audio: true, audioFormat: "flac", fonts: "open",
-                requires: { commands: facts.commands, cubismCore: true, motionSync: true } };
-  const parts = { common, groups, man, index: true };
+  const man = { format: "ournotes.story-manifest/2", advId: 7, root: "../", story: facts, language: "en", audio: true, audioFormat: "flac",
+                fonts: "open", requires: { commands: facts.commands, cubismCore: true, motionSync: true } };
+  const parts = { common, groups, man, index: true, models: {}, modelsIndex: false, encoding: null, where: "stories/7.json" };
   edit(parts);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ournotes-story-"));
-  const put = (p, v) => {
-    const b = Buffer.isBuffer(v) ? v : Buffer.from(typeof v === "string" ? v : JSON.stringify(v));
-    const asset = `assets/${crypto.createHash("sha256").update(b).digest("hex")}.${p.split(".").pop()}`;
-    fs.mkdirSync(path.join(dir, "assets"), { recursive: true });
-    fs.writeFileSync(path.join(dir, asset), b);
-    return { asset, size: b.length };
-  };
-  const entries = (files) => Object.fromEntries(Object.entries(files).map(([p, v]) => [p, put(p, v)]));
-  const m = { ...parts.man, files: entries(parts.common),
+  const entries = (files) => putFiles(dir, files, parts.encoding);
+  const ids = Object.keys(parts.models).sort(), modelSize = {};
+  fs.mkdirSync(path.join(dir, "models"), { recursive: true });
+  for (const id of ids) {
+    const mm = modelManifest(id, entries(parts.models[id]));
+    modelSize[id] = Object.values(mm.files).reduce((n, f) => n + f.size, 0);
+    fs.writeFileSync(path.join(dir, "models", `${id}.json`), JSON.stringify(mm));
+  }
+  if (parts.modelsIndex) {
+    const listed = Array.isArray(parts.modelsIndex) ? parts.modelsIndex : ids;
+    fs.writeFileSync(path.join(dir, "models.json"), JSON.stringify({ format: 2, models: listed.map((id) => ({ id, manifest: `models/${id}.json` })) }));
+  }
+  const sited = parts.man.format === "ournotes.story-manifest/2";           // format /1: no models of the site
+  const m = { ...(sited ? { models: Object.fromEntries(ids.map((id) => [id, `models/${id}.json`])) } : {}), ...parts.man,
+              files: entries(parts.common),
               languages: Object.fromEntries(Object.entries(parts.groups).map(([l, g]) => [l, { files: entries(g) }])) };
-  fs.mkdirSync(path.join(dir, "stories"), { recursive: true });
-  fs.writeFileSync(path.join(dir, "stories", "7.json"), JSON.stringify(m));
+  fs.mkdirSync(path.dirname(path.join(dir, parts.where)), { recursive: true });
+  fs.writeFileSync(path.join(dir, parts.where), JSON.stringify(m));
   if (parts.index) {
     const size = (files) => Object.values(files).reduce((n, f) => n + f.size, 0);
-    const entry = { id: "7", manifest: "stories/7.json", audio: m.audio, audioFormat: m.audioFormat, fonts: m.fonts, ...m.story,
-                    size: { common: size(m.files), languages: Object.fromEntries(Object.entries(m.languages).map(([l, g]) => [l, size(g.files)])) } };
+    const entry = { id: "7", manifest: parts.where, audio: m.audio, audioFormat: m.audioFormat, fonts: m.fonts, ...m.story,
+                    size: { common: size(m.files), ...(sited ? { models: ids.reduce((n, id) => n + modelSize[id], 0) } : {}),
+                            languages: Object.fromEntries(Object.entries(m.languages).map(([l, g]) => [l, size(g.files)])) } };
     if (typeof parts.index === "function") parts.index(entry);
     fs.writeFileSync(path.join(dir, "stories.json"), JSON.stringify({ format: "ournotes.stories/1", language: "en", languages: ["ja", "en"], stories: [entry] }));
   }
@@ -148,6 +162,16 @@ const buildSiteFonts = (edit) => {
   const { dir } = buildSite((p) => { edit(p); doc = p.groups.ja["ui/fonts.json"]; });
   fs.rmSync(dir, { recursive: true, force: true });
   return doc;
+};
+
+// validates the site built with `edit`, after `after(dir, man)` changed the stored site (files on disk)
+const validateBuilt = (edit, after = null, ...args) => {
+  const { dir, man } = buildSite(edit);
+  try {
+    if (after) after(dir, man);
+    const r = spawnSync(process.execPath, [script, dir, ...args], { encoding: "utf8" });
+    return { status: r.status, lines: r.stdout.split("\n").map((l) => l.trim()).filter(Boolean), stderr: r.stderr };
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 };
 
 const validate = (edit, ...args) => {
@@ -284,7 +308,7 @@ test("the story schemas accept the synthetic documents", () => {
     assert.deepEqual(schema("story-fonts")(font("ja").doc), []);
     assert.deepEqual(schema("story-language")(language("ja", 0, "japanese")), []);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-  assert.ok(schema("story-manifest")({ ...man, format: "ournotes.story-manifest/2" }).some((e) => e.includes("/format")));
+  assert.ok(schema("story-manifest")({ ...man, format: "ournotes.story-manifest/3" }).some((e) => e.includes("/format")));
   assert.ok(schema("story-manifest")({ ...man, audioFormat: "ogg" }).some((e) => e.includes("/audioFormat")));
   assert.ok(schema("episode")({ ...episode(), commands: [{ i: 0, cmd: "Bgm" }] }).some((e) => e.includes("raw")));
   const f = font("ja").doc;
@@ -479,4 +503,205 @@ test("fallback font assets: the fallback material of each text material (GetFall
   failsWith(edit((f) => { f.materials[M].textures._MainTex.texture.name = "font_Test ja_0"; }), `material ${M}: _MainTex not as`);
   failsWith(edit((f) => { f.materials[M].keywords = []; }), `material ${M}: shader / keywords not as`);
   failsWith(edit((f) => { f.fonts["Test SDF"].fallbacks.push("Test SDF"); }), `${E} fonts.Test SDF: fallbacks list the asset itself or an asset twice`);
+});
+
+// ------------------------------------------------------------------------------------------------ models
+// a Live2D model m1 used by a Character row: its files in models/m1.json, story.json naming it, the story's shaders
+const ADDRESS = "Character/Live2D/g/m1/model/m1";
+const withModel = (p, opts = {}) => {
+  p.models.m1 = modelFiles("m1", opts);
+  p.common["story.json"].models = { [ADDRESS]: "m1" };
+  const ep = p.common["episode.json"];
+  ep.commands.push({ i: 3, cmd: "Character", raw: 1, TargetName: "a", TargetAssetName: "g/m1/model/m1" });
+  ep.commandCount = ep.commands.length;
+  p.man.story.commandCount = ep.commands.length;
+  p.man.story.commands = p.man.requires.commands = [...p.man.story.commands, "Character"].sort();
+  Object.assign(p.common, shaderFiles("shaders", ["Adv/AlphaBlend"]));
+};
+
+const expectLine = (r, text) => {
+  assert.equal(r.status, 1, r.lines.join("\n"));
+  assert.ok(r.lines.some((l) => l.includes(text)), `"${text}" in:\n${r.lines.join("\n")}`);
+};
+
+test("models: the manifest's model manifests, valid as models; live2d/ holds their files alone", () => {
+  const ok = validate(withModel);
+  assert.equal(ok.status, 0, ok.lines.join("\n") + ok.stderr);
+  assert.deepEqual(ok.lines, ["1/1 models valid", "1/1 stories valid"]);
+  assert.equal(validate((p) => { withModel(p); p.modelsIndex = true; }).status, 0);
+  assert.equal(validate((p) => { withModel(p); p.index = false; }).status, 0);
+  assert.equal(validate((p) => { withModel(p, { masked: false, motionSync: true }); }).status, 0);
+  // the manifest's models and story.json's
+  failsWith((p) => { withModel(p); p.man.models = {}; p.index = false; }, `story.json: models.${ADDRESS}: model m1 is not in the manifest's models`);
+  failsWith((p) => { withModel(p); p.common["story.json"].models = {}; }, "manifest: models.m1: no model address of story.json names it");
+  failsWith((p) => { withModel(p); p.common["story.json"].models = {}; }, `episode.json: row 3: model ${ADDRESS} is not in story.json models`);
+  failsWith((p) => { withModel(p); p.man.models = { m1: "models/other.json" }; p.index = false; }, "manifest: models.m1: models/other.json, expected models/m1.json");
+  failsWith((p) => {
+    withModel(p);
+    p.man.models = { m1: "models/m1.json", m2: "models/m2.json" };
+    p.index = false;
+    p.common["story.json"].models["Character/Live2D/g/m2/model/m2"] = "m2";
+  }, "manifest: models.m2: models/m2.json missing");
+  failsWith((p) => {
+    withModel(p);
+    p.models.m0 = modelFiles("m0");
+    p.man.models = { m1: "models/m1.json", m0: "models/m0.json" };
+    p.common["story.json"].models["Character/Live2D/g/m0/model/m0"] = "m0";
+  }, "manifest: models: keys not sorted");
+  failsWith((p) => { withModel(p); p.modelsIndex = []; }, "manifest: models.m1: not in models.json");
+  failsWith((p) => { withModel(p); p.index = (e) => { e.size.models += 1; }; }, "stories.json: size");
+  // no story file under live2d/
+  failsWith((p) => { withModel(p); p.common["live2d/m1/model.json"] = {}; }, "manifest: files: live2d/m1/model.json: live2d/ holds the files of the models");
+  failsWith((p) => { withModel(p); p.groups.en["live2d/m1/x.json"] = {}; }, "manifest: languages.en: live2d/m1/x.json: live2d/ holds");
+  // a model manifest that is not a valid model fails the model and the story
+  const bad = validate((p) => { withModel(p); p.models.m1["extra.json"] = {}; });
+  assert.equal(bad.status, 1);
+  assert.ok(bad.lines.includes("FAIL m1") && bad.lines.includes("FAIL 7"), bad.lines.join("\n"));
+  assert.ok(bad.lines.some((l) => l.startsWith("models/m1.json: not a valid model (1 problem): extra.json: listed but read by neither")),
+            bad.lines.join("\n"));
+  failsWith((p) => { withModel(p); p.models.m1["model.json"].motionSync = true; },
+            "model.json: motionSync true, the prefab's root has no MotionSync controller with a CRI audio input");
+});
+
+test("root: the site root seen from the manifest, ../../ for a region's own", () => {
+  const r = validate((p) => { withModel(p); p.where = "stories/tw/7.json"; p.man.root = "../../"; });
+  assert.equal(r.status, 0, r.lines.join("\n") + r.stderr);
+  failsWith((p) => { withModel(p); p.where = "stories/tw/7.json"; }, 'manifest: root "../", the site root from stories/tw/7.json is "../../"');
+  failsWith((p) => { p.man.root = "../../"; }, 'manifest: root "../../", the site root from stories/7.json is "../"');
+});
+
+test("models: the variants the story renderer draws with at every quality", () => {
+  // model.json format 1: valid for the model viewer without the quality-4 variants, but not for a story
+  const r = validate((p) => withModel(p, { format: 1, storyLights: false }));
+  assert.equal(r.status, 1);
+  assert.ok(r.lines.includes("1/1 models valid") && r.lines.includes("0/1 stories valid"), r.lines.join("\n"));
+  const lit = "Live2D Cubism/Lit-URP-ADV-optimize";
+  assert.ok(r.lines.includes(`models/m1.json: shaders/shaders.json: ${lit}: no variant for [_ADDITIONAL_LIGHTS_VERTEX] (the story renderer's keywords at quality 4)`),
+            r.lines.join("\n"));
+  assert.ok(r.lines.some((l) => l.includes("no variant for [CUBISM_MASK_ON _ADDITIONAL_LIGHTS_VERTEX]")), r.lines.join("\n"));
+  assert.equal(validate((p) => withModel(p, { format: 1 })).status, 0);
+  // model.json format 2 needs them for the model itself
+  const m = validate((p) => withModel(p, { storyLights: false }));
+  assert.ok(m.lines.includes("FAIL m1") && m.lines.includes("0/1 models valid"), m.lines.join("\n"));
+});
+
+test("encoded assets: gzip and brotli, decoded and checked against their name, size and stored length", () => {
+  for (const encoding of ["gzip", "br"]) {
+    const { dir, man } = buildSite((p) => { withModel(p); p.encoding = encoding; });
+    fs.rmSync(dir, { recursive: true, force: true });
+    const ext = encoding === "gzip" ? ".gz" : ".br";
+    assert.ok(Object.values(man.files).some((f) => f.asset && f.asset.endsWith(`.json${ext}`) && f.stored < f.size));
+    assert.ok(!Object.values(man.files).some((f) => /\.(png|flac)\.(gz|br)$/.test(f.asset || "")));
+    assert.deepEqual(schema("story-manifest")(man), []);
+    const r = validate((p) => { withModel(p); p.encoding = encoding; });
+    assert.equal(r.status, 0, r.lines.join("\n") + r.stderr);
+    assert.deepEqual(r.lines, ["1/1 models valid", "1/1 stories valid"]);
+  }
+  const gz = (p) => { withModel(p); p.encoding = "gzip"; };
+  const rewrite = (dir, man) => fs.writeFileSync(path.join(dir, "stories", "7.json"), JSON.stringify(man));
+  const epi = (man) => man.files["episode.json"];
+  // the stored length is the file's
+  expectLine(validateBuilt(gz, (dir, man) => { epi(man).stored += 1; rewrite(dir, man); }), "bytes, manifest stored");
+  // the bytes are gzip data that decodes to the named content of `size` bytes
+  expectLine(validateBuilt(gz, (dir, man) => { fs.writeFileSync(path.join(dir, epi(man).asset), Buffer.alloc(epi(man).stored, 7)); }),
+             "not gzip data");
+  expectLine(validateBuilt(gz, (dir, man) => {
+    const f = epi(man), other = encode(Buffer.alloc(f.size, 0x20), "gzip");
+    fs.writeFileSync(path.join(dir, f.asset), other); f.stored = other.length; rewrite(dir, man);
+  }), "content SHA-256 is");
+  expectLine(validateBuilt(gz, (dir, man) => {
+    const f = epi(man), other = encode(Buffer.alloc(f.size + 1, 0x20), "gzip");
+    fs.writeFileSync(path.join(dir, f.asset), other); f.stored = other.length; rewrite(dir, man);
+  }), "bytes decoded, manifest");
+  // stored exactly on encoded assets, less than size, of a compressible extension
+  expectLine(validateBuilt(undefined, (dir, man) => { epi(man).stored = epi(man).size - 1; rewrite(dir, man); }),
+             "on an asset that is not encoded");
+  expectLine(validateBuilt(undefined, (dir, man) => {
+    const text = Buffer.from("{}"), z = encode(text, "gzip"), asset = `assets/${sha256(text)}.json.gz`;
+    fs.writeFileSync(path.join(dir, asset), z);
+    man.files["extra.json"] = { asset, size: text.length, stored: z.length }; rewrite(dir, man);
+  }), "is not less than size 2");
+  expectLine(validateBuilt(undefined, (dir, man) => {
+    const b = Buffer.concat([fs.readFileSync(path.join(dir, man.files["ui/textures/sprites.png"].asset)), Buffer.alloc(4096)]);
+    const z = encode(b, "gzip"), asset = `assets/${sha256(b)}.png.gz`;
+    fs.writeFileSync(path.join(dir, asset), z);
+    man.files["ui/textures/big.png"] = { asset, size: b.length, stored: z.length }; rewrite(dir, man);
+  }), ".png files are stored as they are, not encoded");
+  expectLine(validateBuilt(undefined, (dir, man) => {
+    const f = epi(man), z = encode(fs.readFileSync(path.join(dir, f.asset)), "gzip");
+    fs.writeFileSync(path.join(dir, `${f.asset}.gz`), z);
+    man.files["episode.json"] = { asset: `${f.asset}.gz`, size: f.size }; rewrite(dir, man);
+  }), "an encoded asset without stored");
+});
+
+test("the schemas: stored exactly with a .gz / .br asset, parts of four items, manifest root and models, story.json models", () => {
+  const S = schema("story-manifest"), { dir, man } = buildSite(withModel);
+  const story = JSON.parse(fs.readFileSync(path.join(dir, man.files["story.json"].asset), "utf8"));
+  fs.rmSync(dir, { recursive: true, force: true });
+  const a = "a".repeat(64), withFiles = (files) => ({ ...man, files });
+  assert.deepEqual(S(man), []);
+  assert.deepEqual(S(withFiles({ "x.json": { asset: `assets/${a}.json.gz`, size: 10, stored: 5 },
+                                 "y.moc3": { asset: `assets/${a}.moc3.br`, size: 10, stored: 5 },
+                                 "z.json": { parts: [["k", `assets/${a}.json`, 3], ["l", `assets/${a}.json.gz`, 30, 20]], size: 40 } })), []);
+  for (const bad of [{ "x.json": { asset: `assets/${a}.json.gz`, size: 10 } },
+                     { "x.json": { asset: `assets/${a}.json`, size: 10, stored: 5 } },
+                     { "x.json": { asset: `assets/${a}.json.zst`, size: 10, stored: 5 } },
+                     { "z.json": { parts: [["k", `assets/${a}.json`, 3, 2]], size: 3 } },
+                     { "z.json": { parts: [["k", `assets/${a}.json.gz`, 3]], size: 3 } }])
+    assert.ok(S(withFiles(bad)).length > 0, JSON.stringify(bad));
+  assert.ok(S({ ...man, root: "./" }).some((e) => e.includes("/root")));
+  assert.ok(S({ ...man, models: { m1: "live2d/m1.json" } }).some((e) => e.includes("/models/m1")));
+  const { root, models, ...legacy } = man;
+  assert.equal(root, "../");
+  assert.ok(S({ ...legacy, models }).length > 0);                          // format /2 needs root and models
+  assert.ok(S({ ...legacy, root }).length > 0);
+  assert.deepEqual(S({ ...legacy, format: "ournotes.story-manifest/1" }), []);
+  assert.deepEqual(schema("story")(story), []);
+  assert.deepEqual(schema("story")({ ...story, modelsDir: "../live2d" }), []);
+  assert.ok(schema("story")({ ...story, models: { [ADDRESS]: { dir: "live2d/m1" } } }).some((e) => e.includes("/models/")));
+});
+
+// ------------------------------------------------------------------------------------------------ manifest format /1
+// a story of manifest format /1: the model's files among its common files (live2d/m1/), story.json models naming them
+// by {dir, moc3, prefab}, the story's shaders holding the Lit and mask variants, scene.json resources
+const withEmbeddedModel = (p) => {
+  withModel(p);
+  const files = p.models.m1;
+  delete p.models.m1;
+  p.man.format = "ournotes.story-manifest/1";
+  delete p.man.root;
+  for (const k of ["m1.moc3", "m1.prefab.json", "textures/texture_00.png"]) p.common[`live2d/m1/${k}`] = files[k];
+  for (const [k, v] of Object.entries(files)) if (k.startsWith("shaders/")) p.common[k] = v;
+  const sh = p.common["shaders/shaders.json"];
+  p.common["shaders/shaders.json"] = [...sh, ...shaderIndex(["Adv/AlphaBlend"])];
+  p.common["story.json"].models = { [ADDRESS]: { dir: "live2d/m1", moc3: "m1.moc3", prefab: "m1.prefab.json" } };
+  p.common["scene.json"].resources = files["model.json"].resources;
+};
+
+test("manifest format /1: the models' files among the story's, drawn with the story's shaders", () => {
+  const { dir, man } = buildSite(withEmbeddedModel);
+  const index = JSON.parse(fs.readFileSync(path.join(dir, "stories.json"), "utf8"));
+  const story = JSON.parse(fs.readFileSync(path.join(dir, man.files["story.json"].asset), "utf8"));
+  fs.rmSync(dir, { recursive: true, force: true });
+  assert.deepEqual(schema("story-manifest")(man), []);
+  assert.deepEqual(schema("stories")(index), []);
+  assert.deepEqual(Object.keys(index.stories[0].size), ["common", "languages"]);
+  assert.deepEqual(schema("story")(story), []);
+  const r = validate(withEmbeddedModel);
+  assert.equal(r.status, 0, r.lines.join("\n") + r.stderr);
+  assert.deepEqual(r.lines, ["1/1 stories valid"]);
+  assert.equal(validate((p) => { withEmbeddedModel(p); p.encoding = "gzip"; }).status, 0);
+  // the story's shaders hold a variant per drawable material
+  failsWith((p) => {
+    withEmbeddedModel(p);
+    const lit = p.common["shaders/shaders.json"][0];
+    lit.variants = lit.variants.filter((v) => v.keywords.join(" ") !== "CUBISM_MASK_ON");
+  }, "shaders/shaders.json: Live2D Cubism/Lit-URP-ADV-optimize: no variant for [CUBISM_MASK_ON]");
+  failsWith((p) => { withEmbeddedModel(p); delete p.common["live2d/m1/m1.moc3"]; }, `story.json: models.${ADDRESS}: live2d/m1/m1.moc3 is not a common file`);
+  failsWith((p) => { withEmbeddedModel(p); delete p.common["live2d/m1/textures/texture_00.png"]; }, "live2d/m1/textures/texture_00.png: texture of a drawable not in the manifest");
+  // each format names its models in its own form
+  failsWith((p) => { withEmbeddedModel(p); p.common["story.json"].models = { [ADDRESS]: "m1" }; }, `story.json: models.${ADDRESS}: not {dir, moc3, prefab}`);
+  failsWith((p) => { withModel(p); p.common["story.json"].models = { [ADDRESS]: { dir: "live2d/m1", moc3: "m1.moc3", prefab: "m1.prefab.json" } }; },
+            `story.json: models.${ADDRESS}: not a model id`);
+  failsWith((p) => { withEmbeddedModel(p); p.index = (e) => { e.size.models = 0; }; }, "stories.json: size");
 });
