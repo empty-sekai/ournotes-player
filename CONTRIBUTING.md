@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for helping. This document covers the commit conventions, the tests, and the data policy.
+Thank you for helping. This document covers the branches, the commit conventions, the tests, and the data policy.
 
 ## Data policy
 
@@ -56,6 +56,12 @@ The player follows the game's own code. Comments name the game class and method 
 lives in the engine's native code (Unity, CRI) rather than in the game's managed code is implemented from the engine's
 documented semantics and marked with a comment starting `ENGINE:`; [docs/fidelity.md](docs/fidelity.md) lists these
 places. Features of the viewer that the game does not have (the controls) are kept apart and documented as such.
+
+## Branches and pull requests
+
+Work goes to `dev` (or a branch of your own) and reaches `main` through a pull request. `main` takes rebase merges
+only, after the `test` and `conventional commit lint` checks pass; it is never force-pushed or deleted. Releases are
+tagged on `main`.
 
 ## Commits
 

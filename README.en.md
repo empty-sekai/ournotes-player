@@ -2,43 +2,38 @@
 
 [简体中文](README.md) | [English](README.en.md)
 
-ournotes-player is a browser player for BanG Dream! Our Notes charts. It reproduces the game's live screen in a web
-page with WebGL2 and WebAudio and plays one chart with auto play. It can be embedded in other pages as the custom
-element `<ournotes-player>`, as a JavaScript module, or in an iframe.
+ournotes-player reproduces three kinds of BanG Dream! Our Notes screens in a web page: the auto play of a live chart,
+story episodes (ADV, home spot talks and live result talks included), and the Live2D characters. It draws with the
+game's own shaders, running the GLSL ES 3.00 programs that Unity compiled from the data in WebGL2. Sound goes
+through WebAudio. Each of the three can be embedded in other pages as a custom element, as a JavaScript module or in
+an iframe.
 
 This is an unofficial fan project, not affiliated with the game's developer, publisher or operator. The repository
-and the npm package contain no game assets: the player reads chart data prepared in the
-[data format](docs/data-format.md), supplied by the user; the [nnnotes](https://github.com/MetaSekaiLab/nnnotes)
-toolkit produces that data from the user's own game files. BanG Dream! and related names and trademarks belong to
-their respective owners.
+and the npm package contain no game assets: the player reads data prepared in the data formats
+([live and Live2D](docs/data-format.md), [stories](docs/story-data-format.md)), supplied by the user; the
+[nnnotes](https://github.com/MetaSekaiLab/nnnotes) toolkit produces that data from the user's own game files.
+BanG Dream! and related names and trademarks belong to their respective owners.
 
-## What it reproduces
+## Components
 
-- The 3D lane and stage (the game's LightWeight background mode), notes, hold lines, guide lines and simultaneous-note
-  lines;
-- hit effects and particles;
-- the judgement and combo UI;
-- the game's own shaders: the GLSL ES 3.00 programs Unity compiled, read from the data and run in WebGL2, including
-  the URP post-processing;
-- the music and the note sound effects, with the chart clock following the audio clock.
+| | Live charts | Stories | Live2D models |
+|---|---|---|---|
+| Custom element | `<ournotes-player>` | `<ournotes-story>` | `<ournotes-live2d>` |
+| Modules | `ournotes-player`, `ournotes-player/element` | `ournotes-player/story`, `ournotes-player/story/element` | `ournotes-player/live2d`, `ournotes-player/live2d/element` |
+| Main class | `ChartPlayer` | `StoryPlayer` | `ModelPlayer` |
+| Browser bundles (`dist/`) | `ournotes-player.*` | `ournotes-player.story.*` | `ournotes-player.live2d.*` |
+| The page loads | — | Live2D Cubism Core; the MotionSync Core for lip sync; a Spine runtime for home spot talks | Live2D Cubism Core |
+| Docs | [api.md](docs/api.md) | [story.md](docs/story.md) | [live2d.md](docs/live2d.md) |
 
-It plays the way the game's auto play does: every judgement Perfect, default options, a 60 fps simulation in float32
-arithmetic. What matches the game frame for frame and what is a feature of the player is listed in
-[docs/fidelity.md](docs/fidelity.md).
+Importing a `…/element` module defines its custom element; it exports the same API as the module without
+`/element`. Every browser bundle comes in three forms: the ESM API, an ESM module that defines the element, and a
+classic script that defines the element and exposes a global (`OurnotesPlayer`, `OurnotesStory`, `OurnotesLive2D`).
+Each form also comes as `.min.js`, with source maps. The live chart entry points do not include the story and
+Live2D code.
 
-## Viewer controls
-
-The control bar holds the viewer controls: play / pause, the position with seeking, the playback speed (0.5–1.5×),
-then the note speed (− / + step it by 0.1, with Shift by 1, as the game's note speed buttons before a live do; the value
-can also be typed) and a Settings button that opens the settings panel; it hides while playing and shows on pointer movement, a tap or a key. The settings panel has the game's own Live settings (note speed, judgement and note timing, lane and UI display,
-volumes, ...) in the game's groups, with the game's ranges and defaults; it lists the settings the chart's data
-supports (see [docs/api.md](docs/api.md#live-settings)). The controls are in five languages (English, Japanese,
-Korean, Simplified and Traditional Chinese) and follow the page's language. Keyboard, while the player has the focus:
-Space or K play / pause, Left / Right back / forward 5 s, Up / Down playback speed, [ / ] note speed −0.1 / +0.1 (with
-Shift ±1), Escape closes the settings panel.
-
-A seek re-simulates the chart frame by frame from the start (or from the current position) to the target: judgements,
-combo, notes and UI are those of an uninterrupted run at that time.
+Live2D Cubism Core, the MotionSync Core and the Spine runtime belong to their owners and come under their own
+licenses. The repository, the npm package and the bundles do not include them; the page loads them before it creates
+a player.
 
 ## Quick start
 
@@ -48,21 +43,29 @@ npm install ournotes-player
 
 Installing from GitHub (`npm install github:empty-sekai/ournotes-player`) builds `dist/` during the install.
 
-Custom element, with a bundler:
-
-```js
-import "ournotes-player/element";
-```
-
-```html
-<ournotes-player src="https://example.org/site/charts/100001_expert.json" controls></ournotes-player>
-```
-
-Without a bundler, from a CDN (once the package is on npm; until then, serve the installed package's `dist/` file
-with the page):
+A live chart. With a bundler, use `import "ournotes-player/element";`. Without one, load the bundle from a CDN:
 
 ```html
 <script type="module" src="https://cdn.jsdelivr.net/npm/ournotes-player@0.1/dist/ournotes-player.element.min.js"></script>
+<ournotes-player src="https://example.org/site/charts/100001_expert.json" controls></ournotes-player>
+```
+
+A story:
+
+```html
+<script src="live2dcubismcore.min.js"></script>
+<script src="live2dcubismmotionsynccore.min.js"></script>
+<script type="module" src="https://cdn.jsdelivr.net/npm/ournotes-player@0.1/dist/ournotes-player.story.element.min.js"></script>
+<ournotes-story src="https://example.org/site/stories/10462.json" lang="ja"></ournotes-story>
+```
+
+A Live2D model:
+
+```html
+<script src="https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js"></script>
+<script type="module" src="https://cdn.jsdelivr.net/npm/ournotes-player@0.1/dist/ournotes-player.live2d.element.min.js"></script>
+<ournotes-live2d src="https://example.org/site/models/adv_live2d_rana_003_casual_spring_01.json"
+                 style="width: 360px"></ournotes-live2d>
 ```
 
 JavaScript module:
@@ -76,33 +79,80 @@ const player = await ChartPlayer.create(document.getElementById("stage"), {
 button.onclick = () => player.play();   // browsers start audio only from a user gesture
 ```
 
-iframe: [examples/iframe.html](examples/iframe.html) is a page holding one player, ready to embed with an `<iframe>`.
+Example pages. Open them with any static server at the repository root:
 
-Chart list: [examples/chart-list](examples/chart-list) lists a site's `charts.json` and plays the chosen chart; a site of several regions or languages switches with `?region=&lang=`.
+| Page | Contents |
+|---|---|
+| [examples/basic.html](examples/basic.html) | one `<ournotes-player>` |
+| [examples/iframe.html](examples/iframe.html) | a page holding one player, ready to embed with an `<iframe>` (`?src=`) |
+| [examples/chart-list](examples/chart-list) | lists a site's `charts.json` and plays the chosen chart; a site of several regions or languages switches with `?region=&lang=` |
+| [examples/story-list](examples/story-list) | lists a site's `stories.json` and plays the chosen episode |
+| [examples/story](examples/story) | plays one episode (`?story=` or `?src=`). Live2D's two files come from `?core=` and `?motionsync=`, the Spine runtime for home talks from `?spine=` |
+| [examples/live2d](examples/live2d) | lists a site's `models.json`, shows the chosen model and plays its motions and expressions |
 
-- API: [docs/api.md](docs/api.md)
-- Embedding and hosting the data: [docs/embedding.md](docs/embedding.md)
-- Data format: [docs/data-format.md](docs/data-format.md)
-- Performance: [docs/performance.md](docs/performance.md)
+## Live charts
 
-## Live2D models
+`<ournotes-player>` plays one chart the way the game's auto play does. It draws:
 
-The package also holds a Live2D model viewer, `ournotes-player/live2d` (custom element `<ournotes-live2d>`): it shows
-one character the way the game's story screen runs it (idle motion, auto eye blink, breath, physics), plays its motions
-and sets its expressions, drawing with the game's own Live2D shaders from the data. It needs Live2D Cubism Core for Web
-(Live2D's `live2dcubismcore.min.js`, under Live2D Inc.'s license), which the page loads itself; this repository, the
-npm package and the bundles do not include it. See [docs/live2d.md](docs/live2d.md).
+- the 3D lane and stage (the game's LightWeight background mode), notes, hold lines, guide lines and
+  simultaneous-note lines;
+- hit effects and particles;
+- the judgement and combo UI;
+- the URP post-processing.
+
+It plays the music and the note sound effects, and the chart clock follows the audio clock. The run matches the
+game's auto play: every judgement Perfect, default options, a 60 fps simulation in float32 arithmetic.
+
+The control bar has:
+
+- play / pause, the position with seeking, and the playback speed (0.5–1.5×);
+- the note speed: − / + step it by 0.1, with Shift by 1, and the value can also be typed;
+- a settings panel with the game's own Live settings (note speed, judgement and note timing, lane and UI display,
+  volumes, ...). The settings are in the game's groups, with the game's ranges and defaults, and the panel lists only
+  those the chart's data supports.
+
+The controls are in five languages (English, Japanese, Korean, Simplified and Traditional Chinese) and follow the
+page's language; the keyboard shortcuts are in [docs/api.md](docs/api.md).
+
+A seek re-simulates the chart frame by frame to the target. Judgements, combo, notes and UI are those of an
+uninterrupted run at that time.
+
+What matches the game frame for frame and what is a feature of the player is listed in
+[docs/fidelity.md](docs/fidelity.md).
 
 ## Stories
 
-The package also plays the game's story episodes (ADV): `ournotes-player/story` (custom element `<ournotes-story>`)
-runs an episode's command rows on the game's playback loop, with the stage, the Live2D characters, the camera and
-post-processing, the talk window, the rule transitions, music, sound effects and voices. Home spot talks and live
-result talks play in their host screen. It needs Live2D Cubism Core for Web and, for the lip sync of models with a
-MotionSync controller, the CRI Core of Live2D's MotionSync plugin; the page loads both itself. An episode that uses a
-part the player does not reproduce is refused before it starts, with an error that names that part. The exception is
-a UIParticle graphic on a still, which is found only while drawing: the episode stops at that frame
-([docs/story.md](docs/story.md#not-reproduced)). The story data comes from nnnotes (`nnnotes web --all-stories`).
+`<ournotes-story>` plays one episode the way the game's story screen does: it runs the episode's command rows on the
+game's playback loop. It draws:
+
+- the stage: background, lights and volumes;
+- the Live2D characters, with their motions, expressions, look and lip sync;
+- the camera, focus, blur and post-processing;
+- frames, stills, particle effects, flashes and the chat phone;
+- the talk window, with its typewriter, speaker names, location caption and title;
+- the rule transitions.
+
+It plays the music, sound effects and voices. Every one of the game's 68 story commands has a handler. The player
+also covers:
+
+- **Home spot talks and live result talks.** They play through the game's simple story player in their host screen:
+  the 3D spot room with its Spine characters for a home talk, the reward phase of the result screen for a live result
+  talk ([docs/story-simple.md](docs/story-simple.md)).
+- **Videos.** The videos of Movie and Clip rows play with their own sound at the game's movie volume; the music,
+  sound effect and voice volumes do not change it. A video can be paused, and its bar seeks it.
+- **The control bar**, with two kinds of item:
+  - the story menu's items: next, auto, fast-forward (×1 → ×1.5 → ×1.7 → ×2), skip (with a confirmation) and the
+    three volumes;
+  - the player's own items: play / pause, a line bar that seeks by line, and a video bar.
+- **Languages.** The story text comes in the languages the data holds (Japanese, English, Traditional and Simplified
+  Chinese, Korean). The language can change during playback; the episode then restarts at the current line. The
+  control bar follows the story's language unless `ui-lang` sets it.
+- **Film grain.** It is off by default; the `film-grain` attribute draws it at the game's intensity
+  ([#1](https://github.com/empty-sekai/ournotes-player/issues/1)).
+
+An episode that uses a part the player does not reproduce is refused before it starts, with an error that names that
+part; it never plays halfway. The one exception is a UIParticle graphic on a still. It is found only while drawing,
+and the episode stops at that frame ([docs/story.md](docs/story.md#episodes-the-player-refuses)).
 
 Checked on the 946 episodes of one region's data, without sound files (English text unless stated):
 
@@ -114,10 +164,48 @@ Checked on the 946 episodes of one region's data, without sound files (English t
   both runs.
 - Every file a story reads is listed in its manifest.
 
+## Live2D models
+
+`<ournotes-live2d>` shows one character the way the game's story screen runs it: idle motion, auto eye blink, breath
+and physics. It plays the model's motions and sets its expressions, drawing with the game's own Live2D shaders from
+the data. It is a model viewer; the story's stage, camera and text are not part of it. See
+[docs/live2d.md](docs/live2d.md).
+
+## Data
+
+The player reads a static site:
+
+- `charts.json` and `charts/`;
+- `models.json` and `models/`;
+- `stories.json` and `stories/`;
+- the content-addressed asset files.
+
+nnnotes builds such a site from the user's own game files, for example:
+
+```sh
+nnnotes web out/site --all --all-live2d --all-stories --player <ournotes-player dir>
+```
+
+- Hosting (paths, CORS, compression, caching): [docs/embedding.md](docs/embedding.md#hosting-the-data)
+- Validation: `npm run validate-data -- <site dir>` checks the charts, models and stories against the data formats and
+  the schemas in `schema/`.
+
+## Documentation
+
+| Topic | Documents |
+|---|---|
+| Embedding and hosting, several players, mobile | [embedding.md](docs/embedding.md) |
+| Live charts: API / data format / fidelity | [api.md](docs/api.md) / [data-format.md](docs/data-format.md) / [fidelity.md](docs/fidelity.md) |
+| Stories: API and fidelity / feature modules / simple story player / data format | [story.md](docs/story.md) / [story-features.md](docs/story-features.md) / [story-simple.md](docs/story-simple.md) / [story-data-format.md](docs/story-data-format.md) |
+| The mouths of models without a MotionSync controller (CRI Lips analysis) | [crilips.md](docs/crilips.md) |
+| Live2D models: API and behaviour / data format / fidelity | [live2d.md](docs/live2d.md) / [data-format.md](docs/data-format.md#live2d-models) / [fidelity.md](docs/fidelity.md#live2d-models) |
+| Performance | [performance.md](docs/performance.md) |
+
 ## Browser support
 
-WebGL2 and WebAudio (the custom element also needs Custom Elements and ResizeObserver), and `decodeAudioData` support
-for FLAC and AAC in MP4. Tested in Chromium-based browsers.
+WebGL2, WebAudio and ES2022 modules; the custom elements also need Custom Elements and ResizeObserver. Audio needs
+`decodeAudioData` support for FLAC and AAC in MP4, and the story videos need WebM playback (VP9 and Opus). Tested in
+Chromium-based browsers.
 
 ## Development
 
@@ -132,7 +220,7 @@ npm run validate-data -- <site dir> [chart id ...]              # validates a si
 OURNOTES_DATA=<site dir> npm run test:data                      # opt-in: runs the player in Node on real chart data
 ```
 
-Commit conventions, tests and the data policy are in [CONTRIBUTING.md](CONTRIBUTING.md).
+Branches, commit conventions, tests and the data policy are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
