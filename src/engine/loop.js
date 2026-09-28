@@ -26,12 +26,17 @@ import { Tweens } from "./tween.js";
 // Continuations resumed in a phase run before the next phase starts: every phase
 // ends with a drain that waits for the microtask queue to empty.
 
-// One MessageChannel for every drain, each drain a message of its own (a macrotask: the microtasks queued before it
-// have all run when it arrives); a channel made per drain costs far more than the message. In Node the port keeps the
-// process alive only while a drain waits.
+// A drain is a task of its own (a macrotask: the microtasks queued before it have all run when it arrives). Where the
+// page has scheduler.postTask it is a user-blocking task, which the browser runs before a rendering update that is due:
+// a message task waits for that update, so each phase of a step would wait out a frame, and a page whose frames cost
+// more than a few milliseconds would step far slower than real time. Elsewhere (Node, pages without postTask) it is a
+// message on one MessageChannel for every drain (a channel made per drain costs far more than the message); in Node
+// the port keeps the process alive only while a drain waits.
+const noop = () => {};
+const drainTask = () => scheduler.postTask(noop, { priority: "user-blocking" });
 let drainPorts = null;
 const drainWaits = [];
-export const drain = () => new Promise((res) => {
+const drainMessage = () => new Promise((res) => {
   if (!drainPorts) {
     const ch = new MessageChannel();
     ch.port1.onmessage = () => {
@@ -44,6 +49,8 @@ export const drain = () => new Promise((res) => {
   drainWaits.push(res);
   drainPorts.port2.postMessage(0);
 });
+export const drain = typeof scheduler === "object" && scheduler && typeof scheduler.postTask === "function" ? drainTask
+                                                                                                      : drainMessage;
 
 // (float)TimeSpan.FromSeconds(sec).TotalSeconds: TimeSpan.Interval(sec, 1000) rounds to whole milliseconds (half away
 // from zero, then truncated), TotalSeconds = ticks x 1e-7 in double. NaN (ArgumentException) and a value outside

@@ -78,3 +78,25 @@ test("a drain resolves after every microtask queued before it, however deep; dra
   await Promise.all([a, b]);
   assert.deepEqual(log, ["micro", "chain", "a", "b"]);
 });
+
+test("on a page with scheduler.postTask a drain is a user-blocking task, with the same order", async () => {
+  const saved = globalThis.scheduler, priorities = [];
+  // a stand-in scheduler: each task a macrotask of its own, in the order posted
+  globalThis.scheduler = { postTask: (fn, { priority }) => {
+    priorities.push(priority);
+    return new Promise((res) => setImmediate(() => res(fn())));
+  } };
+  try {
+    const { drain: taskDrain } = await import("../../src/engine/loop.js?postTask");
+    const log = [];
+    const chain = (n) => (n ? Promise.resolve().then(() => chain(n - 1)) : log.push("chain"));
+    chain(50);
+    const a = taskDrain().then(() => log.push("a")), b = taskDrain().then(() => log.push("b"));
+    queueMicrotask(() => log.push("micro"));
+    await Promise.all([a, b]);
+    assert.deepEqual(log, ["micro", "chain", "a", "b"]);
+    assert.deepEqual(priorities, ["user-blocking", "user-blocking"]);
+  } finally {
+    if (saved === undefined) delete globalThis.scheduler; else globalThis.scheduler = saved;
+  }
+});
