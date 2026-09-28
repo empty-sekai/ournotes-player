@@ -5,6 +5,7 @@ import { Tweens } from "../engine/tween.js";
 import { UIAnimator, UIClip, UIDraw, UIError, UIImage, UINode, UISprite, UITween, uiCanvasSize } from "../engine/ugui.js";
 import { TMPText, UIGradientMod, tmpSpriteAsset, tmpUnsupported } from "../engine/uitext.js";
 import { ADV_CANVAS_LAYER, StoryCommandError, createStoryUILayers } from "./interfaces.js";
+import { StoryFontAssets } from "./ui-fonts.js";
 import { StoryLayout } from "./ui-layout.js";
 import { StoryText, countedText, shownText } from "./ui-ruby.js";
 import { StoryTalkWindow, removeTagsWithRuby } from "./ui-talk.js";
@@ -103,7 +104,7 @@ export class StoryUI {
       if (!t) throw new UIError(`sprite ${n}: texture ${s.texture} not in the data`);
       return [n, new UISprite(n, s, t)];
     }));
-    this._fonts = new Map();
+    this._fonts = new StoryFontAssets(fonts, doc, language);   // open fonts: the game's line metrics
     this._clipCache = Object.fromEntries(Object.entries(doc.clips).map(([k, c]) => [k, new UIClip(c)]));
     this.animators = [];
     for (const n of byPath.values()) {
@@ -252,12 +253,9 @@ export class StoryUI {
 
   // ------------------------------------------------------------ text host (engine/uitext.js)
   fontAsset(name) {
-    if (!this._fonts.has(name)) {
-      const f = this.fonts.fonts[name];
-      if (!f) throw new UIError(`font asset ${name} not in ui/fonts.json`);
-      this._fonts.set(name, { name, ...f, textureSize: this.fonts.textures, lineBreaking: this.fonts.lineBreaking || null });
-    }
-    return this._fonts.get(name);
+    const f = this._fonts.get(name);
+    if (!f) throw new UIError(`font asset ${name} not in ui/fonts.json`);
+    return f;
   }
 
   material(name) { return this._materialInstances.get(name) || this.fonts.materials[name] || null; }

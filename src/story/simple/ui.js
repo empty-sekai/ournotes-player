@@ -4,6 +4,7 @@ import { ShaderLib } from "../../engine/glsl.js";
 import { GLTex } from "../../engine/texture.js";
 import { UI_CLIP_TARGET, UIDraw, UIError, UIImage, UILayout, UIMesh, UINode, UISprite, uiCanvasSize, uiColor32 } from "../../engine/ugui.js";
 import { TMPText, UIGradientMod } from "../../engine/uitext.js";
+import { StoryFontAssets } from "../ui-fonts.js";
 import { StoryText } from "../ui-ruby.js";
 
 // The uGUI documents of the simple player: the simple talk window (UISimpleAdvTalkWindow, ui/simple/ui.json with its
@@ -128,7 +129,7 @@ export class SimpleUIDoc {
       if (!t) throw new UIError(`sprite ${name}: texture ${s.texture} not in the data`);
       return [name, new UISprite(name, s, t)];
     }));
-    this._fonts = new Map();
+    this._fonts = this.fonts ? new StoryFontAssets(this.fonts, doc, this.language) : null;   // open fonts: the game's line metrics
     const clips = Object.fromEntries(Object.entries(doc.clips || {}).map(([k, c]) => [k, new SimpleUIClip(c)]));
     this.animators = [];
     this.unbound = [];
@@ -183,12 +184,9 @@ export class SimpleUIDoc {
 
   // ------------------------------------------------------------ text host (engine/uitext.js)
   fontAsset(name) {
-    if (!this._fonts.has(name)) {
-      const f = this.fonts.fonts[name];
-      if (!f) throw new UIError(`font asset ${name} not in the font data`);
-      this._fonts.set(name, { name, ...f, textureSize: this.fonts.textures, lineBreaking: this.fonts.lineBreaking || null });
-    }
-    return this._fonts.get(name);
+    const f = this._fonts ? this._fonts.get(name) : null;
+    if (!f) throw new UIError(`font asset ${name} not in the font data`);
+    return f;
   }
 
   material(name) { return this.fonts ? this.fonts.materials[name] || null : null; }

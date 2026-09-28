@@ -387,7 +387,7 @@ ADV screen. Keys read:
 | `dotween` | The game's DOTween defaults. |
 | `shaders` | `{ index: "shaders/shaders.json", names }`: the UI shader directory, relative to `ui/`. |
 | `language` | `mode` (`LanguageMode`), `field` (the text field), `lineSpacing` (the line spacing localized texts get). |
-| `textStyle` | `language`, `units`, `roles`: the line metrics per font role of the game's fonts (informative; the layout uses the font assets of `ui/fonts.json`). |
+| `textStyle` | `language`, `units`, `roles`: the line metrics per font role of the game's fonts. The layout uses the font assets of `ui/fonts.json`; with open fonts it takes the line height, ascent and descent of their role from here ([Fonts](#fonts-uifontsjson)). |
 
 Node records beyond the uGUI component fields:
 
@@ -447,7 +447,11 @@ language: font assets holding exactly the characters the episode shows in that l
 materials and, per text node, the font asset and material it uses. The player lays text out with TextMeshPro's rules
 using these glyph metrics and draws it with the distance-field shader the material names (in `ui/shaders/`). The
 format is the same whether the glyphs were generated from a font file (`source` `open`) or taken from the game's font
-assets (`game`).
+assets (`game`). With open fonts, a font asset that the texts of a font role use (the role's `fontAsset` in
+`ui/languages.json`, or the font asset of a text node whose `textStyle.fontRole` names the role) is laid out with the
+line height, ascent and descent of the game's font of that role (`ui.json` `textStyle.roles`) in place of its own face
+info's. The language's line spacing is set for the game's fonts: English's -100 takes one em off the pitch of a font
+whose line height is 2 em, and would put the lines of a 1.448 em face 0.448 em apart.
 
 ```json
 { "format": "ournotes.story-fonts/1", "language": "en", "source": "open",
