@@ -1,10 +1,11 @@
 // UnityProgram.apply's sampler binding (src/engine/glsl.js): a cube sampler takes a cube map, every other sampler a 2D
 // texture, and a texture of the other kind is refused; vector values upload the uniform's component count. UnityProgram.reads names the program's inputs. passState /
-// applyState: a pass's Stencil block (stencilOp) drives both faces from the material's stencil properties. Synthetic
+// applyState: a pass's Stencil block (stencilOp) drives both faces from the material's stencil properties. ShaderLib
+// memoizes the variant search and passState per value set. Synthetic
 // inputs only.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { GL, UnityProgram, applyState, passState } from "../../src/engine/glsl.js";
+import { GL, ShaderLib, UnityProgram, applyState, passState } from "../../src/engine/glsl.js";
 import { headlessGL } from "../../scripts/lib/headless.mjs";
 
 const program = (gl, samplers) => Object.assign(Object.create(UnityProgram.prototype), {
@@ -97,4 +98,35 @@ test("passState / applyState: the Stencil block's properties set the stencil tes
   assert.throws(() => passState(uiPass({ stencilOpBack: back }), mask), /per-face stencil ops not implemented/);
   assert.throws(() => passState(uiPass({ stencilOpFront: { ...KEEP_ALWAYS(), pass: V(0, "_StencilOpFront") } }), mask),
                 /per-face stencil ops not implemented/);
+});
+
+test("ShaderLib: program() searches a variant once per keyword set; state() is shared per value set of the named floats", () => {
+  const gl = headlessGL();
+  const assets = { json: (p) => p === "shaders/shaders.json" ? [{ name: "UI", parsed: "ui.json", variants: [] }]
+                                                          : { subShaders: [{ passes: [{ state: uiPass() }] }] } };
+  const lib = new ShaderLib(gl, "shaders", assets);
+  let searches = 0;
+  lib._program = (name, pass, keywords) => ({ name, pass, keywords, n: ++searches });
+  const a = lib.program("UI", 0, ["A", "B"]);
+  assert.equal(lib.program("UI", 0, ["A", "B"]), a);
+  assert.notEqual(lib.program("UI", 0, ["A"]), a);
+  assert.equal(searches, 2);
+
+  const mat = floats(1, 8, 2, 255, 255, 0);
+  const s = lib.state("UI", 0, mat);
+  assert.deepEqual(s, passState(uiPass(), mat));
+  assert.ok(Object.isFrozen(s) && Object.isFrozen(s.stencilFront));
+  assert.equal(lib.state("UI", 0, mat), s);                                   // the same object again
+  assert.equal(lib.state("UI", 0, { ...mat, _Unrelated: 3 }), s);             // floats the state does not name
+  mat._StencilComp = 3;                                                       // a value changed in place
+  const t = lib.state("UI", 0, mat);
+  assert.notEqual(t, s);
+  assert.deepEqual(t, passState(uiPass(), mat));
+  mat._StencilComp = 8;
+  assert.equal(lib.state("UI", 0, mat), s);
+  delete mat._Stencil;                                                        // a missing property raises as before
+  assert.throws(() => lib.state("UI", 0, mat), (e) => {
+    assert.throws(() => passState(uiPass(), mat), { message: e.message });
+    return true;
+  });
 });

@@ -218,7 +218,7 @@ export class Live2DCharacter {
       dyn.opacity[i] = d.opacities[i];
       dyn.renderOrder[i] = d.renderOrders[i];
       if (fl & CUBISM.VERTEX_POSITIONS_DID_CHANGE) {
-        dyn.pos[i] = Float32Array.from(d.vertexPositions[i]);
+        dyn.pos[i] = d.vertexPositions[i].slice();            // a copy: the Core rewrites its own array
         if (fl & CUBISM.BLEND_COLOR_DID_CHANGE) {
           const s = d.screenColors;
           dyn.screen[i] = [s[i * 4], s[i * 4 + 1], s[i * 4 + 2], s[i * 4 + 3]];
