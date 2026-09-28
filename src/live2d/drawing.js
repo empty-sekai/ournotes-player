@@ -164,7 +164,7 @@ export class Live2DDrawing {
 
   _draw(r, frame, extraKeywords) {
     const gl = this.gl, mat = r.material;
-    const kw = [...mat.keywords, ...extraKeywords];
+    const kw = extraKeywords.length ? mat.keywords.concat(extraKeywords) : mat.keywords;
     const prog = this.lib.program(LIT_SHADER, 0, kw);
     const perObject = frame.perObject(r.transform);
     prog.apply([this._mpb(r), mat.floats, mat.colors, perObject, frame.globals]);

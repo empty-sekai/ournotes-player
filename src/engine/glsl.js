@@ -146,19 +146,26 @@ export class UnityProgram {
     throw new Error(`bad uniform value ${JSON.stringify(v)}`);
   }
 
+  // the property a uniform or block member reads, kept on it (null: an unused padding member of HLSLcc, read by none)
+  static prop(u) {
+    if (u.prop === undefined) u.prop = u.name.startsWith("Xhlslcc_UnusedX") ? null : UnityProgram.propertyName(u.name);
+    return u.prop;
+  }
+
+  // a float4 value (Unity's vector properties) on a float / float2 / float3 uniform gives its leading n components
+  static lead(f, n) { return f.length === n ? f : Float32Array.from(f).subarray(0, n); }
+
   // Upload every uniform/sampler of this program from the property sheets.
   apply(sheets) {
     const gl = this.gl;
     gl.useProgram(this.program);
     for (const u of this.uniforms) {
-      const v = UnityProgram.lookup(sheets, UnityProgram.propertyName(u.name), this.label);
+      const v = UnityProgram.lookup(sheets, UnityProgram.prop(u), this.label);
       const f = UnityProgram.floats(v, 4);
-      // a float4 value (Unity's vector properties) on a float / float2 / float3 uniform gives its leading components
-      const lead = (n) => (f.length === n * u.size ? f : Float32Array.from(f).subarray(0, n * u.size));
       switch (u.type) {
-        case gl.FLOAT: gl.uniform1fv(u.loc, lead(1)); break;
-        case gl.FLOAT_VEC2: gl.uniform2fv(u.loc, lead(2)); break;
-        case gl.FLOAT_VEC3: gl.uniform3fv(u.loc, lead(3)); break;
+        case gl.FLOAT: gl.uniform1fv(u.loc, UnityProgram.lead(f, u.size)); break;
+        case gl.FLOAT_VEC2: gl.uniform2fv(u.loc, UnityProgram.lead(f, 2 * u.size)); break;
+        case gl.FLOAT_VEC3: gl.uniform3fv(u.loc, UnityProgram.lead(f, 3 * u.size)); break;
         case gl.FLOAT_VEC4: gl.uniform4fv(u.loc, f); break;
         case gl.INT: gl.uniform1iv(u.loc, Int32Array.from(f)); break;
         case gl.INT_VEC4: gl.uniform4iv(u.loc, Int32Array.from(f)); break;
@@ -169,8 +176,9 @@ export class UnityProgram {
     }
     for (const b of this.blocks) {
       for (const m of b.members) {
-        if (m.name.startsWith("Xhlslcc_UnusedX")) continue;
-        const v = UnityProgram.lookup(sheets, UnityProgram.propertyName(m.name), this.label);
+        const name = UnityProgram.prop(m);
+        if (name === null) continue;
+        const v = UnityProgram.lookup(sheets, name, this.label);
         const f = UnityProgram.floats(v, 4);
         const base = m.offset / 4;
         if (m.size > 1 || f.length > 4) {                 // arrays (incl. matrix columns): vec4 per element
@@ -203,6 +211,18 @@ export class UnityProgram {
 // (CompareFunction.Always, StencilOp.Keep)
 const STENCIL_FIELDS = ["comp", "pass", "fail", "zFail"], STENCIL_DEFAULT = [8, 0, 0, 0];
 const unnamed = (v) => !v.name || v.name === "<noninit>";
+
+// the material properties a pass state reads (its named values)
+const stateNames = (state) => {
+  const out = new Set(), add = (v) => { if (v && typeof v === "object" && !unnamed(v)) out.add(v.name); };
+  const b = state.rtBlend0;
+  for (const k of ["srcBlend", "destBlend", "srcBlendAlpha", "destBlendAlpha", "blendOp", "blendOpAlpha", "colMask"]) add(b[k]);
+  for (const k of ["zTest", "zWrite", "culling", "offsetFactor", "offsetUnits", "stencilRef", "stencilReadMask",
+                   "stencilWriteMask", "alphaToMask"]) add(state[k]);
+  for (const face of [state.stencilOp, state.stencilOpFront, state.stencilOpBack])
+    if (face) for (const k of STENCIL_FIELDS) add(face[k]);
+  return [...out];
+};
 
 // Render state of a shader pass, resolved against material floats.
 // A pass's Stencil block (Comp / Pass / Fail / ZFail) is serialized as stencilOp and applies to both faces;
@@ -247,7 +267,7 @@ export const applyState = (gl, s) => {
     gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(s.offsetFactor, s.offsetUnits);
   } else gl.disable(gl.POLYGON_OFFSET_FILL);
   // the stencil test is off for CompareFunction.Disabled (0) and for Always with every op Keep on both faces
-  const faceOff = (ops) => ops[0] === 8 && ops.slice(1).every((x) => x === 0);
+  const faceOff = (ops) => ops[0] === 8 && ops[1] === 0 && ops[2] === 0 && ops[3] === 0;
   const stencilOff = s.stencilFront[0] === 0 || s.stencilBack[0] === 0 || (faceOff(s.stencilFront) && faceOff(s.stencilBack));
   if (stencilOff) gl.disable(gl.STENCIL_TEST);
   else {
@@ -270,7 +290,9 @@ export class ShaderLib {
     GL.init(gl);
     this.index = new Map(assets.json(`${base}/shaders.json`).map((r) => [r.name, r]));
     this.parsed = new Map();
-    this.cache = new Map();
+    this.cache = new Map();             // variant file -> UnityProgram
+    this.variants = new Map();          // "name|subShader|pass|keywords" -> UnityProgram (the variant search, once)
+    this.states = new Map();            // "name|subShader|pass" -> {state, names, byValues}: passState per value set
   }
 
   info(name) {
@@ -285,6 +307,13 @@ export class ShaderLib {
   // Unity picks the variant whose keyword set equals the enabled keywords that
   // the pass declares; keywords the pass does not use are ignored.
   program(name, pass, keywords = [], subShader = 0) {
+    const key = `${name}\u0000${subShader}\u0000${pass}\u0000${keywords.join(" ")}`;
+    let prog = this.variants.get(key);
+    if (!prog) { prog = this._program(name, pass, keywords, subShader); this.variants.set(key, prog); }
+    return prog;
+  }
+
+  _program(name, pass, keywords, subShader) {
     const rec = this.index.get(name);
     if (!rec) throw new Error(`shader not packed: ${name}`);
     const vs = rec.variants.filter((v) => v.subShader === subShader && v.pass === pass);
@@ -300,8 +329,33 @@ export class ShaderLib {
     return this.cache.get(v.file);
   }
 
+  // passState of the pass against the material floats. The result depends on the floats the state names only: it is
+  // made once per set of their values and shared (frozen: callers read it).
   state(name, pass, matFloats, subShader = 0) {
-    return passState(this.info(name).subShaders[subShader].passes[pass].state, matFloats);
+    const key = `${name}\u0000${subShader}\u0000${pass}`;
+    let e = this.states.get(key);
+    if (!e) {
+      const state = this.info(name).subShaders[subShader].passes[pass].state;
+      e = { state, names: stateNames(state), byValues: new Map(), byFloats: new WeakMap() };
+      this.states.set(key, e);
+    }
+    // the same floats object with the same values as last time (a material drawn frame after frame)
+    const last = matFloats && typeof matFloats === "object" ? e.byFloats.get(matFloats) : undefined;
+    if (last && e.names.every((n, i) => matFloats[n] === last.values[i] && n in matFloats)) return last.out;
+    let vk = "";
+    for (const n of e.names) {
+      if (!matFloats || !(n in matFloats)) return passState(e.state, matFloats);     // raises as passState does
+      vk += `${matFloats[n]},`;
+    }
+    let out = e.byValues.get(vk);
+    if (!out) {
+      out = passState(e.state, matFloats);
+      Object.freeze(out.stencilFront); Object.freeze(out.stencilBack);
+      if (e.byValues.size >= 256) e.byValues.clear();               // values animated through many settings
+      e.byValues.set(vk, Object.freeze(out));
+    }
+    if (matFloats && typeof matFloats === "object") e.byFloats.set(matFloats, { values: e.names.map((n) => matFloats[n]), out });
+    return out;
   }
 
   // Shader property defaults (what CoreUtils.CreateEngineMaterial / an unset

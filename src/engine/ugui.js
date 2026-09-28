@@ -459,14 +459,15 @@ export const UIDraw = {
 
   pack(verts, n, alpha, uvw = null) {                // local-space verts -> interleaved canvas-space floats
     const m = n.matrix, out = new Float32Array(verts.length * UI_STRIDE);
-    verts.forEach((v, i) => {
-      const [x, y] = UIAffine.apply(m, v.x, v.y), o = i * UI_STRIDE;
-      out[o] = x; out[o + 1] = y; out[o + 2] = 0;
+    const m0 = m[0], m1 = m[1], m2 = m[2], m3 = m[3], m4 = m[4], m5 = m[5];     // UIAffine.apply, inlined
+    for (let i = 0; i < verts.length; i++) {
+      const v = verts[i], o = i * UI_STRIDE;
+      out[o] = m0 * v.x + m2 * v.y + m4; out[o + 1] = m1 * v.x + m3 * v.y + m5; out[o + 2] = 0;
       out[o + 3] = v.c[0] / 255; out[o + 4] = v.c[1] / 255; out[o + 5] = v.c[2] / 255; out[o + 6] = v.c[3] / 255 * alpha;
       out[o + 7] = v.u; out[o + 8] = v.v; out[o + 9] = 0; out[o + 10] = uvw ? v.w : 0;
       out[o + 11] = v.u1 || 0; out[o + 12] = v.v1 || 0;
       out[o + 13] = 0; out[o + 14] = 0; out[o + 15] = -1;          // TMP_MeshInfo default normal (0,0,-1)
-    });
+    }
     return out;
   },
 
@@ -491,15 +492,15 @@ export const UIDraw = {
     gl.bindVertexArray(buf.vao);
     gl.bindBuffer(gl.ARRAY_BUFFER, buf.vbo);
     gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STREAM_DRAW);
-    const used = new Set();
+    let used = 0;                                    // bit per attribute location
     for (const [name, loc] of Object.entries(prog.attribs)) {
       const a = UI_ATTRIBS[name];
       if (!a) throw new UIError(`${prog.label}: vertex input ${name} not provided`);
       gl.enableVertexAttribArray(loc);
       gl.vertexAttribPointer(loc, a[0], gl.FLOAT, false, UI_STRIDE * 4, a[1] * 4);
-      used.add(loc);
+      used |= 1 << loc;
     }
-    for (let loc = 0; loc < 16; loc++) if (!used.has(loc)) gl.disableVertexAttribArray(loc);
+    for (let loc = 0; loc < 16; loc++) if (!(used & (1 << loc))) gl.disableVertexAttribArray(loc);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.ibo);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STREAM_DRAW);
     gl.drawElements(gl.TRIANGLES, idx.length, gl.UNSIGNED_INT, 0);
