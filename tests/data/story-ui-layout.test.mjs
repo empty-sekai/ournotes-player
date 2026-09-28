@@ -67,21 +67,15 @@ test("story UI layout and timing", { skip: SKIP }, async () => {
   const locDone = locName !== null ? ui.showLocation(locName).then(() => { locDone.frame = loop.frameCount; }) : null;
   ui.showTalk();
   ui.setSpeakerName(speaker);
-  const typing = ui.setTalk(line);
+  const firstTyping = ui.setTalk(line);
   const plain = removeTagsWithRuby(line);
-  check("typewriter: totalLength", typing.totalLength, countRenderedCharacters(countedText(tt, P.talkText.storyText.b, plain)), 0, "tags removed");
-  check("typewriter: visible at call (frame 0)", tt.maxVisibleCharacters, 1, 0, "first character in the same frame");
-  const visibleAt = [0];
-  let bgFullAt = -1, typingDoneAt = -1;
-  const indicatorY = [], bgAlpha = [];
-  typing.finished.then(() => { typingDoneAt = loop.frameCount; });
+  let bgFullAt = -1;
+  const bgAlpha = [];
   for (let f = 1; f <= 90; f++) {
     await step();
-    while (visibleAt.length < tt.maxVisibleCharacters) visibleAt.push(f);
     const a = P.background.canvasGroup.alpha;
     if (f <= 6) bgAlpha.push(a);
     if (bgFullAt < 0 && a >= 1) bgFullAt = f;
-    if (P.nextIndicator.activeInHierarchy && indicatorY.length < 3) indicatorY.push([f, P.nextIndicator.anchoredPosition.y]);
     if (f === 30) {
       // --- layout at frame 30 (1.0 s): location and title in their hold phase --------------------------------------
       for (const [pw, ph] of [[2340, 1080], [2400, 1080]]) {
@@ -121,22 +115,6 @@ test("story UI layout and timing", { skip: SKIP }, async () => {
     check(`TalkBackground alpha frame ${i + 1}`, a, i + 1 >= 6 ? 1 : -k * (k - 2), 1e-6, "OutQuad");
   });
   check("TalkBackground alpha 1 at frame", bgFullAt, 6, 0, "0.2 s at 30 fps");
-  // --- typewriter: 1 WaitWhile tick, then Delay ticks until elapsed >= delay; ASCII letters 1 tick -----------------------
-  const delay = F(Math.trunc(F(F([1, 4].includes(language.mode) ? 0.015 : ui.talk.typingDelay) / 1) * 1000 + 0.5) / 1000);
-  let ticks = 0;
-  for (let e = 0; e < delay; e = F(e + F(1 / 30))) ticks++;
-  const perChar = (ch) => (/[A-Za-z]/.test(ch) ? 1 : 1 + ticks);
-  const letters = [...Array(typing.totalLength).keys()].map((i) => plain[i] || "");
-  const steps = visibleAt.slice(1).map((f, k) => f - visibleAt[k]);
-  check("typewriter: frames per char", steps.join(","), letters.slice(0, -1).map(perChar).join(","), 0, `1 + ${ticks} ticks, letters 1`);
-  const wantEnd = visibleAt[visibleAt.length - 1] + perChar(letters[letters.length - 1]);
-  check("typewriter: typing end frame", typingDoneAt, wantEnd, 0, `${typing.totalLength} chars`);
-  check("typewriter: isTyping after end", ui.isTyping, false, 0, "");
-  // --- NextIndicator Loop clip after activation at the typing end: y = 76 - 600 t^2 + 2000 t^3 -----------------------------
-  indicatorY.forEach(([f, y]) => {
-    const t = (f - typingDoneAt + 1) / 30;
-    check(`NextIndicator y frame ${f}`, y, 76 - 600 * t * t + 2000 * t * t * t, 1e-3, "clip (t = frames since enable)");
-  });
   if (locDone) {
     let seqPos = 0, seqSteps = 0;
     while (seqPos < F(2.5)) { seqPos = F(seqPos + F(1 / 30)); seqSteps++; }
@@ -232,6 +210,39 @@ test("story UI layout and timing", { skip: SKIP }, async () => {
   // fade frames 1..6 in UIAdvWidget.OnUpdated; the WaitUntil runs in UniTask's Update runner, which precedes
   // MonoBehaviour Update, so it sees the end on frame 7
   check("fadeInLetterBox resolves at frame", lbDone, 7, 0, "WaitUntil in the UniTask Update runner");
+
+  // --- typewriter to its end, on a talk of its own (the longest line may outlast the scenario's 90 frames: 3 frames per
+  // character in Japanese): 1 WaitWhile tick, then Delay ticks until elapsed >= delay; ASCII letters 1 tick ------------
+  const delay = F(Math.trunc(F(F([1, 4].includes(language.mode) ? 0.015 : ui.talk.typingDelay) / 1) * 1000 + 0.5) / 1000);
+  let ticks = 0;
+  for (let e = 0; e < delay; e = F(e + F(1 / 30))) ticks++;
+  const perChar = (ch) => (/[A-Za-z]/.test(ch) ? 1 : 1 + ticks);
+  firstTyping.cancel();                                                 // Talk: typingCts.Cancel(), seen on the next tick
+  await step();
+  await firstTyping.finished;
+  const typing = ui.setTalk(line), t0 = loop.frameCount;
+  check("typewriter: totalLength", typing.totalLength, countRenderedCharacters(countedText(tt, P.talkText.storyText.b, plain)), 0, "tags removed");
+  check("typewriter: visible at call (frame 0)", tt.maxVisibleCharacters, 1, 0, "first character in the same frame");
+  const visibleAt = [0], indicatorY = [];
+  let typingDoneAt = -1;
+  typing.finished.then(() => { typingDoneAt = loop.frameCount - t0; });
+  const lastFrame = typing.totalLength * (1 + ticks) + 10;
+  for (let f = 1; f <= lastFrame && (typingDoneAt < 0 || indicatorY.length < 3); f++) {
+    await step();
+    while (visibleAt.length < tt.maxVisibleCharacters) visibleAt.push(f);
+    if (P.nextIndicator.activeInHierarchy && indicatorY.length < 3) indicatorY.push([f, P.nextIndicator.anchoredPosition.y]);
+  }
+  const letters = [...Array(typing.totalLength).keys()].map((i) => plain[i] || "");
+  const steps = visibleAt.slice(1).map((f, k) => f - visibleAt[k]);
+  check("typewriter: frames per char", steps.join(","), letters.slice(0, -1).map(perChar).join(","), 0, `1 + ${ticks} ticks, letters 1`);
+  const wantEnd = visibleAt[visibleAt.length - 1] + perChar(letters[letters.length - 1]);
+  check("typewriter: typing end frame", typingDoneAt, wantEnd, 0, `${typing.totalLength} chars`);
+  check("typewriter: isTyping after end", ui.isTyping, false, 0, "");
+  // --- NextIndicator Loop clip after activation at the typing end: y = 76 - 600 t^2 + 2000 t^3 -----------------------------
+  indicatorY.forEach(([f, y]) => {
+    const t = (f - typingDoneAt + 1) / 30;
+    check(`NextIndicator y frame ${f}`, y, 76 - 600 * t * t + 2000 * t * t * t, 1e-3, "clip (t = frames since enable)");
+  });
 
   // --- line breaks of every Talk line (optional dump) -------------------------------------------------------------------
   if (LINES) {
