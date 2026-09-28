@@ -61,6 +61,24 @@ export const splitStages = (src) => {
   return out;
 };
 
+// whether uniform u holds the values a already (the same numbers, zeros of the same sign); else a is kept as what it
+// is about to hold
+const holds = (u, a) => {
+  const last = u.last;
+  if (!last || last.length !== a.length) { u.last = Float64Array.from(a); return false; }
+  let i = 0;
+  while (i < a.length && last[i] === a[i] && (a[i] !== 0 || 1 / last[i] === 1 / a[i])) i++;
+  if (i === a.length) return true;
+  last.set(a);
+  return false;
+};
+
+// whether two arrays of the same length hold the same elements
+const sameElements = (a, b) => {
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+};
+
 export class UnityProgram {
   constructor(gl, label, src) {
     this.gl = gl;
@@ -155,17 +173,21 @@ export class UnityProgram {
   // a float4 value (Unity's vector properties) on a float / float2 / float3 uniform gives its leading n components
   static lead(f, n) { return f.length === n ? f : Float32Array.from(f).subarray(0, n); }
 
-  // Upload every uniform/sampler of this program from the property sheets.
+  // Upload every uniform/sampler of this program from the property sheets. A program keeps its uniforms' values and
+  // a block's buffer its data, so a value the same as the one uploaded last is not uploaded again; the block bindings
+  // and the textures, context state that other programs change, are bound every time.
   apply(sheets) {
     const gl = this.gl;
     gl.useProgram(this.program);
     for (const u of this.uniforms) {
-      const v = UnityProgram.lookup(sheets, UnityProgram.prop(u), this.label);
-      const f = UnityProgram.floats(v, 4);
+      const f = UnityProgram.floats(UnityProgram.lookup(sheets, UnityProgram.prop(u), this.label), 4);
+      const a = u.type === gl.FLOAT ? UnityProgram.lead(f, u.size) : u.type === gl.FLOAT_VEC2 ? UnityProgram.lead(f, 2 * u.size)
+              : u.type === gl.FLOAT_VEC3 ? UnityProgram.lead(f, 3 * u.size) : f;
+      if (holds(u, a)) continue;
       switch (u.type) {
-        case gl.FLOAT: gl.uniform1fv(u.loc, UnityProgram.lead(f, u.size)); break;
-        case gl.FLOAT_VEC2: gl.uniform2fv(u.loc, UnityProgram.lead(f, 2 * u.size)); break;
-        case gl.FLOAT_VEC3: gl.uniform3fv(u.loc, UnityProgram.lead(f, 3 * u.size)); break;
+        case gl.FLOAT: gl.uniform1fv(u.loc, a); break;
+        case gl.FLOAT_VEC2: gl.uniform2fv(u.loc, a); break;
+        case gl.FLOAT_VEC3: gl.uniform3fv(u.loc, a); break;
         case gl.FLOAT_VEC4: gl.uniform4fv(u.loc, f); break;
         case gl.INT: gl.uniform1iv(u.loc, Int32Array.from(f)); break;
         case gl.INT_VEC4: gl.uniform4iv(u.loc, Int32Array.from(f)); break;
@@ -189,8 +211,12 @@ export class UnityProgram {
           for (let c = 0; c < f.length; c++) b.data[base + c] = f[c];
         }
       }
-      gl.bindBuffer(gl.UNIFORM_BUFFER, b.buffer);
-      gl.bufferData(gl.UNIFORM_BUFFER, b.data, gl.DYNAMIC_DRAW);
+      const bits = b.bits || (b.bits = new Uint32Array(b.data.buffer, b.data.byteOffset, b.data.length));
+      if (!b.uploaded || !sameElements(bits, b.uploaded)) {                 // the data's bits, as uploaded last
+        gl.bindBuffer(gl.UNIFORM_BUFFER, b.buffer);
+        gl.bufferData(gl.UNIFORM_BUFFER, b.data, gl.DYNAMIC_DRAW);
+        (b.uploaded || (b.uploaded = new Uint32Array(bits.length))).set(bits);
+      }
       gl.bindBufferBase(gl.UNIFORM_BUFFER, b.binding, b.buffer);
     }
     for (const s of this.samplers) {
@@ -202,7 +228,7 @@ export class UnityProgram {
         throw new Error(`${this.label}: sampler ${s.name} needs a ${target === gl.TEXTURE_CUBE_MAP ? "cube map" : "2D texture"}`);
       gl.activeTexture(gl.TEXTURE0 + s.unit);
       gl.bindTexture(target, t.glTexture);
-      gl.uniform1i(s.loc, s.unit);
+      if (!s.set) { gl.uniform1i(s.loc, s.unit); s.set = true; }
     }
   }
 };

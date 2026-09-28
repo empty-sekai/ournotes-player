@@ -31,7 +31,7 @@ export class Live2DDrawing {
     // CubismMaskTexture: new RenderTexture(1024, 1024, 0, ARGB32), RGBA8 in the gamma-space project
     // ENGINE: the mask RenderTexture's filter and wrap modes are never set (engine defaults); bilinear and clamped here.
     this.maskRT = new GLTarget(gl, MASK_SIZE, MASK_SIZE, { label: `${character.name} mask` });
-    this.vao = gl.createVertexArray();
+    this.vao = gl.createVertexArray(); this.arrays = 0;     // the attributes enabled on it as arrays (_bindAttribs)
     this.textures = new Map();
     this.buffers = character.renderers.map((r) => {
       const idx = gl.createBuffer();
@@ -76,25 +76,30 @@ export class Live2DDrawing {
     return b.pos[k];
   }
 
+  // the vertex inputs of a draw on the drawing's vertex array: positions and UVs from arrays, the rest constant. The
+  // array has the attributes read from arrays enabled (the mask this.arrays); only those that change are switched.
   _bindAttribs(prog, r, color) {
     const gl = this.gl, b = this.buffers[r.index];
     gl.bindVertexArray(this.vao);
-    for (let i = 0; i < 16; i++) gl.disableVertexAttribArray(i);
-    for (const [name, loc] of Object.entries(prog.attribs)) {
-      if (loc < 0) continue;
+    const inputs = prog.vertexInputs || (prog.vertexInputs = Object.entries(prog.attribs).filter(([, loc]) => loc >= 0));
+    let arrays = 0;
+    for (const [name, loc] of inputs) {
       if (name === "in_POSITION0") {
         this._positions(r);
-        gl.enableVertexAttribArray(loc);
         gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);          // z = 0, w = 1
+        arrays |= 1 << loc;
       } else if (name === "in_TEXCOORD0") {
         gl.bindBuffer(gl.ARRAY_BUFFER, b.uv);
-        gl.enableVertexAttribArray(loc);
         gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+        arrays |= 1 << loc;
       } else if (name === "in_COLOR0") gl.vertexAttrib4fv(loc, color);
       else if (name === "in_NORMAL0") gl.vertexAttrib4fv(loc, MISSING_NORMAL);
       else if (name === "in_TANGENT0") gl.vertexAttrib4fv(loc, MISSING_TANGENT);
       else throw new Error(`${prog.label}: attribute ${name}`);
     }
+    for (let d = this.arrays ^ arrays, i = 0; d; d >>>= 1, i++)
+      if (d & 1) { if ((arrays >>> i) & 1) gl.enableVertexAttribArray(i); else gl.disableVertexAttribArray(i); }
+    this.arrays = arrays;
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, b.idx);
   }
 
