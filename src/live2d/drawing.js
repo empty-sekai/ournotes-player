@@ -31,17 +31,36 @@ export class Live2DDrawing {
     // CubismMaskTexture: new RenderTexture(1024, 1024, 0, ARGB32), RGBA8 in the gamma-space project
     // ENGINE: the mask RenderTexture's filter and wrap modes are never set (engine defaults); bilinear and clamped here.
     this.maskRT = new GLTarget(gl, MASK_SIZE, MASK_SIZE, { label: `${character.name} mask` });
-    this.vao = gl.createVertexArray(); this.arrays = 0;     // the attributes enabled on it as arrays (_bindAttribs)
     this.textures = new Map();
-    this.buffers = character.renderers.map((r) => {
-      const idx = gl.createBuffer();
-      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idx);
-      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, r.indices, gl.STATIC_DRAW);
-      const uv = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, uv);
-      gl.bufferData(gl.ARRAY_BUFFER, r.uvs, gl.STATIC_DRAW);
-      return { idx, uv, count: r.indices.length, pos: [gl.createBuffer(), gl.createBuffer()], uploaded: [null, null] };
+    // The meshes of all drawables in shared buffers: a drawable's vertices at a fixed place (from its vertex `base`),
+    // its indices rebased onto them (from index `first`). The positions and vertex colours of the displayed meshes are
+    // copied in when they changed and uploaded once (_sync); a draw only picks its range of the indices.
+    let verts = 0, indices = 0;
+    this.slots = character.renderers.map((r) => {
+      const s = { base: verts, first: indices, count: r.indices.length, pos: null, color: null };
+      verts += r.uvs.length / 2; indices += r.indices.length;
+      return s;
     });
+    const wide = verts > 0x10000;
+    this.indexType = wide ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT; this.indexSize = wide ? 4 : 2;
+    const idx = wide ? new Uint32Array(indices) : new Uint16Array(indices), uv = new Float32Array(verts * 2);
+    for (const r of character.renderers) {
+      const s = this.slots[r.index];
+      for (let i = 0; i < r.indices.length; i++) idx[s.first + i] = s.base + r.indices[i];
+      uv.set(r.uvs, s.base * 2);
+    }
+    this.positions = new Float32Array(verts * 2);
+    this.colors = new Float32Array(verts * 4);
+    const buffer = (data, usage) => { const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, data, usage); return b; };
+    this.buf = { pos: buffer(this.positions, gl.DYNAMIC_DRAW), color: buffer(this.colors, gl.DYNAMIC_DRAW),
+                 uv: buffer(uv, gl.STATIC_DRAW), constant: buffer(new Float32Array([...MISSING_NORMAL, ...MISSING_TANGENT, 1, 1, 1, 1]), gl.STATIC_DRAW),
+                 idx: gl.createBuffer() };
+    this.vaos = new Map();                   // program -> the vertex array of its inputs (_vao)
+    this.last = { prog: null, state: null, vao: null };   // what the drawing's last draw set (_drawSlot)
+    gl.bindVertexArray(this._vao(null));     // the element buffer is vertex array state: filled on a vertex array of ours
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.buf.idx);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+    gl.bindVertexArray(null);
   }
 
   async loadTextures() {
@@ -69,38 +88,69 @@ export class Live2DDrawing {
     }
   }
 
-  _positions(r) {                        // uploads the displayed mesh buffer when it changed
-    const gl = this.gl, b = this.buffers[r.index], k = r.front, m = r.meshes[k];
-    gl.bindBuffer(gl.ARRAY_BUFFER, b.pos[k]);
-    if (b.uploaded[k] !== m.pos) { gl.bufferData(gl.ARRAY_BUFFER, m.pos, gl.DYNAMIC_DRAW); b.uploaded[k] = m.pos; }
-    return b.pos[k];
+  // copies the displayed meshes that changed (CubismRenderer swaps in a new mesh, or gives it new vertex colours) into
+  // the shared buffers and uploads them; called before the draws of a frame (renderMasks, items)
+  _sync() {
+    const gl = this.gl, P = this.positions, C = this.colors;
+    let pos = false, color = false;
+    for (const r of this.ch.renderers) {
+      const s = this.slots[r.index], m = r.meshes[r.front];
+      if (s.pos !== m.pos) { P.set(m.pos, s.base * 2); s.pos = m.pos; pos = true; }
+      const c = m.color, k = s.base * 4, f = Math.fround;    // Mesh.colors: the renderer's colour on every vertex
+      if (s.color !== c && (!s.color || C[k] !== f(c[0]) || C[k + 1] !== f(c[1]) || C[k + 2] !== f(c[2]) || C[k + 3] !== f(c[3]))) {
+        for (let i = k, e = k + (m.pos.length >> 1) * 4; i < e; i += 4) { C[i] = c[0]; C[i + 1] = c[1]; C[i + 2] = c[2]; C[i + 3] = c[3]; }
+        color = true;
+      }
+      s.color = c;
+    }
+    if (pos) { gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.pos); gl.bufferData(gl.ARRAY_BUFFER, P, gl.DYNAMIC_DRAW); }
+    if (color) { gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.color); gl.bufferData(gl.ARRAY_BUFFER, C, gl.DYNAMIC_DRAW); }
   }
 
-  // the vertex inputs of a draw on the drawing's vertex array: positions and UVs from arrays, the rest constant. The
-  // array has the attributes read from arrays enabled (the mask this.arrays); only those that change are switched.
-  _bindAttribs(prog, r, color) {
-    const gl = this.gl, b = this.buffers[r.index];
-    gl.bindVertexArray(this.vao);
-    const inputs = prog.vertexInputs || (prog.vertexInputs = Object.entries(prog.attribs).filter(([, loc]) => loc >= 0));
-    let arrays = 0;
-    for (const [name, loc] of inputs) {
-      if (name === "in_POSITION0") {
-        this._positions(r);
-        gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);          // z = 0, w = 1
-        arrays |= 1 << loc;
-      } else if (name === "in_TEXCOORD0") {
-        gl.bindBuffer(gl.ARRAY_BUFFER, b.uv);
-        gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-        arrays |= 1 << loc;
-      } else if (name === "in_COLOR0") gl.vertexAttrib4fv(loc, color);
-      else if (name === "in_NORMAL0") gl.vertexAttrib4fv(loc, MISSING_NORMAL);
-      else if (name === "in_TANGENT0") gl.vertexAttrib4fv(loc, MISSING_TANGENT);
+  // the vertex array of a program's inputs over the shared buffers: positions (z = 0, w = 1), UVs and vertex colours
+  // from arrays, NORMAL / TANGENT constant (one value with divisor 1: every vertex of a draw reads it); a mask draw's
+  // colour is constant white. `prog` null: a vertex array with the element buffer only.
+  _vao(prog, mask = false) {
+    let vao = this.vaos.get(prog);
+    if (vao) return vao;
+    const gl = this.gl, b = this.buf;
+    vao = gl.createVertexArray();
+    gl.bindVertexArray(vao);
+    const array = (buf, loc, n, offset = 0, divisor = 0) => {
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.vertexAttribPointer(loc, n, gl.FLOAT, false, 0, offset);
+      gl.vertexAttribDivisor(loc, divisor);
+      gl.enableVertexAttribArray(loc);
+    };
+    if (prog) for (const [name, loc] of Object.entries(prog.attribs)) {
+      if (loc < 0) continue;
+      if (name === "in_POSITION0") array(b.pos, loc, 2);
+      else if (name === "in_TEXCOORD0") array(b.uv, loc, 2);
+      else if (name === "in_COLOR0") { if (mask) array(b.constant, loc, 4, 32, 1); else array(b.color, loc, 4); }
+      else if (name === "in_NORMAL0") array(b.constant, loc, 4, 0, 1);
+      else if (name === "in_TANGENT0") array(b.constant, loc, 4, 16, 1);
       else throw new Error(`${prog.label}: attribute ${name}`);
     }
-    for (let d = this.arrays ^ arrays, i = 0; d; d >>>= 1, i++)
-      if (d & 1) { if ((arrays >>> i) & 1) gl.enableVertexAttribArray(i); else gl.disableVertexAttribArray(i); }
-    this.arrays = arrays;
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, b.idx);
+    this.vaos.set(prog, vao);
+    return vao;
+  }
+
+  // One draw of a drawable. `cont`: the previous draw on the context was this drawing's, with nothing between, so the
+  // context holds what that draw set; the program, pass state and vertex array it had are not set again.
+  _drawSlot(prog, sheets, state, r, mask, cont) {
+    const gl = this.gl, s = this.slots[r.index], vao = this._vao(prog, mask), last = this.last;
+    prog.apply(sheets, cont && last.prog === prog);
+    if (!(cont && last.state === state)) applyState(gl, state);
+    if (!(cont && last.vao === vao)) gl.bindVertexArray(vao);
+    gl.drawElements(gl.TRIANGLES, s.count, this.indexType, s.first * this.indexSize);
+    last.prog = prog; last.state = state; last.vao = vao;
+  }
+
+  // Draws items in order; frameOf(item, prev) gives the frame of a draw, `prev` the item drawn just before.
+  static drawItems(items, frameOf) {
+    let prev = null;
+    for (const it of items) { it.draw(frameOf(it, prev)); prev = it; }
   }
 
   // CubismMaskCommandBuffer: clear and redraw the mask texture when it is flagged. The mask meshes are the displayed
@@ -109,23 +159,24 @@ export class Live2DDrawing {
     const ch = this.ch, gl = this.gl;
     if (!ch.maskDirty) return;
     ch.maskDirty = false;
+    this._sync();
     this.maskRT.bind();
     gl.disable(gl.SCISSOR_TEST);
     gl.colorMask(true, true, true, true);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     const prog = this.lib.program(MASK_SHADER, 0, []);
+    let cont = false;
     for (const j of ch.junctions)
       for (const mi of j.masks) {
         const r = ch.renderers[mi];
         const mat = this.maskMats[r.doubleSided ? 0 : 1];
         const tex = this.textures.get(r.textureDesc.texture);
         // ENGINE: _ProjectionParams while a command buffer draws into a render texture is set natively; x = 1 here.
-        prog.apply([{ _ProjectionParams: [1, 0.3, 1000, 1 / 1000], cubism_MaskTile: j.tile,
-                      cubism_MaskTransform: j.transform, _MainTex: tex }, mat.floats, mat.colors]);
-        applyState(gl, this.lib.state(MASK_SHADER, 0, mat.floats));
-        this._bindAttribs(prog, r, [1, 1, 1, 1]);
-        gl.drawElements(gl.TRIANGLES, this.buffers[mi].count, gl.UNSIGNED_SHORT, 0);
+        this._drawSlot(prog, [{ _ProjectionParams: [1, 0.3, 1000, 1 / 1000], cubism_MaskTile: j.tile,
+                                cubism_MaskTransform: j.transform, _MainTex: tex }, mat.floats, mat.colors],
+                       this.lib.state(MASK_SHADER, 0, mat.floats), r, true, cont);
+        cont = true;
       }
   }
 
@@ -155,26 +206,27 @@ export class Live2DDrawing {
     return sheet;
   }
 
-  // draw items of the visible drawables: {sortingOrder, transform, draw(frame)}; `frame` carries the camera and light
-  // globals and the per-object engine values (perObject(transform))
+  // draw items of the visible drawables: {sortingOrder, transform, drawing, draw(frame)}; `frame` carries the camera
+  // and light globals, the per-object engine values (perObject(transform)) and `prev`, the item drawn just before on
+  // the context (none: something else may have drawn)
   items(extraKeywords) {
     const ch = this.ch;
     if (!ch.isShowing) return [];
+    this._sync();
     return ch.renderers.filter((r) => r.enabled).map((r) => ({
       sortingOrder: r.sortingOrder,
       transform: r.transform,
+      drawing: this,
       draw: (frame) => this._draw(r, frame, extraKeywords),
     }));
   }
 
   _draw(r, frame, extraKeywords) {
-    const gl = this.gl, mat = r.material;
+    const mat = r.material;
     const kw = extraKeywords.length ? mat.keywords.concat(extraKeywords) : mat.keywords;
     const prog = this.lib.program(LIT_SHADER, 0, kw);
-    const perObject = frame.perObject(r.transform);
-    prog.apply([this._mpb(r), mat.floats, mat.colors, perObject, frame.globals]);
-    applyState(gl, this.lib.state(LIT_SHADER, 0, mat.floats));
-    this._bindAttribs(prog, r, this.ch.displayed(r).color);
-    gl.drawElements(gl.TRIANGLES, this.buffers[r.index].count, gl.UNSIGNED_SHORT, 0);
+    const sheets = [this._mpb(r), mat.floats, mat.colors, frame.perObject(r.transform), frame.globals];
+    this._drawSlot(prog, sheets, this.lib.state(LIT_SHADER, 0, mat.floats), r, false,
+                   !!frame.prev && frame.prev.drawing === this);
   }
 }

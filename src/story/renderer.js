@@ -314,7 +314,10 @@ export class StoryRenderer {
     return items.sort((a, b) => (a.sortingOrder - b.sortingOrder) || (b.dist - a.dist));
   }
 
-  _drawList(items, frame) { for (const it of StoryRenderer.sortItems(items)) it.draw({ ...frame, layer: it.layer ?? 12 }); }
+  // `prev`: the item drawn just before (Live2DDrawing leaves out the state its previous draw set)
+  _drawList(items, frame) {
+    Live2DDrawing.drawItems(StoryRenderer.sortItems(items), (it, prev) => ({ ...frame, layer: it.layer ?? 12, prev }));
+  }
 
   _bindMesh(prog, bufs) {
     const gl = this.gl;

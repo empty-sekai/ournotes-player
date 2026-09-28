@@ -114,7 +114,7 @@ export class SimpleCaptureRenderer {
       const dist = (tr) => { const p = tr.worldPosition(); return Math.hypot(p.x - camPos.x, p.y - camPos.y, p.z - camPos.z); };
       const items = d.items([]).map((it) => ({ ...it, dist: dist(it.transform) }));
       items.sort((a, b) => (a.sortingOrder - b.sortingOrder) || (b.dist - a.dist));
-      for (const it of items) it.draw(frame);
+      Live2DDrawing.drawItems(items, (it, prev) => ({ ...frame, prev }));
     }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }

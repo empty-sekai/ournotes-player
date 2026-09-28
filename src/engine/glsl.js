@@ -175,10 +175,12 @@ export class UnityProgram {
 
   // Upload every uniform/sampler of this program from the property sheets. A program keeps its uniforms' values and
   // a block's buffer its data, so a value the same as the one uploaded last is not uploaded again; the block bindings
-  // and the textures, context state that other programs change, are bound every time.
-  apply(sheets) {
+  // and the textures, context state that other programs change, are bound every time, unless `cont`: the caller
+  // knows the context is as this program's last apply left it (its draw followed by nothing else), and only the
+  // textures that differ from the ones bound then are bound.
+  apply(sheets, cont = false) {
     const gl = this.gl;
-    gl.useProgram(this.program);
+    if (!cont) gl.useProgram(this.program);
     for (const u of this.uniforms) {
       const f = UnityProgram.floats(UnityProgram.lookup(sheets, UnityProgram.prop(u), this.label), 4);
       const a = u.type === gl.FLOAT ? UnityProgram.lead(f, u.size) : u.type === gl.FLOAT_VEC2 ? UnityProgram.lead(f, 2 * u.size)
@@ -217,7 +219,7 @@ export class UnityProgram {
         gl.bufferData(gl.UNIFORM_BUFFER, b.data, gl.DYNAMIC_DRAW);
         (b.uploaded || (b.uploaded = new Uint32Array(bits.length))).set(bits);
       }
-      gl.bindBufferBase(gl.UNIFORM_BUFFER, b.binding, b.buffer);
+      if (!cont) gl.bindBufferBase(gl.UNIFORM_BUFFER, b.binding, b.buffer);
     }
     for (const s of this.samplers) {
       const t = UnityProgram.lookup(sheets, s.name, this.label);
@@ -226,8 +228,11 @@ export class UnityProgram {
       const target = s.type === gl.SAMPLER_CUBE ? gl.TEXTURE_CUBE_MAP : gl.TEXTURE_2D;
       if ((t.target ?? gl.TEXTURE_2D) !== target)
         throw new Error(`${this.label}: sampler ${s.name} needs a ${target === gl.TEXTURE_CUBE_MAP ? "cube map" : "2D texture"}`);
-      gl.activeTexture(gl.TEXTURE0 + s.unit);
-      gl.bindTexture(target, t.glTexture);
+      if (!(cont && s.bound === t.glTexture)) {
+        gl.activeTexture(gl.TEXTURE0 + s.unit);
+        gl.bindTexture(target, t.glTexture);
+        s.bound = t.glTexture;
+      }
       if (!s.set) { gl.uniform1i(s.loc, s.unit); s.set = true; }
     }
   }

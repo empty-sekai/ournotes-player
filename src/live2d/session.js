@@ -269,7 +269,7 @@ export class ModelSession {
     // SortingCriteria.CommonTransparent: sorting order, then back to front (every drawable at the same distance)
     // ENGINE: the renderer sort is native; sorting order first, equal distances keep the submission (Core index) order.
     const items = this.drawing.items([]).sort((a, b) => a.sortingOrder - b.sortingOrder);
-    for (const it of items) it.draw(frame);
+    Live2DDrawing.drawItems(items, (it, prev) => ({ ...frame, prev }));
   }
 
   // Releases the session: waits for a step in progress, deletes the GL objects it created, releases the Cubism model
