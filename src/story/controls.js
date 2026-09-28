@@ -104,8 +104,11 @@ export class StoryControls {
     this._session = null;
     this._videoSeeks = 0;               // seeks within a video running (a clip's replaces the session)
     const focus = () => player.root.focus({ preventScroll: true });
-    on(this.btnPlay, "click", () => { focus(); if (player.paused) player.play(); else player.pause(); });
-    on(this.btnNext, "click", () => { focus(); player.next(); });
+    // taps and play / pause wait for a session: none while a seek or a language switch replaces it
+    const next = () => { if (player.session) player.next(); };
+    const toggle = () => { if (!player.session) return; if (player.paused) player.play(); else player.pause(); };
+    on(this.btnPlay, "click", () => { focus(); toggle(); });
+    on(this.btnNext, "click", () => { focus(); next(); });
     on(this.btnAuto, "click", () => { focus(); player.setAuto(!player.auto); });
     on(this.btnSpeed, "click", () => { focus(); player.setSpeed(NEXT_SPEED[player.speed]); });
     // OnSkipButtonTapped: the confirmation dialog pauses the playback (AdvPlayer.OnOpenDialog -> Model.SetPause) and
@@ -124,13 +127,13 @@ export class StoryControls {
     on(this.vidSeek, "input", () => this._showVideo(Number(this.vidSeek.value), Number(this.vidSeek.max)));
     on(this.vidSeek, "change", () => { this._drag = null; this.seekVideo(Number(this.vidSeek.value)); });
     on(this.big, "click", () => { this.big.hidden = true; focus(); player.play(); });
-    on(player.canvas, "pointerdown", (e) => { if (e.button === 0) player.next(); });
+    on(player.canvas, "pointerdown", (e) => { if (e.button === 0) next(); });
     on(player.root, "keydown", (e) => {
       if (e.target !== player.root || e.ctrlKey || e.metaKey || e.altKey) return;
-      if (e.key === " " || e.key === "Enter") { e.preventDefault(); player.next(); }
+      if (e.key === " " || e.key === "Enter") { e.preventDefault(); next(); }
       else if ((e.key === "a" || e.key === "A") && !this._simple()) player.setAuto(!player.auto);
       else if ((e.key === "f" || e.key === "F") && !this._simple()) player.setSpeed(NEXT_SPEED[player.speed]);
-      else if (e.key === "k" || e.key === "K") { if (player.paused) player.play(); else player.pause(); }
+      else if (e.key === "k" || e.key === "K") toggle();
     });
     const ro = new (doc.defaultView.ResizeObserver || class { observe() {} disconnect() {} })(() => this._barHeight());
     ro.observe(bar);
@@ -240,6 +243,7 @@ export class StoryControls {
     this.btnSpeed.setAttribute("aria-pressed", String(p.speed !== 10));
     const live = !!p.session && !p.ended;
     for (const b of [this.btnNext, this.btnAuto, this.btnSpeed, this.btnSkip]) b.disabled = !live;
+    this.btnPlay.disabled = !p.session;
     this.btnAuto.hidden = this.btnSpeed.hidden = this._simple();
     // the line bar; the story's line count stays while a seek replaces the session; it rests while a video seeks
     const seeking = !!this._seeking || this._videoSeeks > 0;

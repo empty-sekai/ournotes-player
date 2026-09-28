@@ -24,10 +24,10 @@ import { StoryPlayer } from "./player.js";
 // Methods and properties as StoryPlayer: play(), pause(), next(), skip(), seekToLine(i), seekVideo(sec),
 // setVolume(category, v), line, lineCount, speaker, text, ended, languages, video, plus `player` (the StoryPlayer, null
 // until loaded) and `ready` (a promise of the StoryPlayer of the current src). Events (not bubbling): ready, error,
-// progress, play, pause, line, command, ended; `detail` as StoryPlayer's. The element is display: block and 13:6 at its
+// progress, play, pause, line, log, command, ended; `detail` as StoryPlayer's. The element is display: block and 13:6 at its
 // width unless given a height.
 
-const EVENTS = ["ready", "error", "progress", "play", "pause", "line", "command", "ended"];
+const EVENTS = ["ready", "error", "progress", "play", "pause", "line", "log", "command", "ended"];
 const OFF = new Set(["off", "false", "0", "no"]);
 const ELEMENT_CSS = `:host { display: block; position: relative; aspect-ratio: 13 / 6; contain: content; }
 :host([hidden]) { display: none; }`;
@@ -135,7 +135,7 @@ export class OurnotesStoryElement extends Base {
       if (e.type === "ready" && gen === this._gen) this.player = e.target;
       this.dispatchEvent(new CustomEvent(e.type, { detail: e.detail }));
     };
-    const num = (a) => (this.hasAttribute(a) ? Number(this.getAttribute(a)) : undefined);
+    const num = (a) => { const v = this.hasAttribute(a) ? Number(this.getAttribute(a)) : NaN; return Number.isFinite(v) ? v : undefined; };
     this._loading = StoryPlayer.create(this.shadowRoot, {
       src: new URL(this.src, document.baseURI).href, lang: this.getAttribute("lang") || undefined,
       uiLang: this.getAttribute("ui-lang") || undefined,

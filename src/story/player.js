@@ -242,9 +242,9 @@ export class StoryPlayer extends EventTarget {
   // the game's Skip: the playback stops, the finalize rows are not played
   skip() { this._need().skip(); }
 
-  // category "Bgm" | "Se" | "Voice" (the app's options) | "Movie" (the videos' own sound), v 0..1
+  // category "Bgm" | "Se" | "Voice" (the app's options) | "Movie" (the videos' own sound), v 0..1 (not a number: 0)
   setVolume(category, v) {
-    this._volumes[category] = Math.min(1, Math.max(0, Number(v)));
+    this._volumes[category] = Math.min(1, Math.max(0, Number(v) || 0));
     if (this.session) this.session.setVolume(category, this._volumes[category]);
   }
 
