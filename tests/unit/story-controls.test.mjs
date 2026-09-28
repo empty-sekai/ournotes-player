@@ -1,7 +1,8 @@
 // The story control bar (controls.js) on a stand-in DOM and a stand-in player: the line bar and its label, a seek
 // from the bar (coalesced while one runs, its line shown until the new session reaches it), the skip confirmation,
 // the video bar (a movie or a clip seeks on change, a video that cannot be seeked only shows; the line bar rests while
-// a clip's seek replaces the session), and the labels' language. Synthetic inputs only.
+// a clip's seek replaces the session), the labels' language, and the taps and keys that wait for a session. Synthetic
+// inputs only.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { StoryControls, formatStoryTime } from "../../src/story/controls.js";
@@ -205,4 +206,22 @@ test("the labels: a story language or a BCP 47 tag, relabeled in place; an unkno
 test("video times as m:ss", () => {
   assert.deepEqual([0, 0.4, 59.99, 60, 109.2, 3599, -2].map(formatStoryTime),
                    ["0:00", "0:00", "0:59", "1:00", "1:49", "59:59", "0:00"]);
+});
+
+test("a tap, Next, Space or K while the session is replaced does nothing; the play button is off without a session", async () => {
+  const p = fakePlayer();
+  const calls = [];
+  p.next = () => calls.push("next"); p.play = () => calls.push("play"); p.pause = () => calls.push("pause");
+  p.seekToLine(3);                                                             // the session is gone until the seek ends
+  p.canvas.fire("pointerdown");
+  p.controls.btnNext.fire("click");
+  p.controls.btnPlay.fire("click");
+  for (const key of [" ", "Enter", "k"]) p.root.fire("keydown", { key, preventDefault() {} });
+  assert.deepEqual(calls, []);
+  assert.equal(p.controls.btnPlay.disabled, true);
+  p.seeks[0].done();
+  assert.equal(p.controls.btnPlay.disabled, false);
+  p.canvas.fire("pointerdown");
+  p.controls.btnPlay.fire("click");
+  assert.deepEqual(calls, ["next", "pause"]);
 });
