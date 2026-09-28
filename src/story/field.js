@@ -37,6 +37,13 @@ export class AdvQuality {
 // GameDetailConfigDefaultData: ResolutionBaseLengthMax by BaseQualityMode Worst .. Best
 export const RESOLUTION_BASE_LENGTH = Object.freeze([1024, 1024, 1440, 1920, 1920]);
 
+// The screen the game renders at on a native screen of width x height pixels at a quality level (0..4):
+// ScreenManager.CalculateTargetResolution as AdvQuality.screenScale, the landscape width being the longer side. -> [w, h]
+export const advScreenSize = (width, height, level) => {
+  const f = F(Math.min(F(RESOLUTION_BASE_LENGTH[level] / Math.max(width, height)), 1));
+  return [Math.max(1, Math.trunc(F(width * f))), Math.max(1, Math.trunc(F(height * f)))];
+};
+
 // Fwk.Cam.UniversalCamera behind CameraManager.MainCamera
 export class AdvCamera {
   constructor(loop, cameraNode) {

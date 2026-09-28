@@ -11,6 +11,9 @@ import { StoryPlayer } from "./player.js";
 //   auto         auto mode (boolean attribute; "off" / "false" / "0" is off); absent: off, the game's default
 //   speed        the playback speed: 1, 1.5, 1.7 or 2 (AdvPlaybackSpeed Normal, OnePointFive, OnePointSeven, Double)
 //   quality      "best" (default), "high" or "middle" (the game's quality option), read when the story loads
+//   resolution   "game" (default): the canvas draws at the screen the game renders at for the quality (1920 pixels on
+//                the longer side at most at Best and High, 1440 at Middle); "native": at the element's device pixels.
+//                Read when the story loads
 //   film-grain   the film grain: bare or 1 at the game's intensity, another number a multiplier of it; none when
 //                absent, 0 or "off". Read when the story loads
 //   autoplay     play as soon as the story is loaded (boolean; audio may still wait for a user gesture)
@@ -140,7 +143,8 @@ export class OurnotesStoryElement extends Base {
       src: new URL(this.src, document.baseURI).href, lang: this.getAttribute("lang") || undefined,
       uiLang: this.getAttribute("ui-lang") || undefined,
       auto: this._flag("auto", false), speed: parseStorySpeed(this.getAttribute("speed") || "1"),
-      quality: this.getAttribute("quality") || undefined, line: num("line"), autoplay: this.hasAttribute("autoplay"),
+      quality: this.getAttribute("quality") || undefined, resolution: this.getAttribute("resolution") || undefined,
+      line: num("line"), autoplay: this.hasAttribute("autoplay"),
       filmGrain: this.getAttribute("film-grain") ?? undefined,
       controls: this._flag("controls", true), voice: !this.hasAttribute("no-voice"),
       volumes: { Bgm: this._volume("volume-bgm"), Se: this._volume("volume-se"), Voice: this._volume("volume-voice"),

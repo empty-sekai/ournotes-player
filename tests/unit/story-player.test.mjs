@@ -2,7 +2,8 @@
 // a session started while paused starts held, a language switch after a seek before the first play restarts at the
 // seek's line, a seek within a clip plays on to the last target asked for (forward in the session playing the clip,
 // backward in a new one at the clip's row), and the control labels follow the story's language unless the host sets
-// one. Stand-in sessions only.
+// one; the drawing buffer is the game's screen for the quality unless resolution is native, and a volume that is not a
+// number is 0. Stand-in sessions only.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { StoryPlayer } from "../../src/story/player.js";
@@ -117,3 +118,21 @@ test("the control labels: the language the story plays in, after a language swit
     p.setUiLanguage(null);
     assert.deepEqual(langs, ["zh-Hant", "zh-Hant", "ja", "ko", "ko", "en"]);
   }));
+
+test("the drawing buffer: the game's screen for the quality by default, every device pixel with resolution native", () => {
+  const p = Object.create(StoryPlayer.prototype);
+  p._devicePixels = () => [2400, 1080];
+  Object.assign(p, { _quality: 4, _nativeResolution: false });
+  assert.deepEqual(p._pixelSize(), [1920, 864]);
+  p._quality = 2;
+  assert.deepEqual(p._pixelSize(), [1440, 648]);
+  p._nativeResolution = true;
+  assert.deepEqual(p._pixelSize(), [2400, 1080]);
+});
+
+test("setVolume: a value that is not a number is 0, others are clamped to [0, 1]", () => {
+  const set = [];
+  const p = Object.assign(bare(), { session: { setVolume: (c, v) => set.push([c, v]) } });
+  for (const v of ["x", NaN, undefined, -1, 2, "0.5"]) p.setVolume("Bgm", v);
+  assert.deepEqual(set.map(([, v]) => v), [0, 0, 0, 0, 1, 0.5]);
+});

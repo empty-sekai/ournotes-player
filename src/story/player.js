@@ -1,6 +1,7 @@
 import { StoryControls, STORY_PLAYER_CSS } from "./controls.js";
 import { fetchStoryManifest, loadStoryStore } from "./assets.js";
 import { cubismCore } from "../live2d/cubism.js";
+import { advScreenSize } from "./field.js";
 import { parseFilmGrain, parseStoryQuality } from "./params.js";
 import { STORY_FRAME_RATE, StorySession } from "./session.js";
 
@@ -26,6 +27,9 @@ export class StoryPlayer extends EventTarget {
   //   auto         auto mode (default false, the game's fresh-profile preference); speed: AdvPlaybackSpeed 10
   //                (default), 15, 17, 20
   //   quality      "best" (default), "high", "middle" (the game's quality option) or a BaseQualityMode 0..4
+  //   resolution   "game" (default): the drawing buffer is the screen the game renders at for the quality (the
+  //                element's device pixels scaled down to 1920 pixels on the longer side at Best and High, 1440 at
+  //                Middle; the browser scales it to the element); "native": the element's device pixels
   //   filmGrain    multiplier of the film grain's intensity (true: 1, the game's; default none)
   //   line         start at this line (default 0)
   //   autoplay     play as soon as the story is loaded (audio may still wait for a user gesture)
@@ -56,6 +60,8 @@ export class StoryPlayer extends EventTarget {
     this._volumes = { Bgm: 1, Se: 1, Voice: 1, ...(opts.volumes || {}) };
     this._lang = opts.lang || null;
     this._uiLang = opts.uiLang || null;
+    this._quality = parseStoryQuality(opts.quality);
+    this._nativeResolution = opts.resolution === "native";
     this._clipSeek = null;
     this._abort = new AbortController();
     const doc = host.ownerDocument || document;
@@ -142,7 +148,7 @@ export class StoryPlayer extends EventTarget {
     const [w, h] = this._pixelSize();
     const o = this.opts;
     const session = await StorySession.create(this.gl, this.store, {
-      lang: this._lang || undefined, quality: parseStoryQuality(o.quality), seed: o.seed, auto: this._auto, speed: this._speed, line,
+      lang: this._lang || undefined, quality: this._quality, seed: o.seed, auto: this._auto, speed: this._speed, line,
       row: row === null ? undefined : row,
       voice: o.voice, sound: this._audioContext ? undefined : false, audioContext: this._audioContext || null, autoplay,
       width: w, height: h, filmGrain: parseFilmGrain(o.filmGrain),
@@ -199,6 +205,7 @@ export class StoryPlayer extends EventTarget {
       this._paused = false;
       if (s.audio && s.audio.resume) s.audio.resume().catch(() => {});
       if (s.setPaused) s.setPaused(false);
+      if (this._idle && this._running && !this._replacing) this._drive();   // the frame loop rested while paused
     }
     this._emit("play");
     this._sync();
@@ -378,7 +385,14 @@ export class StoryPlayer extends EventTarget {
     this._emit("error", { error: e });
   }
 
+  // the drawing buffer size: the canvas in device pixels (pixelRatio: that many per CSS pixel), capped at the game's
+  // screen for the quality unless the resolution is "native"
   _pixelSize(entry = null) {
+    const [w, h] = this._devicePixels(entry);
+    return this._nativeResolution ? [w, h] : advScreenSize(w, h, this._quality);
+  }
+
+  _devicePixels(entry) {
     const dpr = this.opts.pixelRatio || this.root.ownerDocument.defaultView.devicePixelRatio || 1;
     if (entry && entry.devicePixelContentBoxSize && !this.opts.pixelRatio) {
       const b = entry.devicePixelContentBoxSize[0];
@@ -403,14 +417,16 @@ export class StoryPlayer extends EventTarget {
 
   // requestAnimationFrame paces the session; every step advances one frame of game time (1/30 s). An animation frame
   // runs the steps that are due (at most 4, drawing only the last), so game time keeps real time on any display rate.
+  // While paused no frame is requested (play() starts the loop again); a resize or a video seek draws meanwhile.
   _drive() {
     const dt = 1 / STORY_FRAME_RATE;
     let acc = 0, last = performance.now();
     this._running = true;
+    this._idle = false;
     const tick = async (now) => {
       const s = this.session;
       if (!this._running || this.disposed || !s) return;
-      if (this._paused) { acc = 0; last = now; this._raf = requestAnimationFrame(tick); return; }
+      if (this._paused) { this._raf = 0; this._idle = true; return; }
       acc = Math.min(acc + (now - last) / 1000, dt * MAX_STEPS);
       last = now;
       let n = 0;
