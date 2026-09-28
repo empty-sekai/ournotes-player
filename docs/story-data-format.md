@@ -448,10 +448,13 @@ materials and, per text node, the font asset and material it uses. The player la
 using these glyph metrics and draws it with the distance-field shader the material names (in `ui/shaders/`). The
 format is the same whether the glyphs were generated from a font file (`source` `open`) or taken from the game's font
 assets (`game`). With open fonts, a font asset that the texts of a font role use (the role's `fontAsset` in
-`ui/languages.json`, or the font asset of a text node whose `textStyle.fontRole` names the role) is laid out with the
-line height, ascent and descent of the game's font of that role (`ui.json` `textStyle.roles`) in place of its own face
-info's. The language's line spacing is set for the game's fonts: English's -100 takes one em off the pitch of a font
-whose line height is 2 em, and would put the lines of a 1.448 em face 0.448 em apart.
+`ui/languages.json`, or the font asset of a text node of the UI, a dialog or a chat window whose `textStyle.fontRole`
+names the role) is laid out with the line height, ascent and descent of the game's font of that role (`ui.json`
+`textStyle.roles`) in place of its own face info's. Any other open asset named `<open font> (<game font asset>)` (a
+fallback, such as the Japanese font behind the untranslated Japanese labels of the Korean chat window) takes those of
+the game font asset it stands in for, where the player knows them (A-OTF-ShinGoPr6N, VibeMOPro, FZLTH_GB18030L2_R,
+Pretendard SemiBold). The language's line spacing is set for the game's fonts: English's -100 takes one em off the
+pitch of a font whose line height is 2 em, and would put the lines of a 1.448 em face 0.448 em apart.
 
 ```json
 { "format": "ournotes.story-fonts/1", "language": "en", "source": "open",
