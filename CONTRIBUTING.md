@@ -12,7 +12,7 @@ data is outside this repository.
 
 ## Development
 
-Node.js 20 or later. There are no runtime dependencies; the development dependencies are esbuild and TypeScript.
+Node.js 22 or later. There are no runtime dependencies; the development dependencies are esbuild and TypeScript.
 
 ```sh
 npm ci

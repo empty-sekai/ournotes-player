@@ -169,7 +169,7 @@ nnnotes web out/site --all --all-live2d --all-stories --player <ournotes-player 
 
 ## 开发
 
-需要 Node.js 20 或更高版本。
+需要 Node.js 22 或更高版本。
 
 ```sh
 npm ci
