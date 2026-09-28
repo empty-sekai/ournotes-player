@@ -78,6 +78,7 @@
     "scripts/validate-data.mjs",
     "examples/chart-list/",
     "examples/live2d/",
+    "examples/songs/",
     "examples/story/",
     "examples/story-list/",
     "LICENSE",
