@@ -17,7 +17,9 @@ import { STORY_FRAME_RATE, StorySession } from "./session.js";
 // line {index, lineCount, speaker, text}, log {row, speaker, text, voiceIds} (a talk log entry: Talk, Location,
 // subtitles, chat; the lines before the start line too), command {index, cmd}, ended {reason}, error {error}.
 
-const MAX_STEPS = 4;              // steps per animation frame at most (a late frame catches up to 4 frames of game time)
+// Time.maximumDeltaTime (Unity's default; the game does not set it): the game time a late animation frame catches up
+// at most
+const MAX_DELTA_TIME = 1 / 3;
 
 export class StoryPlayer extends EventTarget {
   // host: an Element or a ShadowRoot. opts:
@@ -416,7 +418,8 @@ export class StoryPlayer extends EventTarget {
   }
 
   // requestAnimationFrame paces the session; every step advances one frame of game time (1/30 s). An animation frame
-  // runs the steps that are due (at most 4, drawing only the last), so game time keeps real time on any display rate.
+  // runs the steps that are due (up to MAX_DELTA_TIME of game time, drawing only the last), so game time keeps real
+  // time on any display rate and through a late frame, as the game's does.
   // While paused no frame is requested (play() starts the loop again); a resize or a video seek draws meanwhile.
   _drive() {
     const dt = 1 / STORY_FRAME_RATE;
@@ -427,13 +430,13 @@ export class StoryPlayer extends EventTarget {
       const s = this.session;
       if (!this._running || this.disposed || !s) return;
       if (this._paused) { this._raf = 0; this._idle = true; return; }
-      acc = Math.min(acc + (now - last) / 1000, dt * MAX_STEPS);
+      acc = Math.min(acc + (now - last) / 1000, MAX_DELTA_TIME);
       last = now;
       let n = 0;
       try {
-        while (acc >= dt && n < MAX_STEPS && this._running && !this._paused && !this.disposed && this.session === s) {
+        while (acc >= dt && this._running && !this._paused && !this.disposed && this.session === s) {
           acc -= dt; n++;
-          await s.step({ draw: !(acc >= dt && n < MAX_STEPS) });   // a further step follows: no draw for this one
+          await s.step({ draw: !(acc >= dt) });                     // a further step follows: no draw for this one
         }
       } catch (e) { if (!this.disposed && this.session === s) this._fail(e); return; }
       if (!this._running || this.disposed || this.session !== s) return;
