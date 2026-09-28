@@ -652,5 +652,5 @@ references, one Lit material and a texture descriptor per drawable), the drawabl
 `_ADDITIONAL_LIGHTS_VERTEX` required from `model.json` format 2), and that the manifest lists exactly the files the
 viewer and the story player read.
 
-It needs Node.js 20 or later and no dependencies. The opt-in data tests (`OURNOTES_DATA=<site dir> npm run test:data`)
+It needs Node.js 22 or later and no dependencies. The opt-in data tests (`OURNOTES_DATA=<site dir> npm run test:data`)
 go further and run charts through the player in Node (see [CONTRIBUTING.md](../CONTRIBUTING.md)).
