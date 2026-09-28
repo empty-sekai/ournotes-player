@@ -229,7 +229,8 @@ test("host seek: a playing movie moves forward and back and its row ends with it
 
 test("host seek: the video's clock holds until its source shows the position, at most 30 updates", async () => {
   let pending = null;
-  const source = { setSpeed() {}, sync() {}, seek(time, done) { pending = done; }, release() {} };
+  const source = { clock: (time, delta) => time + delta, setSpeed() {}, sync() {}, seek(time, done) { pending = done; },
+                   release() {} };
   const v = new VideoInfo(1, 11, video(11, 300), source), dt = 1 / 30;
   v.play();
   v.advance(dt);
@@ -264,13 +265,23 @@ test("host seek: the video's clock holds until its source shows the position, at
 });
 
 // ------------------------------------------------------------------------------------------------ sound and pauses
-// a page's <video> elements and WebGL context as far as the browser source uses them
+// a page's <video> elements and WebGL context as far as the browser source uses them. An element plays on its own
+// clock: run(sec) moves a playing one on by sec x its rate; a seek (currentTime set) is recorded in seeks, holds the
+// position and reports "seeked" at seeked()
 const fakePage = () => {
   const els = [];
   const gl = new Proxy({}, { get: (o, k) => (typeof k === "string" && /^[A-Z_0-9]+$/.test(k) ? 0 : () => ({})) });
   const document = { createElement: () => {
-    const el = { muted: false, paused: true, currentTime: 0, readyState: 0, playbackRate: 1, plays: 0, refuse: null,
-                 addEventListener() {}, removeAttribute() {}, load() {}, pause() { el.paused = true; },
+    let pos = 0, seeking = false;
+    const on = [];
+    const el = { muted: false, paused: true, ended: false, error: null, readyState: 4, playbackRate: 1, plays: 0,
+                 refuse: null, seeks: [],
+                 get currentTime() { return pos; },
+                 set currentTime(t) { pos = t; seeking = true; el.seeks.push(t); },
+                 seeked() { seeking = false; for (const f of on) f(); },
+                 run(sec) { if (!el.paused && !seeking) pos += sec * el.playbackRate; },
+                 addEventListener(k, f) { if (k === "seeked") on.push(f); }, removeAttribute() {}, load() {},
+                 pause() { el.paused = true; },
                  play() {
                    el.plays++;
                    if (el.refuse && !el.muted) return Promise.reject(el.refuse);
@@ -321,6 +332,7 @@ test("the host's pause holds the loaded videos' elements and keeps the videos' o
   cur.source = browserSource({ gl: page.gl, assets: { bytes: () => new Uint8Array(8) }, audio: {} }, "videos/v11.webm",
                              () => sv.held);
   const el = page.els[0];
+  t.loop.on("update", (l) => el.run(l.deltaTime));                       // the element plays in real time
   const run = cmd(t, { cmd: "Movie", VideoID: 11, i: 0 });
   await steps(t.loop, 3);
   assert.equal(el.paused, false);
@@ -331,6 +343,69 @@ test("the host's pause holds the loaded videos' elements and keeps the videos' o
   await settle(t.loop, run);
   assert.equal(el.paused, true);                                          // ended, released by the next video's prepare
   disposeStoryFeatures(t.ctx);
+}));
+
+test("a page's video keeps its own clock: the video's time is the element's position, never pulled to game time", () => withPage(async (page) => {
+  const src = browserSource({ gl: page.gl, assets: { bytes: () => new Uint8Array(8) }, audio: {} }, "videos/a.webm");
+  const el = page.els[0], v = new VideoInfo(1, 11, video(11, 300, true), src), dt = 1 / 30;
+  v.play();
+  assert.equal(el.paused, false);
+  // game time falls behind (one update over half a second of the element's playback): the video is where it is heard
+  el.run(0.5);
+  v.advance(dt);
+  assert.deepEqual([v.time, v.displayedFrameNo()], [0.5, 15]);
+  // game time runs ahead of an element that has not moved (decoding, no data yet): the video's time holds
+  for (let i = 0; i < 10; i++) v.advance(dt);
+  assert.equal(v.time, 0.5);
+  el.readyState = 1;
+  el.run(0.2);
+  v.advance(dt);
+  assert.equal(v.time, 0.5);
+  el.readyState = 4;
+  v.advance(dt);
+  assert.ok(Math.abs(v.time - 0.7) < 1e-9);
+  assert.deepEqual(el.seeks, []);                                         // no seek either way
+  // the end of the element is the video's end
+  el.ended = true;
+  v.advance(dt);
+  assert.deepEqual([v.time, v.isPlayFinished(), el.paused], [10, true, true]);
+}));
+
+test("a page's video: a start at a seek position and the end of a hold put the element at the clock once", () => withPage(async (page) => {
+  let held = false;
+  const src = browserSource({ gl: page.gl, assets: { bytes: () => new Uint8Array(8) }, audio: {} }, "videos/a.webm", () => held);
+  const el = page.els[0], v = new VideoInfo(1, 11, video(11, 300, true), src), dt = 1 / 30;
+  v.setSeekPosition(60);                                                  // a start at frame 60
+  v.play();
+  assert.deepEqual([el.seeks, v.time], [[2], 2]);
+  el.run(0.5);                                                            // no position while the seek runs
+  v.advance(dt);
+  assert.equal(v.time, 2);
+  el.seeked();
+  el.run(0.1);
+  v.advance(dt);
+  assert.ok(Math.abs(v.time - 2.1) < 1e-9);
+  // a hold (the host's fast-forward): the element waits, the video's time runs on game time
+  held = true;
+  v.source.sync(v);
+  assert.equal(el.paused, true);
+  for (let i = 0; i < 30; i++) v.advance(dt);
+  assert.ok(Math.abs(v.time - 3.1) < 1e-9);
+  assert.equal(el.seeks.length, 1);
+  held = false;
+  v.source.sync(v);                                                       // the hold ends: one seek to the clock
+  assert.deepEqual([el.seeks.length, el.seeks[1], el.paused], [2, v.time, false]);
+  el.seeked();
+  el.run(0.2);
+  v.advance(dt);
+  assert.ok(Math.abs(v.time - 3.3) < 1e-9);
+  assert.equal(el.seeks.length, 2);
+  // an element that failed leaves the video on game time, without seeks
+  el.error = { code: 3 };
+  v.advance(dt);
+  v.advance(dt);
+  assert.ok(Math.abs(v.time - (3.3 + 2 * dt)) < 1e-9);
+  assert.equal(el.seeks.length, 2);
 }));
 
 // a StorySession as fastForwardClip uses it, over the stand-in player: the script of rows is play()'s

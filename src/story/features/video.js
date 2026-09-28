@@ -12,10 +12,11 @@ import { loopWaitUntil } from "./timing.js";
 // playing video (Fwk.Video.VideoInfo over a CRI Mana player), AdvVideoView on UIAdvWidget/VideoCanvas, the video
 // timeline that Delay rows follow during a clip (AdvVideoTimeline), the flow flags (AdvFlowParameters) and the helpers
 // of AdvVideoCommandHelper.
-// ENGINE: CRI Mana decodes and clocks the movie by its audio track. Here a video is prepared at once, starts playing on
-// Start, and its time advances by the loop's delta x its speed in the update phase; the displayed frame is
-// floor(time x frame rate). The end (PlayEnd) is reached at frames / frame rate. A browser page shows the WebM of the
-// story data through an HTMLVideoElement kept on that clock.
+// ENGINE: CRI Mana decodes and clocks the movie by its audio track. Here a video is prepared at once and starts playing
+// on Start; in the update phase its time is read from its source: a browser page plays the WebM of the story data in an
+// HTMLVideoElement, which keeps its own clock as that audio track does (browserSource), a headless source advances by
+// the loop's delta x the speed. The displayed frame is floor(time x frame rate); the end (PlayEnd) is reached at
+// frames / frame rate.
 // The sound of a video (VideoManager.Prepare with advancedAudioMode: CriMana plays the USM's audio track through an
 // AtomEx player of its own) is on no sound category: its volume is the movie sound volume (CriMana.Player.SetVolume at
 // prepare, AdvEpisodeResourceLoader._getMovieSoundVolumeFunc -> AdvPlaybackSession.GetMovieSoundVolume); the Bgm, Se
@@ -112,10 +113,11 @@ export class VideoInfo {
     return Math.min(Math.floor(this.time * this.frameRate + 1e-6), this.frames - 1);
   }
 
+  // the update of a playing video: its time is where its source's clock is, `dt` of game time later
   advance(dt) {
     if (this.status !== CRI_STATUS.Playing || this.paused || !this.source) return;
     if (this.seekHold > 0) { if (--this.seekHold === 0 && this._seekEnd) this._seekEnd(); return; }
-    this.time += dt * this.speed;
+    this.time = this.source.clock(this.time, dt * this.speed);
     if (this.time >= this.duration) { this.time = this.duration; this.status = CRI_STATUS.PlayEnd; }
     this.source.sync(this);
   }
@@ -135,14 +137,19 @@ export class VideoInfo {
   }
 }
 
-// A video source without a decoder (headless): the state only
-const headlessSource = () => ({ setSpeed() {}, sync() {}, seek(t, done) { done(); }, release() {}, glTex: null });
+// A video source: clock(time, delta) -> the video's time after an update of `delta` seconds of video time (game time
+// x the speed), setSpeed(speed), sync(video) (after the video's state changed), seek(time, done), release(), glTex.
+// Without a decoder (headless) the clock is game time.
+const headlessSource = () => ({ clock: (t, d) => t + d, setSpeed() {}, sync() {}, seek(t, done) { done(); }, release() {},
+                                glTex: null });
 
-// A browser video source: the WebM through an HTMLVideoElement, kept within a tenth of a second of the video's clock,
-// uploaded into a texture when it shows a new frame; its sound on the movie bus of the session's sound manager. The
-// element runs while the video plays and neither the video (VideoInfo.Pause) nor the host (held()) pauses it. While
-// the host holds it (a pause, a fast-forward) the element is left where it is: a seek (seekTo) or the sync after the
-// hold puts it at the clock.
+// A browser video source: the WebM through an HTMLVideoElement, uploaded into a texture when it shows a new frame; its
+// sound on the movie bus of the session's sound manager. The element runs while the video plays and neither the video
+// (VideoInfo.Pause) nor the host (held()) pauses it, and like CRI Mana's player it keeps the clock: the video's time
+// is the element's position, and holds while the element seeks, waits for data or has not started yet. The element is
+// put at the video's time only where that time moves by itself: a start at a seek position, the host's seek, the end
+// of a hold. While the host holds it (a pause, a fast-forward) the element is left where it is and the clock runs on
+// game time, as it does for an element that failed (MediaError).
 // ENGINE: a page without a user gesture yet may refuse to play a video with sound; such a video plays muted.
 export const browserSource = (ctx, file, held = () => false) => {
   const gl = ctx.gl, el = document.createElement("video");
@@ -159,15 +166,24 @@ export const browserSource = (ctx, file, held = () => false) => {
   for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR],
                         [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
   let fresh = false, w = 1, h = 1, seeked = null;
+  let at = 0, seeking = false;                // the video time the element was put at or last reported; a seek runs
+  const put = (t) => { at = t; seeking = true; el.currentTime = t; };
   const onFrame = () => { fresh = true; el.requestVideoFrameCallback(onFrame); };
   if (el.requestVideoFrameCallback) el.requestVideoFrameCallback(onFrame);
-  el.addEventListener("seeked", () => { fresh = true; const f = seeked; seeked = null; if (f) f(); });
+  el.addEventListener("seeked", () => { seeking = false; fresh = true; const f = seeked; seeked = null; if (f) f(); });
   return {
+    // an ended element is past every time (the video reaches PlayEnd)
+    clock(t, delta) {
+      if (held()) return t + delta;
+      if (el.error) return (at = t + delta);
+      if (seeking || el.paused || el.readyState < 2) return t;
+      return (at = el.ended ? Infinity : Math.max(t, el.currentTime));
+    },
     setSpeed(s) { el.playbackRate = s; },
-    seek(t, done) { seeked = done; el.currentTime = t; },
+    seek(t, done) { seeked = done; put(t); },
     sync(v) {
-      const hold = held(), run = v.status === CRI_STATUS.Playing && !v.paused && !hold;
-      if (!hold && Math.abs(el.currentTime - v.time) > 0.1) el.currentTime = v.time;
+      const run = v.status === CRI_STATUS.Playing && !v.paused && !held();
+      if (run && v.time !== at) put(v.time);
       if (run && el.paused) play();
       else if (!run && !el.paused) el.pause();
     },

@@ -492,7 +492,7 @@ Every `ENGINE:` note in `src/`, by file. `npm test` checks that this list matche
 
 **`src/story/features/video.js`**
 
-- CRI Mana decodes and clocks the movie by its audio track. Here a video is prepared at once, starts playing on
+- CRI Mana decodes and clocks the movie by its audio track. Here a video is prepared at once and starts playing
 - CRI Mana stops over some frames (StopProcessing) and, on the next start, prepares the movie again at the
 - a page without a user gesture yet may refuse to play a video with sound; such a video plays muted.
 
