@@ -405,7 +405,12 @@ export interface StoryPlayerOptions {
   lang?: StoryLanguage;
   auto?: boolean;
   speed?: AdvPlaybackSpeed;
-  quality?: number;
+  /** "best" (default), "high", "middle" (the game's quality option) or a BaseQualityMode 0..4. */
+  quality?: number | "best" | "high" | "middle";
+  /** "game" (default): the drawing buffer is the screen the game renders at for the quality (the canvas's device
+   *  pixels scaled down to 1920 pixels on the longer side at Best and High, 1440 at Middle); "native": the canvas's
+   *  device pixels. */
+  resolution?: "game" | "native";
   /** Multiplier of the film grain's intensity (true: 1, the game's; default none; 0 or "off": none). */
   filmGrain?: number | string | boolean;
   line?: number;

@@ -1,8 +1,12 @@
 import { applyState } from "../engine/glsl.js";
-import { mat4 } from "../engine/math.js";
+import { Transform, mat4 } from "../engine/math.js";
 import { URPPost } from "../engine/postfx.js";
 import { GLTarget, GLTex } from "../engine/texture.js";
 import { Live2DDrawing } from "../live2d/drawing.js";
+
+// the engine's per-object values that do not change: the ambient probe of a Flat white environment (SH(N) = 1)
+const SH_A = Object.freeze([0, 0, 0, 1]), SH_ZERO = Object.freeze([0, 0, 0, 0]);
+const localToWorld = Transform.prototype.localToWorld;
 
 // One story frame on WebGL2 with the game's shaders:
 //   main camera: clear -> the transparent list (layers 6..12) directly, or the AdvFieldRenderPass offscreen composite
@@ -130,23 +134,41 @@ export class StoryRenderer {
   }
 
   // ------------------------------------------------------------------ targets
+  // The camera colour and the post target are made with the size; the others (the offscreen composite's, the blur's,
+  // the curved lens's, the capture's) when a frame first draws into them: a story that never uses them keeps no
+  // full-size RGBA16F buffer for them (GPU memory on phones).
   _resize(w, h) {
     if (this.size && this.size.w === w && this.size.h === h) return;
-    for (const t of Object.values(this.rt || {})) if (t && t.release) t.release();
+    this._releaseTargets();
     const gl = this.gl, F16 = { internal: gl.RGBA16F, format: gl.RGBA, type: gl.HALF_FLOAT };
     this.size = { w, h };
     const hw = Math.max(1, Math.round(w * 0.5)), hh = Math.max(1, Math.round(h * 0.5));
-    this.rt = {
-      color: new GLTarget(gl, w, h, { ...F16, label: "CameraColor" }),
-      post: new GLTarget(gl, w, h, { ...F16, label: "AfterPost" }),
-      lens: new GLTarget(gl, w, h, { ...F16, label: "_AdvCurvedLensTemporaryRT" }),
-      main: new GLTarget(gl, w, h, { ...F16, label: "AdvMainRT" }),
-      temp: new GLTarget(gl, w, h, { ...F16, label: "AdvTempRT" }),
-      half: new GLTarget(gl, hw, hh, { ...F16, label: "AdvBlurRT" }),
-      capture: new GLTarget(gl, w, h, { filter: gl.NEAREST, label: "CaptureRTHandle" }),
+    const specs = {
+      color: [w, h, { ...F16, label: "CameraColor" }],
+      post: [w, h, { ...F16, label: "AfterPost" }],
+      lens: [w, h, { ...F16, label: "_AdvCurvedLensTemporaryRT" }],
+      main: [w, h, { ...F16, label: "AdvMainRT" }],
+      temp: [w, h, { ...F16, label: "AdvTempRT" }],
+      half: [hw, hh, { ...F16, label: "AdvBlurRT" }],
+      capture: [w, h, { filter: gl.NEAREST, label: "CaptureRTHandle" }],
     };
+    const rt = this.rt = {};
+    const own = (k, v) => Object.defineProperty(rt, k, { value: v, writable: true, enumerable: true, configurable: true });
+    for (const [k, [tw, th, o]] of Object.entries(specs)) {
+      Object.defineProperty(rt, k, { enumerable: true, configurable: true,
+                                     get: () => { const t = new GLTarget(gl, tw, th, o); own(k, t); return t; },
+                                     set: (v) => own(k, v) });
+    }
+    void rt.color, void rt.post;             // every frame draws into these two
     this.post.resizeBloom(w, h);
   }
+
+  // the targets made so far (reading a target not made yet would make it)
+  _madeTargets() {
+    return Object.values(Object.getOwnPropertyDescriptors(this.rt || {})).filter((d) => "value" in d).map((d) => d.value);
+  }
+
+  _releaseTargets() { for (const t of this._madeTargets()) if (t && t.release) t.release(); }
 
   // ---------------------------------------------------------------- globals
   // the main camera's per-camera values (ScriptableRenderer.SetPerCameraShaderVariables,
@@ -221,7 +243,7 @@ export class StoryRenderer {
   // taken as SH(N) = 1. unity_WorldToObject (the renderer's world-to-local matrix) is made when a program reads it.
   // ENGINE: world-to-object of a zero-scale transform is native; zeros are passed (the draw covers no pixel).
   _perObject(transform, layer) {
-    const M = transform.localToWorld();
+    const M = this._world(transform);
     let count = 0;
     if (this.addLights && this.addLights.length) {
       const p = { x: M[12], y: M[13], z: M[14] };
@@ -233,15 +255,29 @@ export class StoryRenderer {
       count = Math.min(count, 2);
     }
     let inverse = null;
-    return { unity_ObjectToWorld: M, unity_SHAr: [0, 0, 0, 1], unity_SHAg: [0, 0, 0, 1], unity_SHAb: [0, 0, 0, 1],
-             unity_SHBr: [0, 0, 0, 0], unity_SHBg: [0, 0, 0, 0], unity_SHBb: [0, 0, 0, 0], unity_SHC: [0, 0, 0, 0],
+    return { unity_ObjectToWorld: M, unity_SHAr: SH_A, unity_SHAg: SH_A, unity_SHAb: SH_A,
+             unity_SHBr: SH_ZERO, unity_SHBg: SH_ZERO, unity_SHBb: SH_ZERO, unity_SHC: SH_ZERO,
              unity_LightData: [0, count, 0, 0],
              get unity_WorldToObject() { return inverse || (inverse = mat4.inverse(M) || new Float32Array(16)); } };
   }
 
+  // A transform's localToWorld, made once per frame: drawing changes no transform, and the drawables of a model share
+  // their parents. Objects with a localToWorld of their own (world matrices of effects) are asked each time. The
+  // matrices are read, never written.
+  _world(t) {
+    if (t.localToWorld !== localToWorld || !this._worlds) return t.localToWorld();
+    let m = this._worlds.get(t);
+    if (!m) {
+      const l = t.localMatrix();
+      m = t.parent ? mat4.mul(this._world(t.parent), l) : l;
+      this._worlds.set(t, m);
+    }
+    return m;
+  }
+
   // -------------------------------------------------------- transparent lists
   _distance(transform, center) {
-    const M = transform.localToWorld(), p = mat4.transformPoint(M, center || { x: 0, y: 0, z: 0 });
+    const M = this._world(transform), p = mat4.transformPoint(M, center || { x: 0, y: 0, z: 0 });
     return Math.hypot(p.x - this.camPos.x, p.y - this.camPos.y, p.z - this.camPos.z);
   }
 
@@ -400,10 +436,16 @@ export class StoryRenderer {
   // `vp` = the ADV viewport in backbuffer pixels {x, y, w, h} (AdvCameraConfig.CreateAdvViewport);
   // `ui` (optional) draws the overlay canvas onto the bound post target.
   render(vp, ui) {
-    const gl = this.gl, w = vp.w, h = vp.h;
+    const w = vp.w, h = vp.h;
     this.viewport = vp;
     this.grainScale = this.quality.screenScale(w);
     this._resize(w, h);
+    this._worlds = new Map();
+    try { this._render(vp, ui); } finally { this._worlds = null; }
+  }
+
+  _render(vp, ui) {
+    const gl = this.gl, w = vp.w, h = vp.h;
     for (const c of this.characters) c.gl.renderMasks();          // CubismMaskCommandBuffer (before cameras)
     const globals = { ...this._cameraGlobals(w, h), ...this._lightSheet() };
     const frame = { globals, perObject: (t, layer) => this._perObject(t, layer) };

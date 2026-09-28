@@ -7,7 +7,7 @@ import { ADV_COMMAND, StoryCommandError, checkEpisodeCommands, checkStoryUI, cre
 import { advRow, advViewport, floatParam, htmlColor, intParam, parseFilmGrain, storyLines, storyStart } from "../../src/story/params.js";
 import { AdvCommandDelayTokens, NEXT_STEP, StoryCharacters, StoryPlayerCore } from "../../src/story/player-core.js";
 import { SilentAudio } from "../../src/story/silent-audio.js";
-import { AdvCharacterField, AdvFieldRendererManager, AdvGlobalVolume, AdvQuality, RESOLUTION_BASE_LENGTH } from "../../src/story/field.js";
+import { AdvCharacterField, AdvFieldRendererManager, AdvGlobalVolume, AdvQuality, RESOLUTION_BASE_LENGTH, advScreenSize } from "../../src/story/field.js";
 import { AdvStageData } from "../../src/story/stage.js";
 import { Transform } from "../../src/engine/math.js";
 import { createAutoAdvCancellation } from "../../src/story/commands/talk.js";
@@ -191,6 +191,15 @@ test("AdvQuality.screenScale: the screen width capped at the quality's resolutio
   assert.equal(middle.screenScale(2400), 1440 / 2400);
   assert.equal(low.screenScale(2400), 1024 / 2400);
   assert.equal(best.screenScale(1), 1);
+});
+
+test("advScreenSize: the drawing buffer the game renders at, its longer side capped at the quality's base length", () => {
+  assert.deepEqual(advScreenSize(1280, 720, 4), [1280, 720]);                 // under the cap: as is
+  assert.deepEqual(advScreenSize(2400, 1080, 4), [1920, 864]);               // a phone at dpr 3, landscape
+  assert.deepEqual(advScreenSize(1080, 2400, 4), [864, 1920]);               // and portrait
+  assert.deepEqual(advScreenSize(2400, 1080, 2), [1440, 648]);
+  assert.deepEqual(advScreenSize(3840, 2160, 3), [1920, 1080]);
+  assert.deepEqual(advScreenSize(4000, 1, 0), [1024, 1]);                     // never below one pixel
 });
 
 test("parseFilmGrain: none unless set; set bare the game's 1, else a non-negative multiplier", () => {

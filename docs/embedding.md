@@ -116,6 +116,10 @@ FLAC; current desktop and mobile browsers decode both.
 The player works at phone width (the control bar compacts below 480 px) and with touch: a tap shows or hides the
 control bar, the buttons and the seek bar take taps. Audio starts on the first tap of the play button. The drawing
 buffer follows `devicePixelRatio`; on a slow device pass `pixelRatio: 1` (or a lower value) to `ChartPlayer.create`.
+A story draws at the screen the game renders at for its quality (at most 1920 pixels on the longer side at Best and
+High, 1440 at Middle) rather than at every device pixel ([story.md](story.md), `resolution`); on a slow phone
+`quality="middle"` also turns off what the game turns off at Middle (the character and background blur, the stage post
+effect, Unity lighting, the breath motion, FXAA).
 
 ## Several players on one page
 
