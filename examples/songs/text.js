@@ -187,6 +187,7 @@ export const GUIDE = {
           "score 是模型算出的无技能得分（撃奏ライブ场景含区间排名加成），w_k 是第 k 位成员带一个因子 1（技能值 10000，即 +100%）的普通加分技能时整局多得的分数；两者都除以测量综合力 P₀。"
             + "技能值换算成因子时有取整（⌊值/10000 × 10⁵⌋/10⁵），各音符得分也有取整，所以上式在取整范围内成立：deck 对每个种子用一副真实技能值的随机卡组、在另一个综合力（1000003）下整局重算，偏差超过上界的谱面直接报错；现有 340 张全部通过。"
             + "这项核对只说明上式与模拟自洽，不能说明模拟与游戏一致。",
+          "本页的卡组只有普通技能，不含成员卡的激走技能和小卡的激走支援技能，得分数值都按不带它们计算；它们的机制见第 7 节。",
           "每首歌有三个激走任务（连击、幸运或 Just，按歌定义，各难度共用），依次对应谱面的三个 Fever 区间。Just 判定只在 Just 任务区间内开启，所以三个任务里没有 Just 的歌（85 首中 41 首：21 首全是连击、20 首全是幸运）整局都没有 Just；"
             + "三个任务全是 Just 的有 27 首，另有 17 首连击、幸运、Just 各一个。",
           "按本模型，激走的影响很大：与激走关闭相比，Expert 谱面的无技能得分高 1.6–4.7 倍（中位 2.4 倍）。主要来源是区间排名加成（MasterLiveGekisouRankingScoreBonus）：每个完成的区间再加上该区间得分的一个百分比，按名次查表，默认按第 1 名计；"
@@ -213,7 +214,7 @@ export const GUIDE = {
             + "按本模型，三个区间全是第 1 名时的无技能得分是全是第 5 名时的 1.25–1.65 倍（340 张谱面，中位 1.46 倍）。",
           "自由 Live 场景的数值来自另一次激走关闭的整局模拟，不是从撃奏ライブ减去加成得到的：关闭激走时也没有 Just、激走连击系数和幸运冲刺。关闭激走时没有幸运抽签，本页用到的技能也没有概率条件，所以每张谱面只有一个种子；"
             + "Fever 超过 3 个、撃奏ライブ无法游玩的谱面，在自由 Live 场景照常计算。",
-          "从反编译代码看，撃奏ライブ同时上报两套分数：一套含全部激走效果（Just、幸运、激走连击和排名加成），本页撃奏ライブ场景的数值对应这一套；另一套不含激走效果，存为歌曲的最高分，按本模型约等于自由 Live 的分数。谱面详情里两个数字都列出。"
+          "从反编译代码看，撃奏ライブ同时上报两套分数：一套含全部激走效果（Just、幸运、激走连击、排名加成和卡上的激走技能），本页撃奏ライブ场景的数值对应这一套（卡组不带激走技能时）；另一套不含任何激走效果（激走技能也不计），存为歌曲的最高分，按本模型约等于自由 Live 的分数。谱面详情里两个数字都列出。"
             + "服务器怎样使用这两套分数（例如计算活动积分），客户端代码里看不到。",
         ],
       },
@@ -286,22 +287,43 @@ export const GUIDE = {
           "Just 率 j 只作用于撃奏ライブ的 Just 任务区间：deck 另做一次 Just 区间内全打 Perfect 的无技能模拟（X_P），页面在它与全 Just 的模拟（X_J）之间按 j 线性插值，名次加成按插值后的区间得分重算（第 2 节的截断公式），再乘 g(q)。"
             + "技能位权重在各区间内的部分按同一比例 ρ_i 缩放，这也是近似。j = 100%、q = 0 时回到第 1、2 节的数值；自由 Live 没有 Just，只有 Great 比例。",
           "断连不满足上述条件：连击系数和激走连击系数取决于当前连击数，连击任务区间还会因断连失败，断在不同位置损失不同（deck 统计尚未导出每张谱面的断连损失分布）。"
-            + "判定转换技能（12006、13005）把 Great 转为 Perfect，相当于降低 q；回复和护盾只在生命归零之后才影响得分（此后每个音符 × 0.3）。",
+            + "判定转换技能（12006 把 Great 转为 Perfect，13005 转为 Just）相当于降低 q；回复和护盾只在生命归零之后才影响得分（此后每个音符 × 0.3）。",
+        ],
+      },
+      {
+        title: "激走技能",
+        body: [
+          "成员卡带激走技能，与它配对的小卡带激走支援技能。从反编译代码看，它们只在激走开启时建立，只加进含激走的那套分数（battleLiveScore），不进不含激走的那套（soloScore），自由 Live 里也没有。"
+            + "每个技能属于一种激走任务（连击、幸运或 Just），只在同任务的区间里触发，与演奏位置和洗牌无关；支援技能可以带乐队条件（条件 5000），看配对的成员是否属于指定乐队。"
+            + "ournotes-deck 的整局模拟可以带上激走技能，它们的效果（激走连击加成、幸运槽与幸运点、Just 数加成、支援技能的加分等）都逐帧计算。",
+          "本页现有的得分数值都不带激走技能。谱面对各激走技能的适性（每个激走技能或支援技能单独带上时的得分增量与区间指标变化）数据待更新。",
+        ],
+        after: [
+          "精确与近似。带上激走技能再按第 1、2、6 节的式子计算时：名次 1、全 Just、无 Great 的得分是整局模拟的结果，普通技能那部分沿用第 1 节的线性式，与不带激走技能时是同一个近似。"
+            + "名次沿用第 2 节的线性式：从反编译代码看，名次加成是区间结束时记入的一笔固定分，不改变任何得分系数，所以换名次时无普通技能的部分仍然精确。"
+            + "Just 率低于 100% 时沿用第 6 节的插值，带激走技能时这是近似：转 Just（13005）、每个 Just 加分的支援技能（2001）和累计 Just（13002）对 Just 数都不是线性的。Great 比例沿用 1 − 0.2 q，同样是近似。",
+          "理论最佳打法下不起作用的技能。连击保护（12004）和 Great 转 Perfect（12006）只在出现 Great 或 Miss 时起作用，理论最佳打法下为 0，Great 比例的近似里也没有计入它们；每个音符都在准确时刻命中时，放宽 Just 判定（4004）也不起作用。"
+            + "另有一些激走技能只提高名次指标，不直接加分（Just 数加成 13000、累计 Just 13002、加幸运点 11002）：本页不模拟对手，名次由你选定，所以它们不改变本页的得分；实际对局里它们可能帮你拿到更好的名次。"
+            + "以上是按反编译代码的阅读得出的，这些技能的得分增量为 0 还在用整局实跑逐一确认。",
+          "种子。带激走技能的整局模拟与第 1 节用同一组种子（含幸运区间的谱面是前 8 个公开种子），取的是这组种子的平均，不是游戏里的期望，游戏的种子规律未知；带激走技能时幸运区间的种子间差别可能更大。"
+            + "演奏位置每局洗牌，但激走技能与位置无关；洗牌只改变单个种子里概率判定的抽取次序，不改变期望。",
+          "核对现状。激走技能这一层按反编译代码逐项审计，与重写一致；整局与游戏原生代码的对照正在做，结果出来之前，这一层的数值尚在核对。按本模型得出的结论也都以此为前提。",
         ],
       },
       {
         title: "尚未纳入的机制",
         defs: [
           ["其它技能类型", "music-data.json 的 deck.kinds 列出主数据里所有与因子线性相关的加分类别（效果 2000、2002、2004、2005，按持续时间、目标和条件区分），每张谱面都给出了各类别的位置权重；"
-            + "本页只用普通加分这一类。判定加分（2004，目标判定 41/46）和带条件的 2000（条件组 14、15）权重不同，需要按具体卡组逐类求和；累计加分（2001、2003）、判定转换、激走技能与 Snap 技能不是线性的，只能整局模拟。"],
+            + "本页只用普通加分这一类。判定加分（2004，目标判定 41/46）和带条件的 2000（条件组 14、15）权重不同，需要按具体卡组逐类求和；累计加分（2001、2003）和判定转换不是线性的，只能整局模拟，激走技能与激走支援技能也是这样（第 7 节）。"],
           ["撃奏ライブ的对手", "名次由房间里其他玩家在各区间的任务指标决定。本页不模拟对手，而是让你直接选名次（名次 1 为最佳情况）；同值时加成表按哪一种名次查尚未完全核实，直接选名次时不受影响。房间不满 5 人时服务器是否补位，客户端代码里看不到。游戏没有协力模式。"],
-          ["Snap 技能", "跟随所属成员一起被洗牌；效果多由条件触发（成员乐队、生命、判定数等），取决于具体卡组，本页不计入。条件在整局都满足的加分，相当于在 base 上乘 (1 + y)。"],
+          ["Snap 技能（普通支援技能）", "跟随所属成员一起被洗牌；效果多由条件触发（成员乐队、生命、判定数等），取决于具体卡组，本页不计入。条件在整局都满足的加分，相当于在 base 上乘 (1 + y)。小卡的激走支援技能另算，见第 7 节。"],
           ["概率发动（条件 4011）", "若发动概率 p 与其它量独立，它的期望贡献等于把该技能值换成 p · x，可以直接填进技能输入；方差会比表中给出的更大。"],
           ["实机一局耗时", "进入结算的时刻、加载时间都依赖设备和网络，由每局额外耗时 c 表示；支配关系对所有 c ≥ 0 成立。"],
           ["核对范围", "本页的数值不是直接运行游戏代码得到的：ournotes-deck 是我们照反编译代码重写的模拟，每张谱面的整局都由它计算。"
             + "游戏自己的函数只用来分块核对这份重写：在 ARM64 模拟器里单独运行客户端的相关函数（计分、技能的发动与结束、激走连击等），和重写的实现逐例比较，已核对的部分没有发现差异。"
             + "没有核对过的部分可能有错；整局从没有用游戏代码跑过，也还没有拿实机成绩逐局核对。"
-            + "判定窗口类技能（4000–4003、13001）尚未接入整局模拟，另有少数激走条件只有合成测试；本页只用普通加分技能，不受这两项影响。游戏更新或热更新补丁也可能改变这些规则。"],
+            + "激走技能这一层（第 7 节）：按反编译代码逐项审计，与重写一致；整局与原生代码的对照正在做，结果出来之前尚在核对。"
+            + "判定窗口类技能（4000–4003、13001）尚未接入整局模拟，另有少数激走条件只有合成测试；本页只用普通加分技能，不受这两项影响，激走技能可能用到这些条件，这也在上面的“尚在核对”之内。游戏更新或热更新补丁也可能改变这些规则。"],
         ],
       },
       {
@@ -312,7 +334,7 @@ export const GUIDE = {
           ["主 BPM、密度", "主 BPM 是第一个到最后一个判定音符之间持续时间最长的 BPM；密度 = 判定音符数 ÷ 这段区间的秒数。"],
           ["基础系数、W、跳过系数", "base 与 W 定义见第 1、3 节：撃奏ライブ场景下 base 含所选名次的激走区间排名加成，自由 Live 场景没有；两者都按准率缩放。跳过系数是跳过时每点综合力的得分（全部按 Great、连击为 0、无技能），与时长无关，本页不随场景变化。"],
           ["与其它资料不一致时", "本页的数值来自我们对反编译代码的理解，没有官方资料可以对照，可能有错；和其它站点、工具或实机结果不一致时，请优先相信它们。"
-            + "口径不同（时长的取法、游玩场景与名次、准率、卡组设定）也会带来差别，可以先把页面上的参数调成对方的设定再比较。"],
+            + "口径不同（时长的取法、游玩场景与名次、准率、卡组设定、是否带激走技能）也会带来差别，可以先把页面上的参数调成对方的设定再比较。"],
         ],
       },
     ],
@@ -339,6 +361,7 @@ export const GUIDE = {
           "score is the model's no-skill score (in Gekisou Live with the range rank bonuses), w_k the score a factor-1 plain skill (value 10000, +100 %) on the member at position k adds over the whole live; both per point of the measurement power P₀. "
             + "The value becomes a factor with a floor (⌊value/10000 × 10⁵⌋/10⁵) and every note score is floored, so the formula holds up to the floors: for every seed deck plays a random deck of real skill values at another power (1000003) through the whole live, and a chart whose deviation exceeds the bound fails. All 340 current charts pass. "
             + "This check only shows that the formula agrees with the simulation, not that the simulation agrees with the game.",
+          "The page's decks have plain skills only, no member Gekisou skills and no snap Gekisou support skills, and every score figure is without them; section 7 has how they work.",
           "Every song has three Gekisou missions (combo, luck or Just, set per song and shared by every difficulty), one for each of the chart's three fevers in order. Just judgements are only on inside Just mission ranges, so the songs without a Just mission (41 of 85: 21 all combo, 20 all luck) have no Just all live; "
             + "27 songs have three Just missions, and 17 have one each of combo, luck and Just.",
           "By this model Gekisou weighs a lot: against Gekisou off, an Expert chart's no-skill score is 1.6–4.7 times higher (median 2.4). Most of it is the range rank bonus (MasterLiveGekisouRankingScoreBonus): every completed range adds a percentage of its own score, looked up by rank, rank 1 by default; "
@@ -365,7 +388,7 @@ export const GUIDE = {
             + "By this model the no-skill score at rank 1 in all three ranges is 1.25–1.65 times that at rank 5 (340 charts, median 1.46).",
           "The Free Live figures come from a separate whole-live simulation with Gekisou off, not from Gekisou Live minus the bonuses: without Gekisou there are no Just judgements, Gekisou combo factor or luck rushes either. Without Gekisou there is no luck lottery, and the page's skill has no probability condition, so every chart has one seed; "
             + "charts with more than 3 fevers, unplayable in Gekisou Live, are computed as usual in Free Live.",
-          "By the decompiled code, Gekisou Live reports two scores: one with every Gekisou effect (Just, luck, the Gekisou combo and the rank bonuses), which the page's Gekisou Live figures stand for; the other without any Gekisou effect, kept as the song's best score, by this model about the Free Live score. The chart details show both. "
+          "By the decompiled code, Gekisou Live reports two scores: one with every Gekisou effect (Just, luck, the Gekisou combo, the rank bonuses and the cards' Gekisou skills), which the page's Gekisou Live figures stand for (with a deck without Gekisou skills); the other without any Gekisou effect (no Gekisou skills either), kept as the song's best score, by this model about the Free Live score. The chart details show both. "
             + "How the server uses the two (for event points, say) is not in the client code.",
         ],
       },
@@ -438,22 +461,43 @@ export const GUIDE = {
           "The Just rate j applies to the Just mission ranges of Gekisou Live only: deck runs the live once more with Perfects instead of Justs in those ranges and no skills (X_P), the page interpolates linearly by j between it and the all-Just run (X_J), recomputes the rank bonuses on the interpolated range scores (the floor formula of section 2) and applies g(q). "
             + "The skill position weights are scaled by the same ratio ρ_i inside every range, again an approximation. At j = 100 % and q = 0 the figures are those of sections 1 and 2; Free Live has no Just, only the Great share.",
           "Breaks do not meet the condition: the combo and Gekisou combo factors depend on the running combo and a break fails a combo mission range, so a break costs differently at different notes (the deck statistics do not export a chart's break-cost distribution yet). "
-            + "Judgement conversion (12006, 13005) turns Greats into Perfects, lowering q; recovery and guard skills change the score only once life reaches zero (every note × 0.3 after that).",
+            + "Judgement conversion (12006 turns Greats into Perfects, 13005 into Justs) lowers q; recovery and guard skills change the score only once life reaches zero (every note × 0.3 after that).",
+        ],
+      },
+      {
+        title: "Gekisou skills",
+        body: [
+          "Member cards carry a Gekisou skill and the snap paired with them a Gekisou support skill. By the decompiled code they exist only with Gekisou on and add to the score with Gekisou (battleLiveScore) only, never to the score without it (soloScore), and Free Live has none. "
+            + "Every skill belongs to one Gekisou mission (combo, luck or Just) and fires only in ranges of that mission, whatever the performance position and the shuffle; a support skill may carry a band condition (condition 5000) on the member it is paired with. "
+            + "ournotes-deck's whole-live simulation can take Gekisou skills, and computes their effects (the Gekisou combo boost, the luck gauge and luck points, Just count boosts, the support skills' score ups and others) frame by frame.",
+          "The page's current score figures are all without Gekisou skills. A chart's aptitude for each Gekisou skill (the score gain and the range measure changes of one Gekisou skill or support skill taken alone) is pending in the data.",
+        ],
+        after: [
+          "Exact and approximate. With Gekisou skills taken and the formulas of sections 1, 2 and 6 applied: at rank 1, all Just and no Great the score is the whole-live simulation's, and the plain skills' part keeps the linear formula of section 1, the same approximation as without Gekisou skills. "
+            + "The ranks keep the linear formula of section 2: by the decompiled code the rank bonus is a fixed amount added at the range's end that changes no score factor, so the part without plain skills stays exact at other ranks. "
+            + "A Just rate below 100 % keeps the interpolation of section 6, an approximation with Gekisou skills: Just conversion (13005), the per-Just support score up (2001) and cumulative Just (13002) are not linear in the Just count. The Great share keeps 1 − 0.2 q, an approximation too.",
+          "Skills that do nothing in the theoretical best play. The combo guard (12004) and Great to Perfect (12006) act only on Greats or Misses: 0 in the theoretical best play, and the Great share approximation leaves them out; with every note hit at its exact time, the wider Just window (4004) does nothing either. "
+            + "Some Gekisou skills raise a rank measure only and add no score (Just count boost 13000, cumulative Just 13002, luck points 11002): the page does not model opponents and takes the ranks you pick, so they leave the page's scores alone; in a real room they may win you a better rank. "
+            + "This follows from our reading of the decompiled code; whole-live runs confirming a zero score gain for each of these skills are under way.",
+          "Seeds. Whole lives with Gekisou skills use the seeds of section 1 (the first 8 published seeds on charts with a luck range), and their mean is not the game's expectation, its seed law being unknown; with Gekisou skills the seeds of luck ranges may spread further apart. "
+            + "The performance positions are shuffled every live, but the Gekisou skills do not depend on the position; the shuffle changes only the order of the chance draws within a seed, not the expectation.",
+          "State of the checks. This layer has been audited item by item against the decompiled code and agrees with the rewrite; the whole-live comparison with the game's native code is in progress, and until it is done the figures of this layer are still being checked. The conclusions “by this model” rest on that too.",
         ],
       },
       {
         title: "Mechanisms not modelled yet",
         defs: [
           ["Other skill types", "music-data.json's deck.kinds lists every score-up kind of the master data whose score is linear in the factor (effects 2000, 2002, 2004, 2005, told apart by duration, targets and conditions), with each chart's position weights per kind; "
-            + "the page uses the plain score-up kind only. Judgement score up (2004, target judgements 41/46) and conditional 2000s (condition groups 14, 15) weigh differently and need a deck's own kinds summed; cumulative score up (2001, 2003), judgement conversion, Gekisou skills and snap skills are not linear and need the simulation itself."],
+            + "the page uses the plain score-up kind only. Judgement score up (2004, target judgements 41/46) and conditional 2000s (condition groups 14, 15) weigh differently and need a deck's own kinds summed; cumulative score up (2001, 2003) and judgement conversion are not linear and need the simulation itself, and so do Gekisou skills and Gekisou support skills (section 7)."],
           ["Gekisou Live opponents", "The ranks depend on the other players' mission measures in every range. The page does not model opponents and lets you pick the ranks instead (rank 1 is the best case); which kind of rank the bonus table takes on equal values is not fully checked, and picking the ranks directly does not depend on it. Whether the server fills a room of fewer than 5 is not in the client code. The game has no co-op mode."],
-          ["Snap skills", "Shuffled with their member; mostly conditional (the member's band, life, judgement counts), so deck-specific and left out here. A score up whose condition holds all live multiplies base by (1 + y)."],
+          ["Snap skills (plain support skills)", "Shuffled with their member; mostly conditional (the member's band, life, judgement counts), so deck-specific and left out here. A score up whose condition holds all live multiplies base by (1 + y). A snap's Gekisou support skill is another matter, see section 7."],
           ["Probability skills (condition 4011)", "With an activation chance p independent of the rest, the expected contribution is that of the value p · x, which can be entered as the skill value; the spread is larger than shown."],
           ["Real play time", "When the results start and how long loading takes depend on the device and the network; the overhead c stands for them, and dominance holds for every c ≥ 0."],
           ["Scope of the checks", "The figures on this page do not come from running the game's code: ournotes-deck is our simulation, rewritten after the decompiled code, and it computes every chart's whole live. "
             + "The game's own functions only check the rewrite piece by piece: the client's relevant functions (scoring, skill execute and finish, the Gekisou combo and others) run alone in an ARM64 emulator and are compared case by case with the rewrite; the parts checked so far show no difference. "
             + "Parts not checked may be wrong; no whole live has been run with the game's code, and none has been checked against real play results yet. "
-            + "Judgement window skills (4000–4003, 13001) are not in the whole-live simulation yet, and a few Gekisou conditions only have synthetic tests; the page uses the plain score-up skill only and is affected by neither. A game update or hotfix patch may also change these rules."],
+            + "The Gekisou skill layer (section 7) has been audited item by item against the decompiled code and agrees with the rewrite; the whole-live comparison with the native code is in progress, and until it is done the layer is still being checked. "
+            + "Judgement window skills (4000–4003, 13001) are not in the whole-live simulation yet, and a few Gekisou conditions only have synthetic tests; the page uses the plain score-up skill only and is affected by neither, the Gekisou skills may use those conditions, and that is part of the check still under way. A game update or hotfix patch may also change these rules."],
         ],
       },
       {
@@ -464,7 +508,7 @@ export const GUIDE = {
           ["Main BPM, density", "The main BPM holds longest from the first to the last judged note; density = judged notes ÷ that span in seconds."],
           ["Base, W, skip", "Base and W as in sections 1 and 3: in Gekisou Live base includes the range rank bonuses of the ranks chosen, in Free Live it has none; both scale with the accuracy. Skip: score per point of power of a skipped live (every note Great, combo 0, no skills), independent of the length, and the same in every scenario on this page."],
           ["Where other sources disagree", "The figures come from our reading of the decompiled code, with no official data to check them against, and may be wrong; where other sites, tools or real plays disagree, trust them first. "
-            + "Different conventions (how the length is taken, the play scenario and ranks, the accuracy, the deck) also make differences; set the page's parameters to theirs before comparing."],
+            + "Different conventions (how the length is taken, the play scenario and ranks, the accuracy, the deck, Gekisou skills or none) also make differences; set the page's parameters to theirs before comparing."],
         ],
       },
     ],
