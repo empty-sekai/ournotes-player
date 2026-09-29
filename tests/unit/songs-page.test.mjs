@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { UI } from "../../examples/songs/text.js";
 
 import {
   DEFAULT_SCENARIO, MEASURES, MISSION_MEASURE, X_MAX, aptitudeFigures, aptitudeRate, aptitudeSe, aptitudeShapes, chartVariants, zeroGain, chartFigures, dominance, dominates, eventDominates, formatLength,
@@ -576,4 +577,12 @@ test("master skill factor uses float32 before truncation, unlike user percentage
   assert.equal(masterSkillFactor(13000), 1.29999);
   assert.equal(masterSkillFactor(15000), 1.5);
   assert.equal(meanSkill([130 / 100], 1), 1.3); // UI percent conversion must not use masterSkillFactor
+});
+
+test("Beta notice explains testing, sampling error and unfinished native checks in both languages", () => {
+  assert.equal(UI.zh.beta, "Beta");
+  assert.equal(UI.en.beta, "Beta");
+  for (const term of ["测试中", "数值可能调整", "采样误差", "原生整局核对尚未完成"]) assert.ok(UI.zh.betaNote.includes(term));
+  for (const term of ["In testing", "figures may change", "sampling error", "native game", "not yet complete"]) assert.ok(UI.en.betaNote.includes(term));
+  for (const locale of [UI.zh, UI.en]) assert.ok(!/https?:|反馈|feedback/i.test(locale.betaNote));
 });

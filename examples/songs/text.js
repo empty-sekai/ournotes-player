@@ -3,6 +3,7 @@
 
 export const UI = {
   zh: {
+    beta: "Beta", betaNote: "测试中，数值可能调整。幸运结果有采样误差，原生整局核对尚未完成。",
     app: "谱面数据", views: { rank: "排行", charts: "图表", guide: "说明" },
     all: "全部", search: "搜索曲名、读音、作者…", songs: (n) => `${n} 首`, chartsN: (n) => `${n} 张谱面`,
     jackets: "封面", jacketsHint: "显示或隐藏封面", theme: "切换浅色 / 深色", swap: "交换横纵轴",
@@ -101,6 +102,7 @@ export const UI = {
     caveat: "数值以游戏反编译为来源，尽量准确但不保证正确；与其它资料有出入时请以它们为准",
   },
   en: {
+    beta: "Beta", betaNote: "In testing; figures may change. Luck results have sampling error, and whole-live checks against the native game are not yet complete.",
     app: "Chart data", views: { rank: "Rankings", charts: "Charts", guide: "Guide" },
     all: "All", search: "Search title, reading, credits…", songs: (n) => `${n} songs`, chartsN: (n) => `${n} charts`,
     jackets: "Jackets", jacketsHint: "Show or hide the jackets", theme: "Light / dark", swap: "Swap the axes",

@@ -272,13 +272,17 @@ const main = async () => {
           langs.map((l) => h("option", { value: l, selected: l === S.lang }, l))))));
   };
 
+  // Visible text plus an explicit description: the beta state does not rely on color or a hover tooltip.
+  const betaBadge = (descriptionId) => h("span", { class: "beta-badge", lang: "en", "aria-describedby": descriptionId }, u().beta);
+
   // the route heading: the view's title and what it answers
   const renderHead = () => {
     const t = u();
     const [title, lead] = S.view === "guide" ? [g().title, g().lead]
       : [t.heads[S.view], t.lead[S.view](songs.songs.length, rows.length)];
-    put(head, h("div", { class: "page-head" }, h("div", { class: "page-head-title" }, icon("star", "ic star"), h("h1", {}, title),
-      h("span", { class: "track", "aria-hidden": "true" })), h("p", {}, lead)));
+    put(head, h("div", { class: "page-head" }, h("div", { class: "page-head-title" }, icon("star", "ic star"), h("h1", {}, title), betaBadge("page-beta-note"),
+      h("span", { class: "track", "aria-hidden": "true" })), h("p", {}, lead),
+    h("p", { id: "page-beta-note", class: "beta-note" }, t.betaNote)));
   };
 
   const renderFilters = () => {
@@ -748,7 +752,9 @@ const main = async () => {
   // Build names and raw measure tables once. Slider updates only replace the numerical cells.
   const aptitudeBox = (r, changed) => {
     const A = u().aptitude, D = u().detail;
-    const element = h("section", { class: "aptitude" }, heading("h3", "sec-head", A.title));
+    const element = h("section", { class: "aptitude" },
+      heading("h3", "sec-head", [A.title, " ", betaBadge("aptitude-beta-note")]),
+      h("p", { id: "aptitude-beta-note", class: "hint beta-note" }, u().betaNote));
     const header = songs.deck && songs.deck.gekisouAptitude;
     const data = r.stats && r.stats.gekisouAptitude;
     if (!header || !data || r.unplayable) {
