@@ -399,6 +399,18 @@
   .rk { display: inline-block; min-width: 32px; padding: 0 8px; border-radius: 4px; text-align: center; font-weight: 600; font-size: 12px; border: 1px solid var(--mn-border); color: var(--mn-ink-soft); }
   .rk-SS { color: var(--mn-orbit-light); background: var(--mn-orbit-night); border-color: var(--mn-orbit-edge); }
   .rk-S { color: var(--mn-accent-deep); background: var(--mn-accent-soft); border-color: color-mix(in srgb, var(--mn-accent) 40%, transparent); }
+  /* Single-skill aptitude: numeric cells update without rebuilding the expanded details. */
+  .apt-table { min-width: 680px; }
+  .apt-table > thead > tr > th, .apt-table > tbody > tr > td { vertical-align: top; }
+  .apt-table > tbody > tr > td:first-child { min-width: 220px; max-width: 380px; overflow-wrap: anywhere; }
+  .apt-table small { display: block; color: var(--mn-text-muted); font-size: 11px; white-space: normal; }
+  .apt-table small.warn { color: var(--mn-rose); }
+  .apt-table details { margin-top: 6px; }
+  .apt-table summary { cursor: pointer; color: var(--mn-accent-deep); font-size: 12px; }
+  .apt-table details table { margin-top: 8px; }
+  .apt-table .num { white-space: nowrap; }
+  .aptitude .panel { margin-top: 10px; }
+  .factors { min-width: 640px; }
   /* the rank measures of the Gekisou ranges */
   .tbl-scroll { overflow-x: auto; }
   .ranks td.hi { font-weight: 600; color: var(--mn-text); }
