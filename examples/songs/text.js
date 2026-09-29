@@ -208,7 +208,7 @@ export const GUIDE = {
   zh: {
     title: "定义、推导与成立条件",
     lead: "本页的数值以游戏客户端的反编译代码为来源：ournotes-deck 按反编译得到的得分逻辑对每张谱面做整局模拟（激走开启与关闭各一次），结果就是 music-data.json 的 deck 统计。"
-      + "这里的模拟是我们照反编译代码重写的程序，不是在模拟器里直接运行游戏本身的代码；游戏自己的函数只用来分块核对这份重写（见“尚未纳入的机制”一节的“核对范围”）。"
+      + "这里的模拟是我们照反编译代码重写的程序，不是在模拟器里直接运行游戏本身的代码；游戏自己的函数用于核对这份重写，目前包含分块核对与一张谱面的整局输入、终分核对（见“尚未纳入的机制”一节的“核对范围”）。"
       + "我们尽量保证正确，但对反编译代码的理解、模型的简化和数据版本都可能出错，所以不能保证。如果本页和其它站点、工具或实机结果有出入，多半是我们这边有误，请以它们为准。"
       + "下文给出每个量的定义、推导和成立条件；模型没有覆盖的机制单列一节。",
     sections: [
@@ -366,8 +366,8 @@ export const GUIDE = {
           ["概率发动（条件 4011）", "若发动概率 p 与其它量独立，它的期望贡献等于把该技能值换成 p · x，可以直接填进技能输入；方差会比表中给出的更大。"],
           ["实机一局耗时", "进入结算的时刻、加载时间都依赖设备和网络，由每局额外耗时 c 表示；支配关系对所有 c ≥ 0 成立。"],
           ["核对范围", "本页的数值不是直接运行游戏代码得到的：ournotes-deck 是我们照反编译代码重写的模拟，每张谱面的整局都由它计算。"
-            + "游戏自己的函数只用来分块核对这份重写：在 ARM64 模拟器里单独运行客户端的相关函数（计分、技能的发动与结束、激走连击等），和重写的实现逐例比较，已核对的部分没有发现差异。"
-            + "没有核对过的部分可能有错；整局从没有用游戏代码跑过，也还没有拿实机成绩逐局核对。"
+            + "游戏自己的函数用于分块核对这份重写：在 ARM64 模拟器里单独运行客户端的相关函数（计分、技能的发动与结束、激走连击等），和重写的实现逐例比较，已核对的部分没有发现差异。"
+            + "原生整局已跑通谱面 10000201：综合力 300000、无技能、激走关闭，364 次 Perfect 的音符 ID、时刻与帧均与理论输入一致，终分 1063422 与 deck 一致。这只核对了一张谱面的输入与终分；逐帧分数、技能与激走尚未完成核对，环境仍有 Unity 及外部依赖替身，不能据此认定模型与游戏全面等价。未核对的部分可能有错，也尚未与实机成绩逐局核对。"
             + "激走技能这一层（第 7 节）：按反编译代码逐项审计，与重写一致；整局与原生代码的对照正在做，结果出来之前尚在核对。"
             + "判定窗口类技能（4000–4003、13001）尚未接入整局模拟，另有少数激走条件只有合成测试；本页只用普通加分技能，不受这两项影响，激走技能可能用到这些条件，这也在上面的“尚在核对”之内。游戏更新或热更新补丁也可能改变这些规则。"],
         ],
@@ -388,7 +388,7 @@ export const GUIDE = {
   en: {
     title: "Definitions, derivations and conditions",
     lead: "The figures on this page are sourced from the game client's decompiled code: ournotes-deck simulates every chart's whole live (once with Gekisou on, once off) after the score logic read from it, and the results are music-data.json's deck statistics. "
-      + "The simulation is our own program, rewritten after the decompiled code; it does not run the game's code in an emulator. The game's own functions are used only to check the rewrite piece by piece (see Scope of the checks under the mechanisms left out). "
+      + "The simulation is our own program, rewritten after the decompiled code; it does not run the game's code in an emulator. The game's own functions check the rewrite piece by piece, with an additional whole-live input and final-score check for one chart (see Scope of the checks under the mechanisms left out). "
       + "We aim for them to be correct but cannot guarantee it: our reading of the decompiled code, the model's simplifications and the data version can all be wrong. Where this page disagrees with other sites, tools or real plays, the mistake is most likely ours; trust them. "
       + "Below: each quantity's definition, derivation and conditions; the mechanisms the model leaves out have their own section.",
     sections: [
@@ -546,8 +546,8 @@ export const GUIDE = {
           ["Probability skills (condition 4011)", "With an activation chance p independent of the rest, the expected contribution is that of the value p · x, which can be entered as the skill value; the spread is larger than shown."],
           ["Real play time", "When the results start and how long loading takes depend on the device and the network; the overhead c stands for them, and dominance holds for every c ≥ 0."],
           ["Scope of the checks", "The figures on this page do not come from running the game's code: ournotes-deck is our simulation, rewritten after the decompiled code, and it computes every chart's whole live. "
-            + "The game's own functions only check the rewrite piece by piece: the client's relevant functions (scoring, skill execute and finish, the Gekisou combo and others) run alone in an ARM64 emulator and are compared case by case with the rewrite; the parts checked so far show no difference. "
-            + "Parts not checked may be wrong; no whole live has been run with the game's code, and none has been checked against real play results yet. "
+            + "The game's own functions check the rewrite piece by piece: the client's relevant functions (scoring, skill execute and finish, the Gekisou combo and others) run alone in an ARM64 emulator and are compared case by case with the rewrite; the parts checked so far show no difference. "
+            + "A native whole-live run now covers chart 10000201 at power 300000, without skills and with Gekisou off: the note IDs, times and frames of 364 Perfects match the theoretical input, and the final score 1063422 matches deck. This checks only one chart’s input and final score. Per-frame scores, skills and Gekisou remain unchecked; the environment still substitutes for Unity and external dependencies. This does not establish full equivalence with the game. Unchecked parts may be wrong, and comparisons against real device results are still pending. "
             + "The Gekisou skill layer (section 7) has been audited item by item against the decompiled code and agrees with the rewrite; the whole-live comparison with the native code is in progress, and until it is done the layer is still being checked. "
             + "Judgement window skills (4000–4003, 13001) are not in the whole-live simulation yet, and a few Gekisou conditions only have synthetic tests; the page uses the plain score-up skill only and is affected by neither, the Gekisou skills may use those conditions, and that is part of the check still under way. A game update or hotfix patch may also change these rules."],
         ],
