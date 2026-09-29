@@ -548,7 +548,7 @@ const main = async () => {
         (x.body || []).map((p) => h("p", {}, p)),
         x.math && x.math.length ? h("div", { class: "formula" }, x.math.map((m) => h("code", {}, m))) : null,
         (x.after || []).map((p) => h("p", {}, p)),
-        x.defs && x.defs.length ? h("dl", { class: "defs" }, x.defs.map(([term, def]) => [h("dt", {}, term), h("dd", {}, def)])) : null)))));
+        x.defs && x.defs.length ? h("dl", { class: "defs" }, x.defs.flatMap(([term, def]) => [h("dt", {}, term), h("dd", {}, def)])) : null)))));
     // the contents follow the reading: the first section in the band from under the header to 45% of the window
     if (guideSpy) guideSpy.disconnect();
     const seen = new Set();
@@ -707,12 +707,18 @@ const main = async () => {
   const renderFoot = () => {
     const p = songs.provenance || {};
     const m = p.master || {};
+    const c = p.client || {};
     const d = p.deck || null;
     const deckLink = d && d.source && d.commit
       ? h("a", { href: `${d.source}/tree/${d.commit}`, target: "_blank", rel: "noopener" }, `${d.name || "deck"} ${d.commit.slice(0, 7)}`)
       : null;
-    put(foot, h("footer", { class: "foot" }, h("span", {}, u().source(p.region ?? "?", m.version ?? "?"),
+    // the data is the same on every server as far as we know; the region and versions it was taken from go in the hint
+    const client = c.versionName ? `${c.versionName}${c.versionCode ? ` (${c.versionCode})` : ""}` : "?";
+    const master = m.version ?? "?";
+    put(foot, h("footer", { class: "foot" }, h("span", {},
+      h("span", { title: u().sourceHint(p.region ?? "?", master, client) }, u().source(/^[0-9a-f]{32}$/i.test(master) ? master.slice(0, 8) : master)),
       deckLink ? [` · ${u().deckModel} `, deckLink] : null),
+      h("span", {}, u().caveat),
       moeBase ? h("span", {}, h("a", { href: moeBase, target: "_blank", rel: "noopener" }, "moenotes", icon("out")), ` · ${u().moenotesHint}`) : null));
   };
   const renderAll = () => { renderHeader(); renderHead(); renderFilters(); renderMain(); renderFoot(); renderDrawer(); save(); };
