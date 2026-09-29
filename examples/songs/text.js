@@ -202,7 +202,8 @@ export const GUIDE = {
         ],
         after: [
           "RS_i 是区间 i 的得分，p_i(r) 是区间 i 在名次 r 时的加成百分比，B_i = trunc(RS_i · p_i(1) / 100) 是名次 1 的加成（现有数据的每个种子、每个区间都满足这个等式），u_i[k] 是位置 k 的技能让区间 i 多得的分数 ÷ P₀。"
-            + "依据：从反编译代码看，加成在区间结束时一次性记入，不改变之后音符的得分系数；名次只影响一种技能条件（7012），现有主数据里没有技能用到它。所以按本模型，换名次只改变加成这一项，w_r 的误差来自技能加成的取整，小于 3/P₀。",
+            + "依据：从反编译代码看，加成在区间结束时一次性记入，不改变之后音符的得分系数；名次只影响一种技能条件（7012），现有主数据里没有技能用到它。所以按本模型，换名次只改变加成这一项，w_r 的误差来自技能加成的取整，小于 3/P₀。deck 另用随机名次整局实跑核对了这组线性式，现有数据全部落在误差上界内。"
+            + "按本模型，三个区间全是第 1 名时的无技能得分是全是第 5 名时的 1.25–1.65 倍（340 张谱面，中位 1.46 倍）。",
           "自由 Live 场景的数值来自另一次激走关闭的整局模拟，不是从撃奏ライブ减去加成得到的：关闭激走时也没有 Just、激走连击系数和幸运冲刺。关闭激走时没有幸运抽签，本页用到的技能也没有概率条件，所以每张谱面只有一个种子；"
             + "Fever 超过 3 个、撃奏ライブ无法游玩的谱面，在自由 Live 场景照常计算。",
           "从反编译代码看，撃奏ライブ同时上报两套分数：一套含全部激走效果（Just、幸运、激走连击和排名加成），本页撃奏ライブ场景的数值对应这一套；另一套不含激走效果，存为歌曲的最高分，按本模型约等于自由 Live 的分数。谱面详情里两个数字都列出。"
@@ -350,7 +351,8 @@ export const GUIDE = {
         ],
         after: [
           "RS_i is range i's score, p_i(r) range i's bonus percent at rank r, B_i = trunc(RS_i · p_i(1) / 100) the rank-1 bonus (every range of every seed of the current data meets this), and u_i[k] the score the skill at position k adds to range i, per P₀. "
-            + "Why: by the decompiled code the bonus is added once at the range's end and leaves the score factors of the notes after it alone, and the rank reaches one skill condition only (7012), which no skill of the current master data uses. So by this model a rank changes the bonus term only; w_r is off by the skill floors, less than 3/P₀.",
+            + "Why: by the decompiled code the bonus is added once at the range's end and leaves the score factors of the notes after it alone, and the rank reaches one skill condition only (7012), which no skill of the current master data uses. So by this model a rank changes the bonus term only; w_r is off by the skill floors, less than 3/P₀. deck also runs whole lives at random ranks against these formulas, and the current data stays within the error bound. "
+            + "By this model the no-skill score at rank 1 in all three ranges is 1.25–1.65 times that at rank 5 (340 charts, median 1.46).",
           "The Free Live figures come from a separate whole-live simulation with Gekisou off, not from Gekisou Live minus the bonuses: without Gekisou there are no Just judgements, Gekisou combo factor or luck rushes either. Without Gekisou there is no luck lottery, and the page's skill has no probability condition, so every chart has one seed; "
             + "charts with more than 3 fevers, unplayable in Gekisou Live, are computed as usual in Free Live.",
           "By the decompiled code, Gekisou Live reports two scores: one with every Gekisou effect (Just, luck, the Gekisou combo and the rank bonuses), which the page's Gekisou Live figures stand for; the other without any Gekisou effect, kept as the song's best score, by this model about the Free Live score. The chart details show both. "
