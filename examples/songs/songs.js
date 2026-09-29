@@ -19,13 +19,13 @@
 //   &theme=light|dark                                                       (default: the system's)
 // The site root is this page's directory unless ?site=<URL> names another one.
 import {
-  DIFFICULTIES, MOENOTES, NOTE_KINDS, chartRows, extent, histogram, matches, moenotesUrl, pickText, refigure, sortBy,
+  DIFFICULTIES, MOENOTES, NOTE_KINDS, chartRows, extent, histogram, matches, moenotesUrl, pickText, refigure, shapeBands, shapeSkills, sortBy,
   ticks,
 } from "./catalog.js";
 import {
-  MEASURES, RANGES, RANK_MAX, SCORE_RANKS, X_MAX, chartFigures, eventDominance, formatLength, formatRanks, lengthMs,
+  MEASURES, RANGES, RANK_MAX, SCORE_RANKS, X_MAX, aptitudeFigures, aptitudeRate, aptitudeSe, aptitudeShapes, chartVariants, chartFigures, eventDominance, formatLength, formatRanks, lengthMs,
   meanSkill, modelPower, orderRates, parseRanks, perMinute, plainKind, quantile, rangeMeasures, rank, rankThreshold,
-  reachChance, requiredPower, scenarioData, scoreRate, weightSum,
+  reachChance, requiredPower, scenarioData, scoreRate, weightSum, zeroGain,
 } from "./ranking.js";
 import { GUIDE, UI } from "./text.js";
 
@@ -744,6 +744,85 @@ const main = async () => {
       h("p", { class: "hint" }, D.measuresHint));
   };
 
+  // Aptitude only describes taking one skill; it never changes the baseline rows used by rankings.
+  // Build names and raw measure tables once. Slider updates only replace the numerical cells.
+  const aptitudeBox = (r, changed) => {
+    const A = u().aptitude, D = u().detail;
+    const element = h("section", { class: "aptitude" }, heading("h3", "sec-head", A.title));
+    const header = songs.deck && songs.deck.gekisouAptitude;
+    const data = r.stats && r.stats.gekisouAptitude;
+    if (!header || !data || r.unplayable) {
+      element.append(h("p", { class: "hint" }, A.pending));
+      return { element, update() {} };
+    }
+    const shapes = aptitudeShapes(songs);
+    const pair = (x) => Array.isArray(x) && Number.isFinite(x[0])
+      ? `${fmt(x[0], Number.isInteger(x[0]) ? 0 : 2)}${x[1] > 0 ? ` ± ${fmt(x[1], 2)}` : ""}` : "–";
+    const input = h("input", { type: "number", class: "num-in power", min: 0, step: 1000, value: S.power || "", "aria-label": A.power });
+    input.addEventListener("input", () => { S.power = Math.max(0, Math.round(Number(input.value) || 0)); changed(); });
+    const xs = S.skills.map((x, k) => {
+      const inp = h("input", { type: "number", class: "num-in skill", min: 0, max: 100 * X_MAX, step: 5, value: x, "aria-label": `${u().skills} ${k + 1}` });
+      inp.addEventListener("input", () => { S.skills[k] = Math.min(100 * X_MAX, Math.max(0, Number(inp.value) || 0)); changed(); });
+      inp.addEventListener("change", () => { inp.value = S.skills[k]; });
+      return inp;
+    });
+    element.append(h("p", { class: "hint" }, A.note),
+      h("div", { class: "panel" }, h("label", { class: "field" }, A.power, input),
+        h("small", { class: "note" }, A.defaultPower(fmtInt(power))),
+        h("div", { class: "field" }, u().skills, xs)),
+      h("p", { class: "hint" }, A.accuracy), h("p", { class: "hint" }, A.se));
+    const items = chartVariants(r.stats).map((v) => {
+      const shape = shapes.get(v.shape);
+      const names = shapeSkills(songs, shape, S.lang);
+      const label = (x) => `${x.name} · Lv.${x.level ?? "?"} (#${x.id})`;
+      const name = names.length ? [label(names[0]), names.length > 1 ? h("details", {},
+        h("summary", {}, A.more(names.length - 1)), h("ul", {}, names.slice(1).map((x) => h("li", {}, label(x))))) : null]
+        : [`${A.unknown} #${v.shape}`];
+      const gain = h("td", { class: "num" }), ratio = h("td", { class: "num" }), hint = h("small", {});
+      const raw = h("details", {}, h("summary", {}, A.changes), h("p", { class: "note" }, A.raw),
+        h("table", { class: "ranks measures" }, h("thead", {}, h("tr", {}, h("th", {}, D.mRange), MEASURES.map((k) => h("th", {}, `Δ ${D.measure[k]}`)))),
+          h("tbody", {}, (v.ranges || []).map((x, i) => h("tr", {}, h("td", {}, String(i + 1)), MEASURES.map((k) => h("td", {}, pair(x[k]))))))),
+        h("p", {}, A.rawScore, " ", pair(v.score)), h("p", {}, A.rawPerfect, " ", pair(v.scorePerfect)),
+        h("p", {}, A.converted, " ", pair(v.converted)));
+      const zero = zeroGain(v);
+      const row = h("tr", {}, h("td", {}, name, hint, raw),
+        h("td", {}, shape ? A[shape.source] || shape.source : "–"),
+        h("td", { title: shapeBands(songs, shape, S.lang).join(" / ") }, v.bandMatch === true ? A.match : v.bandMatch === false ? A.mismatch : A.noBand),
+        gain, ratio,
+        h("td", {}, `${v.seeds ?? "–"} / ${v.crossSeeds ?? "–"}`,
+          !v.deterministic ? h("small", {}, A.rawScore, ": ", pair(v.score)) : null,
+          v.seTargetMet === false ? h("small", { class: "warn" }, A.warning) : null,
+          v.deterministic ? h("small", {}, A.deterministic) : null,
+          zero ? h("small", {}, zero === "none" ? A.zero : A.onlyMeasures) : null));
+      return { v, gain, ratio, hint, row };
+    });
+    if (!items.length) element.append(h("p", { class: "hint" }, A.empty));
+    else element.append(h("div", { class: "tbl-scroll" }, h("table", { class: "ranks apt-table" },
+      h("thead", {}, h("tr", {}, [A.skill, A.source, A.band, A.gain, A.ratio, A.seeds].map((x) => h("th", {}, x)))),
+      h("tbody", {}, items.map((x) => x.row)))));
+    const factors = data.factors || [];
+    const keys = ["judgedNotes", "justNotes", "perfectNotes", "tailNotes", "comboAtStart", "lotteries"];
+    if (factors.length) element.append(heading("h3", "sec-head", A.factors), h("div", { class: "tbl-scroll" },
+      h("table", { class: "ranks measures factors" }, h("thead", {}, h("tr", {}, h("th", {}, D.mRange), keys.map((k) => h("th", {}, A[k])))),
+        h("tbody", {}, factors.map((x, i) => h("tr", {}, h("td", {}, String(i + 1)), keys.map((k) => h("td", {}, k === "lotteries" ? pair(x[k]) : fmtInt(x[k])))))))),
+      h("p", { class: "hint" }, A.factorNote));
+    return { element, update() {
+      const sc = scenario();
+      const P = S.power || power;
+      for (const { v, gain, ratio, hint } of items) {
+        // A missing/mismatched plain kind must not be mistaken for measured zero cross terms.
+        const usable = header.plainKind === kind && kind !== null ? v : { ...v, weights: null, rangeWeights: null };
+        const f = aptitudeFigures(usable, r.stats.ranges || [], power, sc);
+        const rate = aptitudeRate(f, skills());
+        const se = aptitudeSe(f, skills());
+        put(gain, rate === null ? "–" : `${fmt(P * rate, 1)}${se === null ? "" : ` ± ${fmt(P * se, 1)}`}`);
+        put(ratio, rate !== null && r.base > 0 ? `${fmt(100 * rate / r.base, 2)}%` : "–");
+        put(hint, rate === null ? [f && f.missingPerfectCross ? A.missingPerfect : A.missingCross,
+          f ? ` ${A.baseOnly}: ${fmt(P * f.base, 1)}` : ""] : f.crossAtRank1 ? A.rank1 : "");
+      }
+    } };
+  };
+
   // a scenario changed in the detail: the view behind it redraws when the detail closes
   let behindStale = false;
   const openChart = (scoreId) => { S.chart = scoreId; renderDrawer(); save(); };
@@ -767,11 +846,14 @@ const main = async () => {
     const weights = h("section", {});
     const ranks = h("div", {});
     const measures = measuresBox(r);
+    const aptitude = aptitudeBox(r, () => { draw(); behindStale = true; save(); });
     const draw = () => {
       const e = eff(r);
       const battle = S.mode === "battle";
       const solo = battle && r.weights ? freeRate(r) : null;
       if (measures) measures.hidden = !battle;
+      aptitude.element.hidden = !battle;
+      if (battle) aptitude.update();
       put(scores, h("div", { class: "tiles" },
         r.weights ? tile(t.col.rate, fmt(e.rate, 3), (() => {
           const v = orderRates(r, skills());
@@ -820,7 +902,7 @@ const main = async () => {
           h("section", {}, heading("h3", "sec-head", t.detail.composition), composition(r)),
           weights),
         ranks,
-        measures,
+        measures, aptitude.element,
         h("p", { class: "ids" }, `${t.detail.musicId} ${r.musicId} · ${t.detail.scoreId} ${r.scoreId} · ${t.detail.musicType} ${r.song.musicType}`)));
     drawer.replaceChildren(panel);
     drawer.classList.add("open");

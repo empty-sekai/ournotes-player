@@ -40,6 +40,25 @@ export const UI = {
       pending: "数据待更新", room: "房间人数",
       roomHint: "按全员得分之和评级；假设全员与你同分，你的所需分数 = √(5/n) × 撃奏ライブ门槛", soloRanks: "自由 Live 用单人评级门槛",
     },
+    aptitude: {
+      title: "激走技能适性", pending: "适性数据待更新；排行和得分仍按不带激走技能计算。",
+      empty: "没有适用于本谱任务的技能变体。", skill: "技能 / 等级", source: "来源", member: "成员", support: "支援",
+      band: "乐队条件", match: "匹配", mismatch: "不匹配", noBand: "无条件", unknown: "未知形状",
+      gain: "Δ得分", ratio: "占无技能得分", seeds: "种子 / 交叉项", changes: "区间指标变化", converted: "转换数 Δ",
+      more: (n) => `同形状的其他 ${n} 个技能`,
+      warning: "标准误未达目标", deterministic: "确定性检验通过", zero: "理论最佳打法下无增量", onlyMeasures: "只改变指标",
+      power: "换算综合力", defaultPower: (p) => `未填综合力时按测量综合力 ${p} 显示`,
+      note: "单个技能，不可相加。下表不会加进排行或本场景得分；普通技能按本页随机发动顺序取平均倍率。百分比的分母是同名次、同准率且不带普通技能或激走技能的基线分数。",
+      accuracy: "Just 率插值、Great 比例缩放都是近似。Just < 100% 且普通技能非零时，缺少 Perfect 交叉权重，不提供完整增量。",
+      missingPerfect: "缺少 Perfect 交叉权重；完整增量不可用。", baseOnly: "无普通技能增量（近似）", rawScore: "原始无普通技能 Δ分（P₀、全 Just、第 1 名）", rawPerfect: "原始全 Perfect Δ分（测量综合力）",
+      se: "± 仅附在原始采样统计量上，表示标准误，不是置信区间。名次、准率或普通技能改变后的合成结果没有协方差，不附 ±。展开区间指标可看原始 Δscore ± 标准误；未达目标针对原始 Δscore，调整参数不会重测。",
+      rank1: "此项缺少区间交叉权重，交叉项仍按名次 1，不能精确跟随当前名次。",
+      missingCross: "没有可用的普通技能交叉项；将普通技能倍率设为 0 可看基础增量。",
+      raw: "以下指标及转换数是全 Just、无 Great 的原始增量，不随准率滑块变化；名次由你指定，指标增量不直接换算成更高名次。",
+      factors: "谱面因子（不带技能）", judgedNotes: "区间判定数", justNotes: "Just 音符", perfectNotes: "Just 区间 Perfect 音符",
+      tailNotes: "尾部音符", comboAtStart: "进入时连击", lotteries: "抽签次数",
+      factorNote: "区间计数为 Start 帧之后至 End 帧；尾部为 End 至 Complete，受技能影响但不计入区间分。抽签次数取基线种子均值 ± 标准误。",
+    },
     frontier: "只看前沿", col: {
       rank: "#", song: "曲目", level: "等级", time: "时长", bpm: "BPM", notes: "Notes", density: "N/s",
       rate: "分/综合力", perMinute: "分/综合力/分钟", relative: "相对", dom: "支配", skip: "跳过系数", base: "基础系数",
@@ -120,6 +139,25 @@ export const UI = {
       pending: "data pending", room: "Players",
       roomHint: "the room's summed score is rated; with every player scoring the same as you, you need √(5/n) × the Gekisou Live threshold",
       soloRanks: "Free Live uses the solo rank thresholds",
+    },
+    aptitude: {
+      title: "Gekisou skill aptitude", pending: "Aptitude data pending; rankings and scores still have no Gekisou skills.",
+      empty: "No skill variants apply to this chart's missions.", skill: "Skill / level", source: "Source", member: "Member", support: "Support",
+      band: "Band condition", match: "matched", mismatch: "unmatched", noBand: "none", unknown: "Unknown shape",
+      gain: "Score Δ", ratio: "Share of no-skill score", seeds: "Seeds / cross terms", changes: "Range measure changes", converted: "Conversions Δ",
+      more: (n) => `${n} other skills of this shape`,
+      warning: "SE target not met", deterministic: "Passed determinism test", zero: "No gain in best play", onlyMeasures: "Measures only",
+      power: "Power for conversion", defaultPower: (p) => `Empty power uses the measurement power ${p}`,
+      note: "One skill at a time; gains cannot be added. This table does not change rankings or scenario scores. Ordinary skills use their mean value over the page's random activation order. The percentage divides by the baseline at the same ranks and accuracy, without ordinary or Gekisou skills.",
+      accuracy: "Just interpolation and Great scaling are approximate. Below 100% Just with nonzero ordinary skills, Perfect cross weights are missing: no complete gain is provided.",
+      missingPerfect: "Perfect cross weights missing; complete gain unavailable.", baseOnly: "No-ordinary-skill gain (approximate)", rawScore: "Raw no-ordinary-skill score Δ (P₀, all Just, rank 1)", rawPerfect: "Raw all-Perfect score Δ (measurement power)",
+      se: "± labels raw sampled statistics only: standard error, not a confidence interval. Combined results after ranks, accuracy or ordinary skills change have no covariance data and no ±. Expand range measures for raw score gain ± SE. The target flag concerns original score gain; changing settings does not resample it.",
+      rank1: "No range cross weights: cross terms stay at rank 1, not exactly at the chosen ranks.",
+      missingCross: "Ordinary-skill cross terms unavailable; set ordinary skills to 0 to see the base gain.",
+      raw: "Measures and conversions below are raw all-Just, no-Great gains, unchanged by accuracy sliders. Ranks are chosen by you; higher measures do not directly become higher ranks.",
+      factors: "Chart factors (no skills)", judgedNotes: "Range judged notes", justNotes: "Just notes", perfectNotes: "Perfects in Just ranges",
+      tailNotes: "Tail notes", comboAtStart: "Entry combo", lotteries: "Lotteries",
+      factorNote: "Range counts cover after Start through End; the tail covers after End through Complete, affected by skills but outside the range score. Lottery counts are the baseline seed mean ± standard error.",
     },
     frontier: "Frontier only", col: {
       rank: "#", song: "Song", level: "Level", time: "Time", bpm: "BPM", notes: "Notes", density: "N/s",
@@ -294,19 +332,25 @@ export const GUIDE = {
         title: "激走技能",
         body: [
           "成员卡带激走技能，与它配对的小卡带激走支援技能。从反编译代码看，它们只在激走开启时建立，只加进含激走的那套分数（battleLiveScore），不进不含激走的那套（soloScore），自由 Live 里也没有。"
-            + "每个技能属于一种激走任务（连击、幸运或 Just），只在同任务的区间里触发，与演奏位置和洗牌无关；支援技能可以带乐队条件（条件 5000），看配对的成员是否属于指定乐队。"
+            + "技能按激走任务（连击、幸运、Just，或全部）门控，只在适用任务的区间里触发，与演奏位置和洗牌无关；支援技能可以带乐队条件（条件 5000），看配对的成员是否属于指定乐队。"
             + "ournotes-deck 的整局模拟可以带上激走技能，它们的效果（激走连击加成、幸运槽与幸运点、Just 数加成、支援技能的加分等）都逐帧计算。",
-          "本页现有的得分数值都不带激走技能。谱面对各激走技能的适性（每个激走技能或支援技能单独带上时的得分增量与区间指标变化）数据待更新。",
+          "本页的排行和场景得分仍不带激走技能。适性表单独显示每个激走技能或支援技能带上时的得分增量与区间指标变化，不是推荐编成。成员技能取最高等级，支援技能取小卡最高突破时的等级；计分效果参数相同的技能归为同一形状，名字合列。成员技能只给一名演奏者装备，其余位置空。支援技能挂在合成的空激走技能宿主上（负 id、没有效果行，任务与支援技能相同），不借用真卡。有乐队条件的支援技能分匹配和不匹配两种变体：宿主设为目标乐队或乐队 0。",
+        ],
+        math: [
+          "Δ(x) = P · ( Δscore / P₀ + x̄ · Σ_k Δw_k )",
+          "Δscore(r) = Δtail + Σ_i ΔrangeScore_i · (1 + p_i(r_i)/100)",
+          "Δw_k(r) = Δw_k + Σ_i (p_i(r_i) − p_i(1))/100 · ΔrangeWeights_k,i",
         ],
         after: [
           "精确与近似。带上激走技能再按第 1、2、6 节的式子计算时：名次 1、全 Just、无 Great 的得分是整局模拟的结果，普通技能那部分沿用第 1 节的线性式，与不带激走技能时是同一个近似。"
-            + "名次沿用第 2 节的线性式：从反编译代码看，名次加成是区间结束时记入的一笔固定分，不改变任何得分系数，所以换名次时无普通技能的部分仍然精确。"
+            + "名次沿用第 2 节的线性式：从反编译代码看，名次加成是区间结束时记入的一笔固定分，不改变任何得分系数，所以适性名次增量可按尾部加各区间增量乘名次系数得到，每区间有约 ±1 分的两次取整差；若没有区间交叉权重，交叉项只能按名次 1 显示并注明。"
             + "Just 率低于 100% 时沿用第 6 节的插值，带激走技能时这是近似：转 Just（13005）、每个 Just 加分的支援技能（2001）和累计 Just（13002）对 Just 数都不是线性的。Great 比例沿用 1 − 0.2 q，同样是近似。",
           "理论最佳打法下不起作用的技能。连击保护（12004）和 Great 转 Perfect（12006）只在出现 Great 或 Miss 时起作用，理论最佳打法下为 0，Great 比例的近似里也没有计入它们；每个音符都在准确时刻命中时，放宽 Just 判定（4004）也不起作用。"
             + "另有一些激走技能只提高名次指标，不直接加分（Just 数加成 13000、累计 Just 13002、加幸运点 11002）：本页不模拟对手，名次由你选定，所以它们不改变本页的得分；实际对局里它们可能帮你拿到更好的名次。"
-            + "以上是按反编译代码的阅读得出的，这些技能的得分增量为 0 还在用整局实跑逐一确认。",
-          "种子。带激走技能的整局模拟与第 1 节用同一组种子（含幸运区间的谱面是前 8 个公开种子），取的是这组种子的平均，不是游戏里的期望，游戏的种子规律未知；带激走技能时幸运区间的种子间差别可能更大。"
+            + "以上零效果类型已按适性数据的核对记录在全部谱面整局实跑确认；这仍是模型内部核对，不等于与游戏原生实现一致。",
+          "种子。先用 4 个种子检验确定性，各项增量完全相同则只报 1 个种子、标准误为 0。其余按 32、64、128、256、512、1024 逐级增加，直到 Δscore 标准误不超过“增量均值绝对值的 1%”与“同种子基线均值的 0.1%”中较宽的目标；到上限仍未达到就标注。普通技能交叉项至多用前 64 个种子。不同形状可用不同种子数；均值不是游戏期望，真实种子分布未知。表中 ± 仅表示原始统计量的标准误；组合后的值没有协方差数据，不显示标准误。表内 Δscore 是按相同种子、相同打法得到的差值；每位置另带单位普通技能测交叉项，随机名次与随机普通技能卡组再做 check 核对。Just 率低于 100% 且普通技能非零时，因缺少 Perfect 交叉权重，不提供完整适性增量。"
             + "演奏位置每局洗牌，但激走技能与位置无关；洗牌只改变单个种子里概率判定的抽取次序，不改变期望。",
+          "不可相加。连击加成存在饱和，多技能增量直接相加会高估；rush 支援与幸运槽技能（11001、11003、11005）会互相放大；13000/13002 改变 Just 数，又会影响按 Just 数触发的支援（7000）。单技能适性不能用于推算多技能编成，两个乐队变体也不能相加。",
           "核对现状。激走技能这一层按反编译代码逐项审计，与重写一致；整局与游戏原生代码的对照正在做，结果出来之前，这一层的数值尚在核对。按本模型得出的结论也都以此为前提。",
         ],
       },
@@ -468,19 +512,25 @@ export const GUIDE = {
         title: "Gekisou skills",
         body: [
           "Member cards carry a Gekisou skill and the snap paired with them a Gekisou support skill. By the decompiled code they exist only with Gekisou on and add to the score with Gekisou (battleLiveScore) only, never to the score without it (soloScore), and Free Live has none. "
-            + "Every skill belongs to one Gekisou mission (combo, luck or Just) and fires only in ranges of that mission, whatever the performance position and the shuffle; a support skill may carry a band condition (condition 5000) on the member it is paired with. "
+            + "Skills are gated by their Gekisou mission (combo, luck, Just or all) and fire only in applicable ranges, whatever the performance position and the shuffle; a support skill may carry a band condition (condition 5000) on the member it is paired with. "
             + "ournotes-deck's whole-live simulation can take Gekisou skills, and computes their effects (the Gekisou combo boost, the luck gauge and luck points, Just count boosts, the support skills' score ups and others) frame by frame.",
-          "The page's current score figures are all without Gekisou skills. A chart's aptitude for each Gekisou skill (the score gain and the range measure changes of one Gekisou skill or support skill taken alone) is pending in the data.",
+          "The rankings and scenario scores still have no Gekisou skills. The aptitude table separately shows the score and range-measure gains of one Gekisou or support skill, not a recommended formation. Member skills use their highest level; support skills use their snap’s highest-rank level. Equal scoring-effect parameters form one shape whose skill names are listed together. A member skill is equipped on one performer, leaving the others empty. A support skill uses a synthetic empty Gekisou-skill host (negative id, no effect rows, the same mission), never a real card. Band conditions have matched and unmatched variants, using the target band or band 0.",
+        ],
+        math: [
+          "Δ(x) = P · ( Δscore / P₀ + x̄ · Σ_k Δw_k )",
+          "Δscore(r) = Δtail + Σ_i ΔrangeScore_i · (1 + p_i(r_i)/100)",
+          "Δw_k(r) = Δw_k + Σ_i (p_i(r_i) − p_i(1))/100 · ΔrangeWeights_k,i",
         ],
         after: [
           "Exact and approximate. With Gekisou skills taken and the formulas of sections 1, 2 and 6 applied: at rank 1, all Just and no Great the score is the whole-live simulation's, and the plain skills' part keeps the linear formula of section 1, the same approximation as without Gekisou skills. "
-            + "The ranks keep the linear formula of section 2: by the decompiled code the rank bonus is a fixed amount added at the range's end that changes no score factor, so the part without plain skills stays exact at other ranks. "
+            + "The ranks keep the linear formula of section 2: by the decompiled code the rank bonus is a fixed amount added at the range's end that changes no score factor, so aptitude gains at other ranks follow from the tail plus range gains times rank factors, with about ±1 point per range from the two floors. Without range cross weights, cross terms remain at rank 1 and are labelled accordingly. "
             + "A Just rate below 100 % keeps the interpolation of section 6, an approximation with Gekisou skills: Just conversion (13005), the per-Just support score up (2001) and cumulative Just (13002) are not linear in the Just count. The Great share keeps 1 − 0.2 q, an approximation too.",
           "Skills that do nothing in the theoretical best play. The combo guard (12004) and Great to Perfect (12006) act only on Greats or Misses: 0 in the theoretical best play, and the Great share approximation leaves them out; with every note hit at its exact time, the wider Just window (4004) does nothing either. "
             + "Some Gekisou skills raise a rank measure only and add no score (Just count boost 13000, cumulative Just 13002, luck points 11002): the page does not model opponents and takes the ranks you pick, so they leave the page's scores alone; in a real room they may win you a better rank. "
-            + "This follows from our reading of the decompiled code; whole-live runs confirming a zero score gain for each of these skills are under way.",
-          "Seeds. Whole lives with Gekisou skills use the seeds of section 1 (the first 8 published seeds on charts with a luck range), and their mean is not the game's expectation, its seed law being unknown; with Gekisou skills the seeds of luck ranges may spread further apart. "
+            + "The aptitude verification records report whole-live confirmation of these zero-effect types on all charts. This is still an internal model check, not proof of agreement with the native game.",
+          "Seeds. Four seeds first test determinism; identical gains in every field are reported with one seed and zero SE. Otherwise batches of 32, 64, 128, 256, 512 and 1024 stop when score-gain SE is within the larger of 1% of the absolute mean gain or 0.1% of the baseline mean on the same seeds. A flag warns when the cap still misses the target. Cross terms use at most the first 64 seeds. Shapes can use different counts. Seed means are not the game’s expectation; its seed distribution is unknown. ± denotes SE on raw statistics only; combined values have no SE because covariances are unavailable. Deltas compare the same seeds and play; unit ordinary skills at each position measure cross terms, checked with random ranks and a random ordinary-skill deck. Below full Just with nonzero ordinary skills, missing Perfect cross weights prevent a complete aptitude gain. "
             + "The performance positions are shuffled every live, but the Gekisou skills do not depend on the position; the shuffle changes only the order of the chance draws within a seed, not the expectation.",
+          "Gains cannot be added. Combo boosts saturate, so adding single-skill gains can overestimate a combination. Rush support and luck-gauge skills (11001, 11003, 11005) reinforce each other; 13000/13002 change Just counts and therefore support triggered by those counts (7000). Single-skill aptitude cannot predict a multi-skill formation; the two band variants cannot be added either.",
           "State of the checks. This layer has been audited item by item against the decompiled code and agrees with the rewrite; the whole-live comparison with the game's native code is in progress, and until it is done the figures of this layer are still being checked. The conclusions “by this model” rest on that too.",
         ],
       },
