@@ -91,7 +91,7 @@ export const MEASURES = ["maxCombo", "justCount", "luckPoints"];
 
 // Per Gekisou range of a chart's deck statistics (Gekisou on, no skills): its mission, the measure it ranks by (null
 // for an unknown mission) and `values`, every measure as {mean, min, max} over the seeds; a measure some seed lacks
-// (older data) is null. [] without seeds or for a chart unplayable with Gekisou on.
+// (older data) is null. [] for a chart unplayable with Gekisou on.
 export const rangeMeasures = (deck) => {
   if (!deck || deck.unplayable) return [];
   const seeds = deck.seeds || [];
@@ -134,9 +134,11 @@ export const rankPercent = (range, r) => {
 };
 
 // Which scenarios music-data.json can show: free (offSeeds), ranks other than 1 (rankBonusPercents and
-// rangeWeights), a Just rate below 100 % (scorePerfect, with rangeWeights for the skill weights).
+// rangeWeights), a Just rate below 100 % (scorePerfect, with rangeWeights for the skill weights), and whether it has
+// Gekisou skill aptitudes (the shapes of deck.gekisouAptitude and a chart with variants).
 export const scenarioData = (data) => {
-  const has = { free: false, ranks: false, just: false };
+  const has = { free: false, ranks: false, just: false, aptitude: false };
+  const shapes = aptitudeShapes(data).size > 0;
   for (const song of (data && data.songs) || []) {
     for (const chart of song.charts || []) {
       const d = chart.deck;
@@ -146,6 +148,7 @@ export const scenarioData = (data) => {
       if ((d.ranges || []).length && d.ranges.every((r) => Array.isArray(r.rankBonusPercents) && r.rankBonusPercents.length >= RANK_MAX)
         && seeds.some((s) => s.rangeWeights)) has.ranks = true;
       if (seeds.some((s) => Number.isFinite(s.scorePerfect) && s.rangeWeights)) has.just = true;
+      if (shapes && chartVariants(d).length) has.aptitude = true;
     }
   }
   return has;
@@ -210,6 +213,126 @@ export const chartFigures = (deck, kind, power = POWER, scenario = null) => {
   };
 };
 
+// ---------------------------------------------------------------- Gekisou skill aptitude
+// A chart's aptitude for a Gekisou skill is what taking that one skill changes (music-data.json: the file's
+// `deck.gekisouAptitude.shapes`, the chart's `deck.gekisouAptitude.variants`). A shape is the class of member Gekisou
+// skills (at their highest level) or snap Gekisou support skills (at the level of the highest rank) with the same score
+// effects; a support skill with a band condition has two variants, the condition met (bandMatch true) or not (false).
+// Every figure of a variant is a gain Δ over deck.seeds (same seeds, same play, rank 1) as [mean, standard error] over
+// its own seeds; a deterministic variant ran one seed, with se 0. For a scenario (SCHEMA 1.6, P₀ the measurement power):
+//   rank 1 everywhere:  Δscore = score                       (Just play; scorePerfect in the Perfect play)
+//   ranks r:            Δscore = tail + Σ_i rangeScore_i · (1 + p_i(r_i) / 100)      (±1 point per range)
+//   plain skill cross:  Δw[k](r) = weights[k] + Σ_i (p_i(r_i) − p_i(1)) / 100 · rangeWeights[k][i]
+//                       (without rangeWeights: weights[k], the rank-1 cross terms)
+//   Just rate j:        every Just-play figure X becomes j · X + (1 − j) · X_Perfect (approximate); the cross terms
+//                       are unavailable below full Just: Perfect cross weights were not measured
+//   Great share q:      everything × (1 − 0.2 q) (approximate)
+// and a deck of power P and skills x gains P · (Δscore / P₀ + Σ_k x_π(k) · Δw[k]), in expectation over the skill order
+// P · (Δscore / P₀ + x̄ · Σ_k Δw[k]): aptitudeFigures has the shape of chartFigures, so scoreRate applies. Free Live has
+// no Gekisou: no aptitude. The gains of several skills do not add up (combo boosts saturate, rush support and luck
+// gauge skills reinforce each other, Just count skills move per-Just support): one skill at a time.
+
+const CACHE = new WeakMap();
+const cached = (data, key, make) => {
+  if (!data || typeof data !== "object") return make();
+  if (!CACHE.has(data)) CACHE.set(data, {});
+  const c = CACHE.get(data);
+  if (!(key in c)) c[key] = make();
+  return c[key];
+};
+
+// The shapes of music-data.json's `deck.gekisouAptitude` by id (an empty map without them).
+export const aptitudeShapes = (data) => cached(data, "shapes", () => {
+  const list = data && data.deck && data.deck.gekisouAptitude && data.deck.gekisouAptitude.shapes;
+  return new Map((Array.isArray(list) ? list : []).filter((s) => s && Number.isInteger(s.id)).map((s) => [s.id, s]));
+});
+
+// A chart's variants (deck.gekisouAptitude.variants); [] for a chart without them, unplayable or in older data.
+export const chartVariants = (deck) => {
+  const a = deck && !deck.unplayable && deck.gekisouAptitude;
+  return a && Array.isArray(a.variants) ? a.variants : [];
+};
+
+const mOf = (x) => (Array.isArray(x) && Number.isFinite(x[0]) ? x[0] : null);
+const seOf = (x) => (Array.isArray(x) && Number.isFinite(x[1]) ? x[1] : 0);
+
+// A variant's gain in a scenario (see above; `ranges` the chart's deck ranges, default power P₀ 300000): `base` the
+// score gain per unit of power, `baseSe` its raw standard error only (null after transformations),
+// `weights[k]` the gain of position k's plain skill weight (null when the data has no cross terms), `crossAtRank1` true
+// when the cross terms stay at rank 1 (no rangeWeights) while the ranks are not, and the variant's seed facts. null in
+// Free Live or without the scenario's fields.
+export const aptitudeFigures = (variant, ranges, power = POWER, scenario = null) => {
+  const sc = { ...DEFAULT_SCENARIO, ...(scenario || {}) };
+  if (!variant || sc.mode === "free" || mOf(variant.score) === null) return null;
+  const rs = Array.isArray(variant.ranges) ? variant.ranges : [];
+  const ranks = rs.map((_, i) => clampRank((sc.ranks || [])[i]));
+  const j = Number.isFinite(sc.just) ? Math.min(1, Math.max(0, sc.just)) : 1;
+  const partial = j < 1;
+  const lerp = (p, just) => (partial ? p + j * (just - p) : just);
+  const g = greatFactor(sc.great);
+  const pick = (x, xp) => {                                  // a Just-play figure at the Just rate
+    const a = mOf(x);
+    if (a === null) return null;
+    if (!partial) return a;
+    const b = mOf(xp);
+    return b === null ? null : lerp(b, a);
+  };
+  const rank1 = ranks.every((r) => r === 1);
+  let score;
+  if (rank1) {
+    score = pick(variant.score, variant.scorePerfect);
+  } else {
+    const tail = pick(variant.tail, variant.tailPerfect);
+    const pr = rs.map((_, i) => rankPercent(ranges[i], ranks[i]));
+    const p1 = rs.map((_, i) => rankPercent(ranges[i], 1));
+    const rsj = rs.map((x) => pick(x.rangeScore, x.rangeScorePerfect));
+    if (tail === null || [...pr, ...p1].some((p) => p === null) || rsj.some((v) => v === null)) return null;
+    score = tail + rsj.reduce((a, v, i) => a + v * (1 + pr[i] / 100), 0);
+  }
+  if (score === null) return null;
+  let weights = null;
+  let crossAtRank1 = false;
+  if (!partial && Array.isArray(variant.weights)) {
+    const rw = variant.rangeWeights;
+    crossAtRank1 = !rank1 && !Array.isArray(rw);
+    const shift = rs.map((_, i) => (rank1 || !Array.isArray(rw) ? 0 : (rankPercent(ranges[i], ranks[i]) - rankPercent(ranges[i], 1)) / 100));
+    weights = variant.weights.map((w, k) => ((mOf(w) ?? 0)
+      + shift.reduce((a, d, i) => a + (d ? d * (mOf(rw[k] && rw[k][i]) ?? 0) : 0), 0)) * g);
+  }
+  return {
+    base: (score * g) / power,
+    // Only the original sampled statistic has an SE; aggregate transformed means have no covariance data.
+    baseSe: rank1 && !partial && sc.great === 0 ? seOf(variant.score) / power : null,
+    weights,
+    missingPerfectCross: partial,
+    crossAtRank1,
+    seeds: variant.seeds ?? null,
+    deterministic: Boolean(variant.deterministic),
+    seTargetMet: variant.seTargetMet !== false,
+  };
+};
+
+// The score gain per power follows the page's random ordinary-skill order: only the mean skill value matters.
+// Missing cross terms cannot silently stand in for zero when ordinary skills are enabled.
+export const aptitudeRate = (fig, skills) => {
+  if (!fig) return null;
+  if (!fig.weights) return skillValues(skills).some((x) => x > 0) ? null : fig.base;
+  return scoreRate(fig, skills);
+};
+
+// Only the raw all-Just, rank-1, no-Great, no-ordinary-skill gain has an exported SE.
+// No SE is assigned to transformed or combined results: joint samples/covariances are absent.
+export const aptitudeSe = (fig, skills) => (fig && !skillValues(skills).some((x) => x > 0) ? fig.baseSe : null);
+
+// A variant that adds no score: "measures" when it still moves a range measure (or converts judgements), "none" when
+// it changes nothing in the theoretical best play; null for a variant with a score gain or cross term.
+export const zeroGain = (variant) => {
+  if (!variant || mOf(variant.score) !== 0 || seOf(variant.score) !== 0) return null;
+  if ((variant.weights || []).some((w) => (mOf(w) ?? 0) !== 0)) return null;
+  const moves = (variant.ranges || []).some((x) => MEASURES.some((k) => (mOf(x[k]) ?? 0) !== 0)) || (mOf(variant.converted) ?? 0) !== 0;
+  return moves ? "measures" : "none";
+};
+
 // ournotes-deck's measurement power of music-data.json.
 export const modelPower = (data) => (data && data.deck && data.deck.model && data.deck.model.power) || POWER;
 
@@ -253,6 +376,11 @@ export const lengthMs = (row, source) => {
   const v = source === "chart" ? row.chartMs ?? row.bgmMs : row.bgmMs ?? row.chartMs;
   return typeof v === "number" && v > 0 ? v : null;
 };
+
+// Master integer effect value -> factor used by check.deck predictions. The game first computes value/10000
+// and its ×100000 in float32, then truncates to five decimals: e.g. 13000 becomes 1.29999, not 1.3.
+// This is ONLY for master integer values, not the page's user-entered percentages (which stay percent/100).
+export const masterSkillFactor = (value) => Math.trunc(Math.fround(Math.fround(value / 10000) * 100000)) / 100000;
 
 // Skill values (fractions: 1 = +100 %) as numbers; missing, negative or non-numeric values count as 0.
 export const skillValues = (skills) => [...(skills || [])].map((x) => {

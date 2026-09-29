@@ -2,13 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  DEFAULT_SCENARIO, MEASURES, MISSION_MEASURE, X_MAX, chartFigures, dominance, dominates, eventDominates, formatLength,
-  formatRanks, greatFactor, joinCharts, lengthMs, meanSkill, orderRates, parseRanks, perMinute, pickText, plainKind,
+  DEFAULT_SCENARIO, MEASURES, MISSION_MEASURE, X_MAX, aptitudeFigures, aptitudeRate, aptitudeSe, aptitudeShapes, chartVariants, zeroGain, chartFigures, dominance, dominates, eventDominates, formatLength,
+  formatRanks, greatFactor, joinCharts, lengthMs, meanSkill, masterSkillFactor, orderRates, parseRanks, perMinute, pickText, plainKind,
   quantile, rangeMeasures, rank, rankPercent, rankThreshold, reachChance, requiredPower, roomThreshold, scenarioData,
   scoreRate, weightSum,
 } from "../../examples/songs/ranking.js";
 import {
-  chartRows, density, extent, gekisouSkill, histogram, matches, moenotesUrl, noteKinds, refigure, sortBy, ticks,
+  chartRows, density, extent, gekisouSkill, histogram, matches, moenotesUrl, noteKinds, refigure, shapeSkills, shapeBands, sortBy, ticks,
 } from "../../examples/songs/catalog.js";
 
 // music-data.json: kind 0 is a judgement score up, kind 1 the plain score up the page models
@@ -342,10 +342,10 @@ test("Free Live reads offSeeds, also on charts unplayable with Gekisou", () => {
 
 test("what the data can show, the ranks in the query", () => {
   const data = (d) => ({ songs: [{ id: 1, charts: [{ scoreId: 1, deck: d }] }] });
-  assert.deepEqual(scenarioData(data(deck3())), { free: true, ranks: true, just: true });
-  assert.deepEqual(scenarioData(songs), { free: false, ranks: false, just: false });   // the current data
+  assert.deepEqual(scenarioData(data(deck3())), { free: true, ranks: true, just: true, aptitude: false });
+  assert.deepEqual(scenarioData(songs), { free: false, ranks: false, just: false, aptitude: false });   // the current data
   assert.deepEqual(scenarioData(data(deck3({ offSeeds: [], ranges: RANGES3.map(({ rankBonusPercents, ...r }) => r) }))),
-    { free: false, ranks: false, just: true });
+    { free: false, ranks: false, just: true, aptitude: false });
   assert.deepEqual(parseRanks(null), [1, 1, 1]);
   assert.deepEqual(parseRanks("5"), [5, 5, 5]);
   assert.deepEqual(parseRanks("2,5,3"), [2, 5, 3]);
@@ -409,7 +409,7 @@ test("fields of other formats (the dropped best formation deck.gekisou) leave th
   for (const sc of [null, { ranks: [2, 5, 3], just: 0.5, great: 0.25 }, { mode: "free" }]) {
     assert.deepEqual(chartFigures(deck3(extra), 1, 1000, sc), chartFigures(deck3(), 1, 1000, sc));
   }
-  assert.deepEqual(scenarioData({ songs: [{ id: 1, charts: [{ scoreId: 1, deck: deck3(extra) }] }] }), { free: true, ranks: true, just: true });
+  assert.deepEqual(scenarioData({ songs: [{ id: 1, charts: [{ scoreId: 1, deck: deck3(extra) }] }] }), { free: true, ranks: true, just: true, aptitude: false });
 });
 
 test("Gekisou skill names come from gekisouCatalog in the page language, with fallbacks", () => {
@@ -485,4 +485,95 @@ test("sorting, ticks, extents and histograms", () => {
   assert.equal(extent([]), null);
   const hist = histogram([{ difficulty: "hard", level: 20 }, { difficulty: "expert", level: 26 }, { difficulty: "expert", level: 26.5 }], (r) => r.level);
   assert.deepEqual(hist.map(([b, c]) => [b, c.hard, c.expert]), [[20, 1, 0], [26, 0, 2]]);
+});
+
+// Synthetic aptitude samples: score gain 36 at rank 1; tail 1 + range gain 10 × 3.5.
+const aptitudeVariant = (extra = {}) => ({
+  shape: 0, bandMatch: null, deterministic: false, seeds: 128, crossSeeds: 64, seTargetMet: false,
+  score: [36, 2], scorePerfect: [19.5, 1], tail: [1, 0.1], tailPerfect: [2, 0.1], converted: [3, 0],
+  ranges: [{ rangeScore: [10, 0.5], rankBonus: [25, 1.25], rangeScorePerfect: [5, 0.25], maxCombo: [0, 0], justCount: [4, 0], luckPoints: [0, 0] }],
+  weights: [[0.1, 0.01], [0.2, 0.02]], rangeWeights: [[[0.04, 0.004]], [[0.08, 0.008]]],
+  ...extra,
+});
+const aptitudeRanges = [{ mission: 3, rankBonusPercent: 250, rankBonusPercents: [250, 200, 150, 100, 50] }];
+
+test("single-skill aptitude: baseline is unchanged, default gain, ranks, accuracy and cross terms", () => {
+  const v = aptitudeVariant();
+  const f = aptitudeFigures(v, aptitudeRanges, 1000);
+  near(f.base, 0.036, "raw gain");
+  near(aptitudeRate(f, [1, 1]), 0.336, "plain skills");
+  near(aptitudeRate(f, [2, 0]), 0.336, "random skill order uses the mean");
+  near(aptitudeSe(f, [0, 0]), 0.002, "score-only SE");
+  assert.equal(aptitudeSe(f, [1, 1]), null); // no covariance for the combined estimate
+  assert.equal(f.seTargetMet, false);
+  const r = aptitudeFigures(v, aptitudeRanges, 1000, { ranks: [5] });
+  near(r.base, 0.016, "tail + delta range times rank factor");
+  nearAll(r.weights, [0.02, 0.04], "rank cross terms");
+  assert.equal(aptitudeSe(r, [0, 0]), null); // no SE after rank changes
+  assert.equal(r.crossAtRank1, false);
+  const j = aptitudeFigures(v, aptitudeRanges, 1000, { just: 0.5 });
+  near(j.base, 0.02775, "Just/Perfect delta interpolation");
+  assert.equal(j.weights, null);
+  assert.equal(j.missingPerfectCross, true);
+  assert.equal(aptitudeRate(j, [1, 1]), null);
+  near(aptitudeRate(j, [0, 0]), 0.02775, "base-only interpolation remains available");
+  assert.equal(aptitudeSe(j, [0, 0]), null);
+  const both = aptitudeFigures(v, aptitudeRanges, 1000, { ranks: [5], just: 0.5, great: 0.5 });
+  near(both.base, (1.5 + 7.5 * 1.5) * 0.9 / 1000, "tail and ranges interpolate then Great scale");
+  assert.equal(both.weights, null);
+  const great = aptitudeFigures(v, aptitudeRanges, 1000, { great: 0.5 });
+  nearAll(great.weights, [0.09, 0.18], "Great scales measured Just cross terms");
+  assert.equal(aptitudeSe(great, [0, 0]), null);
+  const d = deck3({ gekisouAptitude: { variants: [v], factors: [] } });
+  assert.deepEqual(chartFigures(d, 1, 1000), chartFigures(deck3(), 1, 1000));
+  assert.equal(aptitudeFigures(v, aptitudeRanges, 1000, { mode: "free" }), null);
+  assert.deepEqual(chartFigures(d, 1, 1000, { mode: "free" }), chartFigures(deck3(), 1, 1000, { mode: "free" }));
+});
+
+test("aptitude missing fields never silently become a measured ordinary-skill gain", () => {
+  assert.equal(aptitudeFigures(null, []), null);
+  assert.equal(aptitudeFigures(aptitudeVariant({ score: null }), aptitudeRanges), null);
+  assert.equal(aptitudeFigures(aptitudeVariant({ scorePerfect: null }), aptitudeRanges, 1000, { just: 0 }), null);
+  assert.equal(aptitudeFigures(aptitudeVariant(), [], 1000, { ranks: [5] }), null);
+  const v = aptitudeVariant({ weights: null, rangeWeights: null });
+  const f = aptitudeFigures(v, aptitudeRanges, 1000);
+  near(aptitudeRate(f, [0, 0]), 0.036, "base without a plain kind");
+  assert.equal(aptitudeRate(f, [1, 0]), null);
+  assert.equal(aptitudeSe(f, [1, 0]), null);
+  const noRange = aptitudeFigures(aptitudeVariant({ rangeWeights: null }), aptitudeRanges, 1000, { ranks: [5] });
+  assert.equal(noRange.crossAtRank1, true);
+  nearAll(noRange.weights, [0.1, 0.2], "fallback retains rank-1 cross terms");
+  assert.deepEqual(chartVariants(null), []);
+  assert.deepEqual(chartVariants(deck3()), []);
+  assert.deepEqual(chartVariants(deck3({ unplayable: "4 fevers", gekisouAptitude: { variants: [v] } })), []);
+});
+
+test("aptitude shape names, band variants, zero effects and availability", () => {
+  const shape = { id: 0, source: "support", bandCondition: true, mission: 3, skills: [
+    { id: 1, level: 5, bandIds: [2] }, { id: 1, level: 4, bandIds: [2] }, { id: 9, level: 5, bandIds: [3] },
+  ] };
+  const data = { deck: { gekisouAptitude: { shapes: [shape] } }, bands: [{ id: 2, name: { en: "Band" } }],
+    gekisouCatalog: { supportSkills: [{ id: 1, mission: 3, maxLevel: 5, name: { ja: "支援", en: "Support" } }] },
+    songs: [{ charts: [{ deck: deck3({ gekisouAptitude: { variants: [aptitudeVariant({ bandMatch: true }), aptitudeVariant({ bandMatch: false })] } }) }] }],
+  };
+  assert.equal(aptitudeShapes(data).get(0), shape);
+  assert.equal(aptitudeShapes(null).size, 0);
+  assert.equal(scenarioData(data).aptitude, true);
+  assert.equal(scenarioData(songs).aptitude, false);
+  assert.deepEqual(shapeSkills(data, shape, "en").map((s) => [s.name, s.level]), [["Support", 5], ["Support", 4], ["#9", 5]]);
+  assert.equal(shapeSkills(data, shape, "ko")[0].name, "支援");
+  assert.deepEqual(shapeBands(data, shape, "ja"), ["Band", "#3"]);
+  assert.deepEqual(shapeSkills(null, null, "en"), []);
+  assert.equal(zeroGain(aptitudeVariant()), null);
+  assert.equal(zeroGain(aptitudeVariant({ score: [0, 0], weights: [[0, 0]], converted: [0, 0] })), "measures");
+  assert.equal(zeroGain(aptitudeVariant({ score: [0, 0], weights: null, converted: [0, 0], ranges: [] })), "none");
+});
+
+test("master skill factor uses float32 before truncation, unlike user percentages", () => {
+  assert.equal(masterSkillFactor(0), 0);
+  assert.equal(masterSkillFactor(1000), 0.1);
+  assert.equal(masterSkillFactor(10000), 1);
+  assert.equal(masterSkillFactor(13000), 1.29999);
+  assert.equal(masterSkillFactor(15000), 1.5);
+  assert.equal(meanSkill([130 / 100], 1), 1.3); // UI percent conversion must not use masterSkillFactor
 });
