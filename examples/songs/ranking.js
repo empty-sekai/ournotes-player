@@ -230,7 +230,7 @@ export const chartFigures = (deck, kind, power = POWER, scenario = null) => {
 // and a deck of power P and skills x gains P · (Δscore / P₀ + Σ_k x_π(k) · Δw[k]), in expectation over the skill order
 // P · (Δscore / P₀ + x̄ · Σ_k Δw[k]): aptitudeFigures has the shape of chartFigures, so scoreRate applies. Free Live has
 // no Gekisou: no aptitude. The gains of several skills do not add up (combo boosts saturate, rush support and luck
-// gauge skills reinforce each other, Just count skills move per-Just support): one skill at a time.
+// gauge skills reinforce each other, 13005 conversion may change other skills’ triggers): one skill at a time.
 
 const CACHE = new WeakMap();
 const cached = (data, key, make) => {
