@@ -1,5 +1,5 @@
-// Chart data page: pure functions over a site's songs.json (nnnotes.songs/1) and, when the site has it,
-// chart-stats.json (ournotes-deck.chart-stats/1): one row per chart with the facts the page lists, ranks and plots.
+// Chart data page: pure functions over a site's music-data.json (nnnotes.music-data/1): one row per chart with the
+// facts the page lists, ranks and plots.
 
 import { DIFFICULTIES, joinCharts, pickText } from "./ranking.js";
 
@@ -28,13 +28,13 @@ export const density = (chart) => {
   return span > 0 && n ? n / (span / 1000) : null;
 };
 
-// One row per chart of songs.json, in song order then difficulty order, with the chart-stats facts when `stats`
-// has the chart.
-export const chartRows = (songs, stats) => {
-  const eff = new Map(joinCharts(songs, stats || { charts: [] }).map((r) => [r.scoreId, r]));
-  const statById = new Map(((stats && stats.charts) || []).map((c) => [c.scoreId, c]));
+// One row per chart of music-data.json, in song order then difficulty order, with the deck figures (ranking.js
+// chartFigures) when the chart has them; `stats` is the chart's own deck statistics (null in a file made without the
+// deck model).
+export const chartRows = (data) => {
+  const eff = new Map(joinCharts(data).map((r) => [r.scoreId, r]));
   const out = [];
-  for (const song of (songs && songs.songs) || []) {
+  for (const song of (data && data.songs) || []) {
     const bgm = song.bgm && song.bgm.length;
     for (const chart of song.charts || []) {
       const e = eff.get(chart.scoreId);
@@ -43,13 +43,14 @@ export const chartRows = (songs, stats) => {
         musicId: song.id,
         song,
         chart,
-        stats: statById.get(chart.scoreId) || null,
+        stats: chart.deck || null,
         difficulty: chart.difficulty,
         level: chart.level,
         displayLevel: chart.displayLevel ?? chart.level,
         title: song.title || null,
         bandIds: song.bandIds || [],
         bandName: song.bandName || null,
+        scoreRanks: song.scoreRanks || [],
         notes: chart.notes ? chart.notes.judged : null,
         kinds: noteKinds(chart.notes && chart.notes.byOperateType),
         bpm: chart.bpm ? chart.bpm.main : null,
@@ -60,7 +61,10 @@ export const chartRows = (songs, stats) => {
         bgmMs: bgm ? (bgm.durationMs ?? bgm.lengthMs ?? null) : null,
         chartMs: chart.musicLengthMs ?? null,
         base: e ? e.base : null,
-        skip: e ? e.skip : null,
+        baseRange: e ? e.baseRange : null,
+        seeds: e ? e.seeds : null,
+        skip: chart.deck && !chart.deck.unplayable ? chart.deck.skip ?? null : null,
+        unplayable: chart.deck ? chart.deck.unplayable ?? null : null,
         weights: e ? e.weights : null,
       });
     }

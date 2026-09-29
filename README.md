@@ -72,7 +72,7 @@ button.onclick = () => player.play();   // 浏览器要求在用户操作中开�
 | [examples/basic.html](examples/basic.html) | 一个 `<ournotes-player>` |
 | [examples/iframe.html](examples/iframe.html) | 只含一个播放器的页面，可用 `<iframe>` 嵌入（`?src=`） |
 | [examples/chart-list](examples/chart-list) | 列出站点的 `charts.json` 并播放所选谱面；多区服或多语言的站点用 `?region=&lang=` 切换 |
-| [examples/songs](examples/songs) | 谱面数据：读站点的 `songs.json`（nnnotes songs）、`chart-stats.json`（ournotes-deck chart-stats，可选）和 `jackets/`（可选），按效率、速度、等级、Notes、时长、跳过得分排行，散点图和等级分布，谱面详情（BPM、密度、Fever 与技能时间轴、音符构成、技能位权重）和名词说明；歌曲资料页跳转 moenotes |
+| [examples/songs](examples/songs) | 谱面数据：读站点的 `music-data.json`（nnnotes music-data，含 ournotes-deck 的激走整局统计）和 `jackets/`（可选），按效率（随机技能顺序下的期望与区间）、活动评级（所需综合力、达成率）、速度、等级、Notes、时长、跳过得分排行，散点图和等级分布，谱面详情（BPM、密度、Fever 与激走任务、技能时间轴、音符构成、技能位权重、评级门槛）和模型说明；外观沿用 moenotes 的 Sirius 主题（浅色 / 深色），歌曲资料页跳转 moenotes |
 | [examples/story-list](examples/story-list) | 列出站点的 `stories.json` 并播放所选剧情 |
 | [examples/story](examples/story) | 播放一集剧情（`?story=` 或 `?src=`；Live2D 的两个文件用 `?core=`、`?motionsync=`，据点对话的 Spine 运行时用 `?spine=`） |
 | [examples/live2d](examples/live2d) | 列出站点的 `models.json`，显示所选模型并播放其动作与表情 |
