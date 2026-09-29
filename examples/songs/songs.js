@@ -5,7 +5,13 @@
 //   ?v=rank|charts|guide &lang=<language> &band=<id> &d=<difficulty>[,...] &q=<search>
 //   &r=efficiency|event|speed|level|notes|long|short|skip &sp=density|bpmMax|bpm   (ranking, speed measure)
 //   &len=bgm|chart &oh=<seconds> &x=<percent>[,...] &frontier               (efficiency)
-//   &p=<power> &tr=<rank> &gr=<Great percent>                               (event: rank chance)
+//   &gk=free &rk=<r>[,<r>,<r>]                                              (play scenario: Free Live, else Gekisou
+//                                                                           Live with a rank 1-5 per range; default
+//                                                                           Gekisou Live at rank 1 everywhere)
+//   &gr=<Great percent> &jr=<Just percent>                                  (accuracy: Great share, default 0; Just
+//                                                                           rate in Just ranges, default 100)
+//   &p=<power> &tr=<rank> &n=<players>                                      (event: rank chance; Gekisou Live room
+//                                                                           size, default 5)
 //   &jk=off                                                                 (no jackets)
 //   &ax=<figure> &ay=<figure>                                               (scatter axes)
 //   &c=<scoreId>                                                            (the chart detail open)
@@ -13,11 +19,13 @@
 //   &theme=light|dark                                                       (default: the system's)
 // The site root is this page's directory unless ?site=<URL> names another one.
 import {
-  DIFFICULTIES, MOENOTES, NOTE_KINDS, chartRows, extent, histogram, matches, moenotesUrl, pickText, sortBy, ticks,
+  DIFFICULTIES, MOENOTES, NOTE_KINDS, chartRows, extent, histogram, matches, moenotesUrl, pickText, refigure, sortBy,
+  ticks,
 } from "./catalog.js";
 import {
-  SCORE_RANKS, X_MAX, eventDominance, formatLength, lengthMs, meanSkill, orderRates, perMinute, quantile, rank,
-  rankThreshold, reachChance, requiredPower, scoreRate, weightSum,
+  RANGES, RANK_MAX, SCORE_RANKS, X_MAX, chartFigures, eventDominance, formatLength, formatRanks, lengthMs, meanSkill,
+  modelPower, orderRates, parseRanks, perMinute, plainKind, quantile, rank, rankThreshold, reachChance, requiredPower,
+  scenarioData, scoreRate, weightSum,
 } from "./ranking.js";
 import { GUIDE, UI } from "./text.js";
 
@@ -49,8 +57,6 @@ applyTheme();
 dark.addEventListener("change", applyTheme);
 const RANKS = ["efficiency", "event", "speed", "level", "notes", "long", "short", "skip"];
 const EFF_RANKS = new Set(["efficiency", "event", "skip"]);
-// The Great judgement's score percent against the Perfect's (MasterLiveJudgementParameter: 80 and 100).
-const GREAT_SCORE = 0.8;
 const AXES = ["displayLevel", "density", "bpm", "bpmMax", "notes", "bgmMs", "perMinute", "rate", "base", "skip"];
 const EFF_AXES = new Set(["perMinute", "rate", "base", "skip"]);
 
@@ -119,6 +125,11 @@ const main = async () => {
   const byScore = new Map(rows.map((r) => [r.scoreId, r]));
   const bands = new Map((songs.bands || []).map((b) => [String(b.id), b]));
   const hasStats = rows.some((r) => r.weights);
+  // what the data can show besides Gekisou Live at rank 1 (ranking.js scenarioData)
+  const has = scenarioData(songs);
+  const kind = plainKind(songs);
+  const power = modelPower(songs);
+  const pct = (v, def) => (v === null || !Number.isFinite(Number(v)) ? def : Math.min(100, Math.max(0, Math.round(Number(v)))));
   const S = {
     view: ["rank", "charts", "guide"].includes(q.get("v")) ? q.get("v") : "rank",
     lang: defaultLanguage(langs),
@@ -133,7 +144,12 @@ const main = async () => {
     frontier: q.has("frontier"),
     power: Math.max(0, Math.round(Number(q.get("p")) || 0)),
     target: SCORE_RANKS.includes(q.get("tr")) ? q.get("tr") : "SS",
-    great: Math.min(100, Math.max(0, Number(q.get("gr")) || 0)),
+    // the play scenario (ranking.js chartFigures) and the accuracy
+    mode: q.get("gk") === "free" && has.free ? "free" : "battle",
+    ranks: has.ranks ? parseRanks(q.get("rk")) : Array(RANGES).fill(1),
+    great: pct(q.get("gr"), 0),
+    just: has.just ? pct(q.get("jr"), 100) : 100,
+    room: Math.min(RANK_MAX, Math.max(1, Math.round(Number(q.get("n")) || 5))),
     jackets: q.get("jk") !== "off",
     ax: AXES.includes(q.get("ax")) ? q.get("ax") : "displayLevel",
     ay: AXES.includes(q.get("ay")) ? q.get("ay") : hasStats ? "perMinute" : "density",
@@ -145,7 +161,17 @@ const main = async () => {
   const showJackets = () => hasJackets && S.jackets;
   const g = () => (S.lang.startsWith("zh") ? GUIDE.zh : GUIDE.en);
   const skills = () => S.skills.map((x) => x / 100);
-  const accuracy = () => 1 - (1 - GREAT_SCORE) * (S.great / 100);
+  const scenario = () => ({ mode: S.mode, ranks: S.ranks, just: S.just / 100, great: S.great / 100 });
+  // the rows carry the figures of the scenario chosen (the Great share folded in: the score ranks take factor 1)
+  const setScenario = (change) => { if (change) change(); refigure(rows, songs, scenario()); };
+  setScenario();
+  // the score ranks: a Gekisou Live room of S.room players who all score the same, or solo
+  const room = () => (S.mode === "battle" ? S.room : 0);
+  // Free Live's score per power at the Great share chosen (the one Gekisou Live keeps as the song's best score)
+  const freeRate = (r) => {
+    const f = chartFigures(r.stats, kind, power, { mode: "free", great: S.great / 100 });
+    return f ? scoreRate(f, skills()) : null;
+  };
   const eff = (r) => (r.weights
     ? { rate: scoreRate(r, skills()), perMinute: perMinute(r, skills(), S.len, S.overhead * 1000) }
     : { rate: null, perMinute: null });
@@ -177,7 +203,11 @@ const main = async () => {
     put("x", S.skills.join(","), "100,100,100,100,100");
     put("p", S.power, 0);
     put("tr", S.target, "SS");
+    put("gk", S.mode, "battle");
+    put("rk", formatRanks(S.ranks), "");
     put("gr", S.great, 0);
+    put("jr", S.just, 100);
+    put("n", S.room, 5);
     put("jk", S.jackets ? null : "off", null);
     put("ax", S.ax, "displayLevel");
     put("ay", S.ay, hasStats ? "perMinute" : "density");
@@ -207,8 +237,10 @@ const main = async () => {
     h("div", { class: "song-text" },
       h("div", { class: "song-title" }, h("span", { class: "t" }, title(r)), moeLink(r)),
       h("div", { class: "song-band" }, h("i", { class: "dot", style: `background:${bandColor(r)}` }), bandName(r))));
+  // options: [value, label, disabled?]
   const seg = (options, value, onPick, cls = "seg") => h("div", { class: cls, role: "tablist" },
-    options.map(([v, label]) => h("button", { role: "tab", "aria-selected": v === value ? "true" : "false", onclick: () => onPick(v) }, label)));
+    options.map(([v, label, off]) => h("button", { role: "tab", "aria-selected": v === value ? "true" : "false", disabled: Boolean(off),
+      onclick: () => { if (v !== value) onPick(v); } }, label)));
 
   const header = h("header", { class: "top wrap" });
   const head = h("div", { class: "wrap" });
@@ -277,6 +309,46 @@ const main = async () => {
   const pool = () => rows.filter((r) => S.diffs.includes(r.difficulty)
     && (!S.band || r.bandIds.map(String).includes(S.band)));
 
+  // ------------------------------------------------------------ play scenario and accuracy
+  // `redo` redraws after a choice (this panel too), `live` what depends on the figures while a slider moves; `rooms`
+  // adds the Gekisou Live room size (score ranks), `missions` names the ranges after a song's Gekisou missions
+  const scenarioPanel = ({ redo, live, rooms = false, missions = null }) => {
+    const t = u();
+    const T = t.scen;
+    const battle = S.mode === "battle";
+    const note = (text) => h("small", { class: "note" }, text);
+    const modes = seg([["battle", T.battle], ["free", has.free ? T.free : `${T.free} · ${T.pending}`, !has.free]], S.mode,
+      (v) => { setScenario(() => { S.mode = v; }); redo(); });
+    const ranks = [...Array(RANGES).keys()].map((i) => h("span", { class: "rk-pick" },
+      h("small", {}, T.range(i + 1, missions ? t.missions[missions[i]] : null)),
+      seg([...Array(RANK_MAX).keys()].map((k) => [k + 1, String(k + 1), k > 0 && !has.ranks]), S.ranks[i],
+        (v) => { setScenario(() => { S.ranks = S.ranks.map((x, j) => (j === i ? v : x)); }); redo(); }, "seg mini")));
+    const slider = (label, value, set, off) => {
+      const out = h("output", {}, off ? T.pending : `${value}%`);
+      const inp = h("input", { type: "range", min: 0, max: 100, step: 1, value, disabled: off, "aria-label": label });
+      inp.addEventListener("input", () => {
+        const v = Number(inp.value);
+        out.textContent = `${v}%`;
+        setScenario(() => set(v));
+        live();
+        save();
+      });
+      return h("label", { class: "field" }, h("span", {}, label), inp, out);
+    };
+    return h("div", { class: "panel scen glass" },
+      h("div", { class: "field" }, h("span", {}, T.mode), modes, note(battle ? T.battleHint : T.freeHint)),
+      battle ? h("div", { class: "field" }, h("span", {}, T.ranks), ranks, note(has.ranks ? T.rankBest : `${T.rankBest} · ${T.ranksPending}`)) : null,
+      h("div", { class: "field" }, h("span", {}, T.accuracy),
+        slider(T.great, S.great, (v) => { S.great = v; }, false),
+        battle ? slider(T.just, S.just, (v) => { S.just = v; }, !has.just) : null,
+        note(battle ? T.accNote : T.accNoteFree)),
+      rooms && battle ? h("div", { class: "field" }, h("span", {}, T.room),
+        seg([...Array(RANK_MAX).keys()].map((k) => [k + 1, String(k + 1)]), S.room, (v) => { S.room = v; redo(); }, "seg mini"),
+        note(T.roomHint)) : null,
+      rooms && !battle ? note(T.soloRanks) : null);
+  };
+  const redoMain = () => { renderMain(); save(); };
+
   // ------------------------------------------------------------ rankings
   // `live`: redraws what depends on the figures while a slider or a number changes
   const effPanel = (live) => {
@@ -296,9 +368,6 @@ const main = async () => {
     const event = S.view === "rank" && S.rankBy === "event";
     const power = h("input", { type: "number", class: "num-in power", min: 0, step: 1000, value: S.power || "", placeholder: t.powerHint, "aria-label": t.power });
     power.addEventListener("input", () => { S.power = Math.max(0, Math.round(Number(power.value) || 0)); live(); save(); });
-    const greatOut = h("output", {}, `${S.great}%`);
-    const great = h("input", { type: "range", min: 0, max: 100, step: 1, value: S.great, "aria-label": t.great });
-    great.addEventListener("input", () => { S.great = Number(great.value); greatOut.textContent = `${S.great}%`; live(); save(); });
     return h("div", { class: "panel eff glass" },
       h("div", { class: "field" }, h("span", {}, t.length), seg([["bgm", t.bgm], ["chart", t.chart]], S.len, (v) => { S.len = v; renderMain(); save(); })),
       h("label", { class: "field" }, h("span", {}, t.overhead), oh, ohOut),
@@ -306,7 +375,6 @@ const main = async () => {
         t.presets.map(([label, v]) => h("button", { class: "ghost", onclick: () => { S.skills = v.split(",").map(Number); renderMain(); save(); } }, label)))),
       event ? h("div", { class: "field" }, h("span", {}, t.target), seg(SCORE_RANKS.slice(2).reverse().map((r) => [r, r]), S.target, (v) => { S.target = v; renderMain(); save(); })) : null,
       event ? h("label", { class: "field" }, h("span", {}, t.power), power) : null,
-      event ? h("label", { class: "field" }, h("span", {}, t.great), great, greatOut) : null,
       S.view === "rank" ? h("label", { class: "check" }, h("input", { type: "checkbox", checked: S.frontier, onchange: (e) => { S.frontier = e.target.checked; live(); save(); } }), t.frontier) : null);
   };
 
@@ -322,7 +390,8 @@ const main = async () => {
     put(main, 
       h("div", { class: "rank-head" }, tabs),
       h("p", { class: "hint" }, t.rankHint[S.rankBy], sub),
-      S.rankBy === "efficiency" || S.rankBy === "event" ? effPanel(renderTable) : null,
+      S.rankBy === "efficiency" || S.rankBy === "event"
+        ? [scenarioPanel({ redo: redoMain, live: renderTable, rooms: S.rankBy === "event" }), effPanel(renderTable)] : null,
       !hasStats ? h("p", { class: "hint warn" }, t.noStats) : null,
       tableBox);
     renderTable();
@@ -341,14 +410,14 @@ const main = async () => {
       cols.push("rate", "perMinute", "relative", "dom");
       hi = "perMinute";
     } else if (S.rankBy === "event") {
-      unsorted = list.filter((r) => r.weights && rankThreshold(r, S.target) !== null);
-      const dom = eventDominance(unsorted, S.len);
-      const f = accuracy();
+      const n = room();
+      unsorted = list.filter((r) => r.weights && rankThreshold(r, S.target, n) !== null);
+      const dom = eventDominance(unsorted, S.len, X_MAX, n);
       list = unsorted.map((r, i) => {
         const L = lengthMs(r, S.len);
         const perHour = L ? 3600000 / (L + S.overhead * 1000) : null;
-        const chance = S.power ? reachChance(r, skills(), S.power, S.target, f) : null;
-        return { ...r, need: requiredPower(r, skills(), S.target, f), chance, perHour,
+        const chance = S.power ? reachChance(r, skills(), S.power, S.target, 1, n) : null;
+        return { ...r, need: requiredPower(r, skills(), S.target, 1, n), chance, perHour,
           goal: chance === null || perHour === null ? null : chance * perHour, dominatedBy: dom[i], frontier: dom[i].length === 0 };
       });
       list = S.power ? sortBy(list, (r) => (r.goal === null ? null : r.goal - r.need * 1e-12)) : sortBy(list, (r) => r.need, true);
@@ -527,7 +596,8 @@ const main = async () => {
       h("section", { class: "card glass" },
         heading("h2", "sec-head", t.scatter,
           h("div", { class: "axes" }, pick(t.x, S.ax, (v) => { S.ax = v; }), h("button", { class: "ghost", "aria-label": t.swap, title: t.swap, onclick: () => { [S.ax, S.ay] = [S.ay, S.ax]; renderMain(); save(); } }, icon("swap")), pick(t.y, S.ay, (v) => { S.ay = v; }))),
-        EFF_AXES.has(S.ax) || EFF_AXES.has(S.ay) ? effPanel(() => plot.replaceChildren(scatter())) : null,
+        EFF_AXES.has(S.ax) || EFF_AXES.has(S.ay)
+          ? [scenarioPanel({ redo: redoMain, live: () => plot.replaceChildren(scatter()) }), effPanel(() => plot.replaceChildren(scatter()))] : null,
         plot, legend),
       h("div", { class: "grid2" },
         h("section", { class: "card glass" }, heading("h2", "sec-head", t.levelDist), levelChart()),
@@ -633,34 +703,75 @@ const main = async () => {
   // the song's score ranks: threshold, the power the expected score needs, and the chance at the power entered
   const ranksTable = (r) => {
     const t = u();
-    const ranks = SCORE_RANKS.filter((k) => rankThreshold(r, k) !== null).reverse();
+    const n = room();
+    const ranks = SCORE_RANKS.filter((k) => rankThreshold(r, k, n) !== null).reverse();
     if (!ranks.length || !r.weights) return null;
-    const f = accuracy();
     const rates = orderRates(r, skills());
     const spread = rates[rates.length - 1] > rates[0] + 1e-12;       // equal skills: every order scores the same
     return h("table", { class: "ranks" },
-      h("thead", {}, h("tr", {}, h("th", {}, t.detail.rank), h("th", {}, t.detail.required), h("th", {}, t.detail.needPower),
+      h("thead", {}, h("tr", {}, h("th", {}, t.detail.rank), h("th", {}, n ? t.detail.requiredRoom(n) : t.detail.required), h("th", {}, t.detail.needPower),
         spread ? h("th", {}, t.detail.needRange) : null, S.power ? h("th", {}, t.detail.chanceAt(fmtInt(S.power))) : null)),
       h("tbody", {}, ranks.map((k) => {
-        const R = rankThreshold(r, k);
-        const chance = S.power ? reachChance(r, skills(), S.power, k, f) : null;
+        const R = rankThreshold(r, k, n);
+        const chance = S.power ? reachChance(r, skills(), S.power, k, 1, n) : null;
         return h("tr", {}, h("td", {}, h("span", { class: `rk rk-${k}` }, k)), h("td", { class: "num" }, fmtInt(R)),
-          h("td", { class: "num" }, fmtInt(requiredPower(r, skills(), k, f))),
-          spread ? h("td", { class: "num dim" }, R > 0 ? `${fmtInt(R / (rates[rates.length - 1] * f))}–${fmtInt(R / (rates[0] * f))}` : "–") : null,
+          h("td", { class: "num" }, fmtInt(requiredPower(r, skills(), k, 1, n))),
+          spread ? h("td", { class: "num dim" }, R > 0 ? `${fmtInt(R / rates[rates.length - 1])}–${fmtInt(R / rates[0])}` : "–") : null,
           chance === null ? null : h("td", { class: "num" }, `${(100 * chance).toFixed(0)}%`));
       })));
   };
 
+  // a scenario changed in the detail: the view behind it redraws when the detail closes
+  let behindStale = false;
   const openChart = (scoreId) => { S.chart = scoreId; renderDrawer(); save(); };
-  const closeChart = () => { S.chart = null; renderDrawer(); save(); };
+  const closeChart = () => {
+    S.chart = null;
+    renderDrawer();
+    if (behindStale) { behindStale = false; renderMain(); }
+    save();
+  };
   const renderDrawer = () => {
     const r = S.chart && byScore.get(S.chart);
     if (!r) { drawer.classList.remove("open"); drawer.replaceChildren(); document.body.classList.remove("locked"); return; }
     const t = u();
     const siblings = rows.filter((x) => x.musicId === r.musicId);
-    const e = eff(r);
-    const tile = (k, v, sub) => h("div", { class: "tile" }, h("span", {}, k), h("b", {}, v), sub ? h("small", {}, sub) : null);
+    const tile = (k, v, sub, cls) => h("div", { class: cls ? `tile ${cls}` : "tile" }, h("span", {}, k), h("b", {}, v), sub ? h("small", {}, sub) : null);
     const c = r.chart;
+    // the figures of the scenario chosen: redrawn in place while the detail's own scenario panel changes
+    const controls = h("div", {});
+    const scores = h("div", {});
+    const line = h("div", { class: "tl-scroll" });
+    const weights = h("section", {});
+    const ranks = h("div", {});
+    const draw = () => {
+      const e = eff(r);
+      const battle = S.mode === "battle";
+      const solo = battle && r.weights ? freeRate(r) : null;
+      put(scores, h("div", { class: "tiles" },
+        r.weights ? tile(t.col.rate, fmt(e.rate, 3), (() => {
+          const v = orderRates(r, skills());
+          return v[v.length - 1] > v[0] + 1e-12 ? `${t.detail.orders} ${fmt(v[0], 3)}–${fmt(v[v.length - 1], 3)} · P10 ${fmt(quantile(v, 0.1), 3)}` : t.detail.sameOrder;
+        })()) : null,
+        r.weights ? tile(t.col.base, fmt(r.base, 3), `W ${fmt(weightSum(r), 3)} · ${t.col.skip} ${fmt(r.skip, 3)}`
+          + (r.seeds > 1 ? ` · ${t.detail.seeds(r.seeds)} ${fmt(r.baseRange[0], 3)}–${fmt(r.baseRange[1], 3)}` : "")) : null,
+        r.weights ? tile(t.col.perMinute, fmt(e.perMinute, 3), `${t.length} ${t[S.len]} + ${S.overhead} s`) : null,
+        battle && r.weights ? tile(t.detail.twoScores, `${fmt(e.rate, 3)} / ${solo === null ? t.scen.pending : fmt(solo, 3)}`,
+          t.detail.twoScoresHint, "wide") : null,
+        battle && r.unplayable ? tile(t.detail.unplayable, "–", `${t.detail.unplayableHint}${has.free ? t.detail.unplayableFree : ""}`) : null,
+        !r.weights && !(battle && r.unplayable) && r.stats ? tile(t.detail.noFigures, "–", t.scen.pending) : null));
+      put(line, timeline(r));
+      put(weights, r.weights ? [heading("h3", "sec-head", t.detail.weights), weightsChart(r), h("p", { class: "hint" }, t.detail.weightsHint)] : null);
+      put(ranks, r.weights && r.scoreRanks.length ? h("section", {}, heading("h3", "sec-head", t.detail.ranks), ranksTable(r),
+        h("p", { class: "hint" }, room() ? t.detail.ranksHintRoom(S.room) : t.detail.ranksHint)) : null);
+    };
+    const panelHere = () => (hasStats ? scenarioPanel({
+      redo: () => { put(controls, panelHere()); draw(); behindStale = true; save(); },
+      live: () => { draw(); behindStale = true; },
+      rooms: true,
+      missions: r.song.gekisouMissions || null,
+    }) : null);
+    put(controls, panelHere());
+    draw();
     const panel = h("div", { class: "drawer", role: "dialog", "aria-modal": "true", "aria-label": title(r) },
       h("div", { class: "d-hero", style: `--band:${bandColor(r)}` },
         showJackets() && r.song.jacket ? h("div", { class: "d-bg", style: `background-image:url("${new URL(`jackets/${r.song.jacket}.webp`, site).href}")` }) : null,
@@ -677,20 +788,13 @@ const main = async () => {
           tile(t.detail.notes, fmtInt(r.notes), `${t.detail.fullCombo} ${fmtInt(c.fullComboCount)}`),
           tile(t.detail.density, `${fmt(r.density)} N/s`, `${t.detail.span} ${formatLength((c.lastJudgedNoteMs || 0) - (c.firstNoteMs || 0))}`),
           tile(t.detail.bpm, String(r.bpm ?? "–"), r.bpmMin !== r.bpmMax ? `${r.bpmMin}–${r.bpmMax} · ${t.detail.bpmChanges(r.bpmChanges - 1)}` : ""),
-          tile(t.detail.bgm, formatLength(r.bgmMs), `${t.detail.musicLength} ${formatLength(r.chartMs)}`),
-          r.weights ? tile(t.col.rate, fmt(e.rate, 3), (() => {
-            const v = orderRates(r, skills());
-            return v[v.length - 1] > v[0] + 1e-12 ? `${t.detail.orders} ${fmt(v[0], 3)}–${fmt(v[v.length - 1], 3)} · P10 ${fmt(quantile(v, 0.1), 3)}` : t.detail.sameOrder;
-          })()) : null,
-          r.weights ? tile(t.col.base, fmt(r.base, 3), `W ${fmt(weightSum(r), 3)} · ${t.col.skip} ${fmt(r.skip, 3)}`
-            + (r.seeds > 1 ? ` · ${t.detail.seeds(r.seeds)} ${fmt(r.baseRange[0], 3)}–${fmt(r.baseRange[1], 3)}` : "")) : null,
-          r.unplayable ? tile(t.detail.unplayable, "–", t.detail.unplayableHint) : null,
-          r.weights ? tile(t.col.perMinute, fmt(e.perMinute, 3), `${t.length} ${t[S.len]} + ${S.overhead} s`) : null),
-        heading("h3", "sec-head", t.detail.timeline), h("div", { class: "tl-scroll" }, timeline(r)),
+          tile(t.detail.bgm, formatLength(r.bgmMs), `${t.detail.musicLength} ${formatLength(r.chartMs)}`)),
+        hasStats ? heading("h3", "sec-head", t.detail.score) : null, controls, scores,
+        heading("h3", "sec-head", t.detail.timeline), line,
         h("div", { class: "grid2" },
           h("section", {}, heading("h3", "sec-head", t.detail.composition), composition(r)),
-          r.weights ? h("section", {}, heading("h3", "sec-head", t.detail.weights), weightsChart(r), h("p", { class: "hint" }, t.detail.weightsHint)) : null),
-        r.weights && r.scoreRanks.length ? h("section", {}, heading("h3", "sec-head", t.detail.ranks), ranksTable(r), h("p", { class: "hint" }, t.detail.ranksHint)) : null,
+          weights),
+        ranks,
         h("p", { class: "ids" }, `${t.detail.musicId} ${r.musicId} · ${t.detail.scoreId} ${r.scoreId} · ${t.detail.musicType} ${r.song.musicType}`)));
     drawer.replaceChildren(panel);
     drawer.classList.add("open");
