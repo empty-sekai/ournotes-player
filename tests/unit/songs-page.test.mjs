@@ -2,11 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  X_MAX, chartFigures, dominance, dominates, eventDominates, formatLength, joinCharts, lengthMs, meanSkill, orderRates,
-  perMinute, pickText, plainKind, quantile, rank, rankThreshold, reachChance, requiredPower, scoreRate, weightSum,
+  DEFAULT_SCENARIO, X_MAX, chartFigures, dominance, dominates, eventDominates, formatLength, formatRanks, greatFactor,
+  joinCharts, lengthMs, meanSkill, orderRates, parseRanks, perMinute, pickText, plainKind, quantile, rank, rankPercent,
+  rankThreshold, reachChance, requiredPower, roomThreshold, scenarioData, scoreRate, weightSum,
 } from "../../examples/songs/ranking.js";
 import {
-  chartRows, density, extent, histogram, matches, moenotesUrl, noteKinds, sortBy, ticks,
+  chartRows, density, extent, histogram, matches, moenotesUrl, noteKinds, refigure, sortBy, ticks,
 } from "../../examples/songs/catalog.js";
 
 // music-data.json: kind 0 is a judgement score up, kind 1 the plain score up the page models
@@ -206,6 +207,176 @@ test("rank marks the frontier and sorts", () => {
   assert.deepEqual(rank([a, b, c], { skills: [], source: "chart", overheadMs: 0, key: "level" }).map((r) => r.scoreId), [2, 1, 3]);
   // equal charts dominate neither way
   assert.equal(dominates(a, { ...a, scoreId: 9 }, "chart"), false);
+});
+
+// ---------------------------------------------------------------- play scenarios
+
+// chartFigures before the scenarios: the seeds' own score and weights
+const statusQuo = (deck, kind, power) => {
+  const seeds = (deck && !deck.unplayable && deck.seeds) || [];
+  if (!seeds.length || !seeds.every((s) => Array.isArray(s.weights && s.weights[kind]))) return null;
+  const bases = seeds.map((s) => s.score / power);
+  const n = deck.positions ?? seeds[0].weights[kind].length;
+  const avg = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
+  return { base: avg(bases), baseRange: [Math.min(...bases), Math.max(...bases)], seeds: seeds.length, skip: deck.skip ?? null,
+    weights: [...Array(n).keys()].map((k) => avg(seeds.map((s) => s.weights[kind][k] ?? 0))) };
+};
+
+// three ranges: combo, Just, luck; rank 1 bonus = trunc(rangeScore * p(1) / 100); the no-bonus score 20000 all Just,
+// 19198 all Perfect (range 1 scores 2003 all Just, 1201 all Perfect)
+const RANGES3 = [
+  { index: 0, mission: 1, rankBonusPercent: 250, rankBonusPercents: [250, 200, 160, 130, 100] },
+  { index: 1, mission: 3, rankBonusPercent: 250, rankBonusPercents: [250, 200, 160, 130, 100] },
+  { index: 2, mission: 2, rankBonusPercent: 370, rankBonusPercents: [370, 300, 230, 160, 100] },
+];
+const W1 = [0.1, 0.2, 0.3, 0.4, 0.5];
+const RW1 = [[0.01, 0.02, 0], [0, 0.03, 0.01], [0.02, 0, 0.04], [0, 0, 0], [0.05, 0.01, 0.02]];   // [k][i]
+const battleSeed = (extra = {}) => ({
+  seed: 0,
+  score: 20000 + 2502 + 5007 + 5575,
+  scorePerfect: 19198 + 2502 + 3002 + 5575,
+  weights: [[9, 9, 9, 9, 9], W1],
+  rangeWeights: [RW1.map((w) => w.map(() => 1)), RW1],
+  ranges: [
+    { rangeScore: 1001, rankBonus: 2502, justCount: 0 },
+    { rangeScore: 2003, rankBonus: 5007, rangeScorePerfect: 1201, justCount: 40 },
+    { rangeScore: 1507, rankBonus: 5575, justCount: 0 },
+  ],
+  ...extra,
+});
+const deck3 = (extra = {}) => ({
+  positions: 5, skip: 2, unplayable: null, ranges: RANGES3,
+  seeds: [battleSeed(), battleSeed({ seed: 1, score: battleSeed().score + 300, scorePerfect: battleSeed().scorePerfect + 300 })],
+  offSeeds: [{ seed: 0, score: 9000, weights: [[1, 1, 1, 1, 1], [0.05, 0.06, 0.07, 0.08, 0.09]], check: null }],
+  ...extra,
+});
+const near = (a, b, msg) => assert.ok(Math.abs(a - b) < 1e-9, `${msg}: ${a} vs ${b}`);
+const nearAll = (a, b, msg) => { assert.equal(a.length, b.length, msg); a.forEach((v, i) => near(v, b[i], `${msg}[${i}]`)); };
+
+test("rank 1 everywhere, all Just and no Great is the seeds themselves, value for value", () => {
+  const decks = [deck3(), songs.songs[0].charts[1].deck, songs.songs[1].charts[0].deck, songs.songs[1].charts[1].deck, null];
+  for (const d of decks) {
+    for (const sc of [undefined, null, DEFAULT_SCENARIO, { mode: "battle", ranks: [1, 1, 1], just: 1, great: 0 }, { mode: "battle" }]) {
+      assert.deepEqual(chartFigures(d, 1, 1000, sc), statusQuo(d, 1, 1000));
+    }
+  }
+  assert.deepEqual(joinCharts(songs, DEFAULT_SCENARIO), joinCharts(songs));
+  // the rows' figures too, and back after another scenario
+  const rows = chartRows(songs);
+  const before = structuredClone(rows.map(({ song, chart, stats, ...r }) => r));
+  refigure(rows, songs, { mode: "battle", ranks: [5, 5, 5], great: 0.5 });
+  assert.notDeepEqual(rows.find((r) => r.scoreId === 13).base, before.find((r) => r.scoreId === 13).base);
+  refigure(rows, songs, DEFAULT_SCENARIO);
+  assert.deepEqual(rows.map(({ song, chart, stats, ...r }) => r), before);
+  assert.equal(greatFactor(0), 1);
+  near(greatFactor(0.25), 0.95, "g(0.25)");
+  assert.equal(greatFactor(2), greatFactor(1));
+});
+
+test("the linear rank formula against the hand computation", () => {
+  const d = deck3({ seeds: [battleSeed()] });
+  // ranks 2, 5, 3: percents 200, 100, 230; bonuses trunc(1001 * 2) = 2002, trunc(2003 * 1) = 2003, trunc(1507 * 2.3) = 3466
+  const f = chartFigures(d, 1, 1000, { mode: "battle", ranks: [2, 5, 3] });
+  near(f.base, (20000 + 2002 + 2003 + 3466) / 1000, "base");
+  // w[k] + (-0.5 rw[k][0] - 1.5 rw[k][1] - 1.4 rw[k][2])
+  nearAll(f.weights, [0.1 - 0.005 - 0.03, 0.2 - 0.045 - 0.014, 0.3 - 0.01 - 0.056, 0.4, 0.5 - 0.025 - 0.015 - 0.028], "weights");
+  assert.equal(rankPercent(RANGES3[2], 3), 230);
+  assert.equal(rankPercent({ rankBonusPercent: 250 }, 1), 250);             // older data: rank 1 only
+  assert.equal(rankPercent({ rankBonusPercent: 250 }, 2), null);
+  // the rank bonus is floored on the range score: 1001 * 160 / 100 = 1601.6
+  near(chartFigures(d, 1, 1000, { ranks: [3, 1, 1] }).base, (20000 + 1601 + 5007 + 5575) / 1000, "floor");
+  // a single rank moves only its own range
+  const g = chartFigures(d, 1, 1000, { ranks: [1, 1, 5] });
+  near(g.base, (20000 + 2502 + 5007 + 1507) / 1000, "rank 5 in range 2");
+  nearAll(g.weights, W1.map((w, k) => w + ((100 - 370) / 100) * RW1[k][2]), "rank 5 weights");
+  // the mean over the seeds
+  const two = chartFigures(deck3(), 1, 1000, { ranks: [2, 5, 3] });
+  near(two.base, f.base + 0.15, "two seeds");
+  assert.deepEqual(two.baseRange.map((x) => +x.toFixed(9)), [f.base, f.base + 0.3].map((x) => +x.toFixed(9)));
+  // without rangeWeights or rankBonusPercents the other ranks have no figures; rank 1 still has
+  const bare = deck3({ seeds: [battleSeed({ rangeWeights: undefined })] });
+  assert.equal(chartFigures(bare, 1, 1000, { ranks: [2, 1, 1] }), null);
+  assert.deepEqual(chartFigures(bare, 1, 1000, { ranks: [1, 1, 1] }), statusQuo(bare, 1, 1000));
+  assert.equal(chartFigures(deck3({ ranges: RANGES3.map(({ rankBonusPercents, ...r }) => r) }), 1, 1000, { ranks: [2, 2, 2] }), null);
+});
+
+test("the Just rate interpolates to the all-Perfect run, then the Great share scales", () => {
+  const d = deck3({ seeds: [battleSeed()] });
+  // j = 0: all Perfect at rank 1 is scorePerfect itself
+  near(chartFigures(d, 1, 1000, { just: 0 }).base, (19198 + 2502 + 3002 + 5575) / 1000, "all Perfect");
+  // j = 0.5, q = 0.25, ranks 2, 5, 3: no-bonus score 19198 + 0.5 * 802 = 19599; range 1 scores 1201 + 0.5 * 802 = 1602
+  const f = chartFigures(d, 1, 1000, { ranks: [2, 5, 3], just: 0.5, great: 0.25 });
+  near(f.base, ((19599 + 2002 + 1602 + 3466) * 0.95) / 1000, "base");
+  // the weights of range 1 scale by 1602 / 2003, with its rank bonus (100 %) on top
+  const rho = 1602 / 2003;
+  const wr = [0.065, 0.141, 0.234, 0.4, 0.432];
+  nearAll(f.weights, wr.map((w, k) => (w + (rho - 1) * 2 * RW1[k][1]) * 0.95), "weights");
+  // the Great share alone
+  const q = chartFigures(d, 1, 1000, { great: 0.5 });
+  near(q.base, (battleSeed().score * 0.9) / 1000, "Great base");
+  nearAll(q.weights, W1.map((w) => w * 0.9), "Great weights");
+  // without scorePerfect, or a Just range without its Perfect score, no figures below 100 %
+  assert.equal(chartFigures(deck3({ seeds: [battleSeed({ scorePerfect: undefined })] }), 1, 1000, { just: 0.5 }), null);
+  const noJustPerfect = battleSeed();
+  noJustPerfect.ranges = noJustPerfect.ranges.map(({ rangeScorePerfect, ...x }) => x);
+  assert.equal(chartFigures(deck3({ seeds: [noJustPerfect] }), 1, 1000, { just: 0.5 }), null);
+});
+
+test("Free Live reads offSeeds, also on charts unplayable with Gekisou", () => {
+  const d = deck3();
+  const f = chartFigures(d, 1, 1000, { mode: "free" });
+  near(f.base, 9, "base");
+  assert.equal(f.seeds, 1);
+  assert.deepEqual(f.weights, [0.05, 0.06, 0.07, 0.08, 0.09]);
+  // ranks and the Just rate do not apply; the Great share does
+  assert.deepEqual(chartFigures(d, 1, 1000, { mode: "free", ranks: [5, 5, 5], just: 0 }), f);
+  near(chartFigures(d, 1, 1000, { mode: "free", great: 1 }).base, 7.2, "Great");
+  const four = deck3({ unplayable: "4 fevers", seeds: [] });
+  assert.equal(chartFigures(four, 1, 1000), null);
+  near(chartFigures(four, 1, 1000, { mode: "free" }).base, 9, "unplayable");
+  assert.equal(chartFigures(deck3({ offSeeds: undefined }), 1, 1000, { mode: "free" }), null);
+  // a kind the Gekisou-off run could not model is null there
+  assert.equal(chartFigures(deck3({ offSeeds: [{ seed: 0, score: 9000, weights: [[1, 1, 1, 1, 1], null] }] }), 1, 1000, { mode: "free" }), null);
+});
+
+test("what the data can show, the ranks in the query", () => {
+  const data = (d) => ({ songs: [{ id: 1, charts: [{ scoreId: 1, deck: d }] }] });
+  assert.deepEqual(scenarioData(data(deck3())), { free: true, ranks: true, just: true });
+  assert.deepEqual(scenarioData(songs), { free: false, ranks: false, just: false });   // the current data
+  assert.deepEqual(scenarioData(data(deck3({ offSeeds: [], ranges: RANGES3.map(({ rankBonusPercents, ...r }) => r) }))),
+    { free: false, ranks: false, just: true });
+  assert.deepEqual(parseRanks(null), [1, 1, 1]);
+  assert.deepEqual(parseRanks("5"), [5, 5, 5]);
+  assert.deepEqual(parseRanks("2,5,3"), [2, 5, 3]);
+  assert.deepEqual(parseRanks("2,x"), [2, 1, 1]);
+  assert.deepEqual(parseRanks("9,0,4,2"), [1, 1, 4]);
+  assert.equal(formatRanks([1, 1, 1]), "");
+  assert.equal(formatRanks([5, 5, 5]), "5");
+  assert.equal(formatRanks([2, 5, 3]), "2,5,3");
+  for (const t of ["", "4", "1,2,3", "3,3,1"]) assert.equal(formatRanks(parseRanks(t)), t);
+});
+
+test("Gekisou Live rates the room: every player at sqrt(5 / n) of the battle threshold", () => {
+  assert.equal(roomThreshold(1000, 5), 1000);
+  assert.equal(roomThreshold(1000, 1), 2236);                        // trunc(sqrt(5) * 1000)
+  assert.equal(roomThreshold(1000, 2), 1581);                        // trunc(sqrt(2.5) * 2000) / 2 = 3162 / 2
+  assert.equal(roomThreshold(0, 3), 0);
+  const ranks = [{ rank: "D", requiredScore: 0, battleRequiredScore: 0 }, { rank: "SS", requiredScore: 800, battleRequiredScore: 1000 }];
+  const a = { scoreId: 1, base: 4, chartMs: 100000, bgmMs: null, weights: [0.25, 0.25, 0.25, 0.25, 0], scoreRanks: ranks };
+  assert.equal(rankThreshold(a, "SS"), 800);                          // solo: requiredScore
+  assert.equal(rankThreshold(a, "SS", 5), 1000);
+  assert.equal(rankThreshold(a, "SS", 1), 2236);
+  assert.equal(rankThreshold(a, "D", 2), 0);
+  assert.equal(rankThreshold({ scoreRanks: [{ rank: "SS", requiredScore: 800 }] }, "SS", 5), null);
+  const x = [1, 1, 1, 1, 1];                                          // 4 + 1 per power
+  near(requiredPower(a, x, "SS"), 160, "solo power");
+  near(requiredPower(a, x, "SS", 1, 5), 200, "room of 5");
+  near(requiredPower(a, x, "SS", 1, 1), 447.2, "room of 1");
+  assert.equal(reachChance(a, x, 199, "SS", 1, 5), 0);
+  assert.equal(reachChance(a, x, 200, "SS", 1, 5), 1);
+  // solo compares requiredScore (equal here), a room battleRequiredScore (a lower on a)
+  const b = { ...a, scoreId: 2, scoreRanks: [ranks[0], { rank: "SS", requiredScore: 800, battleRequiredScore: 1100 }] };
+  for (const n of [0, 1, 3, 5]) assert.equal(eventDominates(a, b, "chart", X_MAX, n), n !== 0);
 });
 
 // ---------------------------------------------------------------- catalog.js

@@ -28,11 +28,19 @@ export const density = (chart) => {
   return span > 0 && n ? n / (span / 1000) : null;
 };
 
-// One row per chart of music-data.json, in song order then difficulty order, with the deck figures (ranking.js
-// chartFigures) when the chart has them; `stats` is the chart's own deck statistics (null in a file made without the
-// deck model).
-export const chartRows = (data) => {
-  const eff = new Map(joinCharts(data).map((r) => [r.scoreId, r]));
+// A row's deck figures (ranking.js chartFigures) from a joinCharts row, null ones without it.
+const figures = (e) => ({
+  base: e ? e.base : null,
+  baseRange: e ? e.baseRange : null,
+  seeds: e ? e.seeds : null,
+  weights: e ? e.weights : null,
+});
+
+// One row per chart of music-data.json, in song order then difficulty order, with the deck figures in a scenario
+// (ranking.js chartFigures; default: Gekisou Live at rank 1) when the chart has them; `stats` is the chart's own deck
+// statistics (null in a file made without the deck model).
+export const chartRows = (data, scenario = null) => {
+  const eff = new Map(joinCharts(data, scenario).map((r) => [r.scoreId, r]));
   const out = [];
   for (const song of (data && data.songs) || []) {
     const bgm = song.bgm && song.bgm.length;
@@ -60,16 +68,20 @@ export const chartRows = (data) => {
         density: density(chart),
         bgmMs: bgm ? (bgm.durationMs ?? bgm.lengthMs ?? null) : null,
         chartMs: chart.musicLengthMs ?? null,
-        base: e ? e.base : null,
-        baseRange: e ? e.baseRange : null,
-        seeds: e ? e.seeds : null,
+        ...figures(e),
         skip: chart.deck && !chart.deck.unplayable ? chart.deck.skip ?? null : null,
         unplayable: chart.deck ? chart.deck.unplayable ?? null : null,
-        weights: e ? e.weights : null,
       });
     }
   }
   return out;
+};
+
+// Puts the deck figures of another scenario into chartRows' rows, in place (the page keeps its rows).
+export const refigure = (rows, data, scenario) => {
+  const eff = new Map(joinCharts(data, scenario).map((r) => [r.scoreId, r]));
+  for (const r of rows) Object.assign(r, figures(eff.get(r.scoreId)));
+  return rows;
 };
 
 // Whether a row matches a search text: any language of the title, reading, credits, or the music id.

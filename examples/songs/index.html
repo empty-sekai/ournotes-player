@@ -175,6 +175,8 @@
   .seg button { border: 0; background: none; padding: 3px 12px; border-radius: 8px; color: var(--mn-ink-soft); font-size: 13px; font-weight: 500; }
   .seg button:hover { color: var(--mn-accent-deep); }
   .seg button[aria-selected="true"] { color: var(--mn-accent-deep); background: var(--mn-accent-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mn-accent) 30%, transparent); }
+  .seg button:disabled { color: var(--mn-text-muted); opacity: .5; cursor: not-allowed; }
+  .seg.mini button { min-width: 26px; padding: 2px 7px; font-variant-numeric: tabular-nums; }
   .hint { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin: 4px 2px 14px; color: var(--mn-text-muted); font-size: 13px; line-height: 1.75; }
   .hint.warn { color: var(--mn-rose); }
 
@@ -192,6 +194,12 @@
   .num-in.power { width: 136px; }
   .num-in::placeholder { color: var(--mn-text-muted); text-align: left; font-size: 12px; }
   input[type=range] { width: 140px; accent-color: var(--mn-accent); }
+  input[type=range]:disabled { opacity: .45; cursor: not-allowed; }
+  /* play scenario: ranks per range, notes on the approximations */
+  .scen .field { white-space: normal; }
+  .rk-pick { display: inline-flex; align-items: center; gap: 6px; }
+  .rk-pick > small { color: var(--mn-text-muted); font-size: 12px; white-space: nowrap; }
+  .note { color: var(--mn-text-muted); font-size: 12px; line-height: 1.6; }
   .check { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; color: var(--mn-ink-soft); }
   .check input { accent-color: var(--mn-accent); width: 16px; height: 16px; }
   .skills { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
@@ -359,6 +367,8 @@
   .tile span { color: var(--mn-text-muted); font-size: 12px; }
   .tile b { font-size: 20px; font-weight: 500; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
   .tile small { color: var(--mn-text-muted); font-size: 11px; line-height: 1.5; }
+  .tile.wide { grid-column: span 2; }
+  .d-body .scen { margin: 0 0 4px; }
   .timeline { padding: 6px; border-radius: var(--cut-md); border: 1px solid var(--mn-glass-border); background: var(--mn-glass); }
   .timeline .lane { fill: var(--mn-text-muted); font-size: 11px; }
   .timeline .lane-line { stroke: var(--mn-border); stroke-dasharray: 2 4; }
@@ -446,6 +456,7 @@
     .d-hero { flex-direction: column; align-items: flex-start; padding: 22px 16px 16px; }
     .jk.xl { width: 88px; height: 88px; }
     .d-body { padding: 4px 16px 24px; }
+    .tile.wide { grid-column: 1 / -1; }
     .hbar { grid-template-columns: 96px 1fr 28px; }
     input[type=range] { width: 110px; }
   }

@@ -2,7 +2,7 @@
 // statistics are ournotes-deck.chart-stats/2).
 //
 // Score model (music-data.json `deck`, checked per seed against the whole-live simulation): on the theoretical best
-// play with Gekisou on (the chart's fevers with the song's missions, a solo player at rank 1), a deck of power P whose
+// play with Gekisou on (the chart's fevers with the song's missions, rank 1 in every range), a deck of power P whose
 // live skills are plain score-up skills (effect type 2000 for 5 s on the whole deck, no targets or conditions) raising
 // the note score by x_1 .. x_n scores
 //
@@ -26,6 +26,18 @@
 // (strictly somewhere). The difference is linear in c for a fixed xbar and linear in xbar for a fixed c, so the four
 // corners xbar in {0, X_MAX}, c in {0, infinity} decide it: S_a >= S_b and S_a / L_a >= S_b / L_b at both ends.
 // The deck power must be the same on both charts: song type and tag bonuses change a deck's power per song.
+//
+// Play scenarios (see scenarioSeed): "battle" is Gekisou Live (撃奏ライブ, up to 5 players, Gekisou on) with a rank
+// r_i in 1..5 per Gekisou range; the seeds are its rank-1 simulations, and the other ranks follow from them linearly
+// (the rank bonus trunc(rangeScore * p / 100) is added at the range's end and changes nothing else):
+//
+//   base_r = (score - sum_i rankBonus_i + sum_i trunc(rangeScore_i * p_i(r_i) / 100)) / power
+//   w_r[k] = w[k] + sum_i (p_i(r_i) - p_i(1)) / 100 * rangeWeights[k][i]
+//
+// "free" is Free Live (solo, Gekisou off), its own simulation (`offSeeds`). Two accuracy approximations, without
+// combo breaks: a Great share q scales every score by 1 - 0.2 q; a Just rate j (battle only) interpolates between the
+// all-Just seeds and the all-Perfect run of the Just ranges (`scorePerfect`, `rangeScorePerfect`), with the rank
+// bonuses recomputed on the interpolated range scores and the skill weights inside a range scaled by the same ratio.
 
 export const DIFFICULTIES = ["easy", "normal", "hard", "expert"];
 export const EPS = 1e-12;
@@ -56,33 +68,132 @@ export const plainKind = (data) => {
 
 const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
 
-// A chart's figures from its deck statistics (`chart.deck`): `base` and `weights[k]` (performance position k's, of
-// kind `kind`) as means over the seeds, `baseRange` the seeds' [min, max] base, `seeds` their number. null without
-// statistics, for an unplayable chart or without the kind.
-export const chartFigures = (deck, kind, power = POWER) => {
-  const seeds = (deck && !deck.unplayable && deck.seeds) || [];
+// ---------------------------------------------------------------- play scenarios
+// The Great judgement's score percent against the Perfect's (MasterLiveJudgementParameter: 80 and 100).
+export const GREAT_SCORE = 0.8;
+// Gekisou Live seats up to 5 players; a chart has 3 Gekisou ranges (more fevers are unplayable with Gekisou on).
+export const RANK_MAX = 5;
+export const RANGES = 3;
+// The Just mission (music-data.json `gekisouMissions`, deck `ranges[i].mission`): Just judgements are on only there.
+const JUST_MISSION = 3;
+// mode "battle" | "free"; ranks[i] the rank in range i; just and great as fractions (0..1)
+export const DEFAULT_SCENARIO = Object.freeze({ mode: "battle", ranks: Object.freeze([1, 1, 1]), just: 1, great: 0 });
+
+// The score factor of a Great share q (0..1) over every note: 1 - 0.2 q.
+export const greatFactor = (q) => 1 - (1 - GREAT_SCORE) * (Number.isFinite(q) ? Math.min(1, Math.max(0, q)) : 0);
+
+const clampRank = (r) => (Number.isInteger(r) && r >= 1 && r <= RANK_MAX ? r : 1);
+
+// "r" or "r1,r2,r3" (the query's rk) as three ranks; a bad or missing value is rank 1.
+export const parseRanks = (text) => {
+  const v = String(text ?? "").split(",").slice(0, RANGES).map((x) => clampRank(Number(x)));
+  return v.length === 1 ? Array(RANGES).fill(v[0]) : [...v, ...Array(RANGES - v.length).fill(1)];
+};
+
+// The query form of three ranks: "" for all rank 1, "r" for one rank everywhere, else "r1,r2,r3".
+export const formatRanks = (ranks) => {
+  const r = [...Array(RANGES).keys()].map((i) => clampRank((ranks || [])[i]));
+  if (r.every((x) => x === r[0])) return r[0] === 1 ? "" : String(r[0]);
+  return r.join(",");
+};
+
+// Range i's rank bonus percent at rank r (music-data.json deck `ranges[i]`: rankBonusPercents for ranks 1..5,
+// rankBonusPercent for rank 1); null when the data has no such rank.
+export const rankPercent = (range, r) => {
+  const list = range && range.rankBonusPercents;
+  if (Array.isArray(list) && Number.isFinite(list[r - 1])) return list[r - 1];
+  return r === 1 && range && Number.isFinite(range.rankBonusPercent) ? range.rankBonusPercent : null;
+};
+
+// Which scenarios music-data.json can show: free (offSeeds), ranks other than 1 (rankBonusPercents and
+// rangeWeights), a Just rate below 100 % (scorePerfect, with rangeWeights for the skill weights).
+export const scenarioData = (data) => {
+  const has = { free: false, ranks: false, just: false };
+  for (const song of (data && data.songs) || []) {
+    for (const chart of song.charts || []) {
+      const d = chart.deck;
+      if (!d) continue;
+      const seeds = d.seeds || [];
+      if ((d.offSeeds || []).length) has.free = true;
+      if ((d.ranges || []).length && d.ranges.every((r) => Array.isArray(r.rankBonusPercents) && r.rankBonusPercents.length >= RANK_MAX)
+        && seeds.some((s) => s.rangeWeights)) has.ranks = true;
+      if (seeds.some((s) => Number.isFinite(s.scorePerfect) && s.rangeWeights)) has.just = true;
+    }
+  }
+  return has;
+};
+
+// One seed's no-skill score (points at the measurement power) and the position weights of `kind` in a scenario
+// (see the top of the file; `ranges` is the chart's deck `ranges`); null when the seed lacks a field the scenario
+// needs. Battle at rank 1 everywhere with j = 1 is the seed itself; free is an `offSeeds` entry as it is.
+export const scenarioSeed = (seed, ranges, kind, scenario) => {
+  const sc = { ...DEFAULT_SCENARIO, ...(scenario || {}) };
+  const w0 = seed && seed.weights && seed.weights[kind];
+  if (!Array.isArray(w0) || !Number.isFinite(seed.score)) return null;
+  const g = greatFactor(sc.great);
+  const plain = () => ({ score: seed.score * g, weights: w0.map((v) => (v ?? 0) * g) });
+  if (sc.mode === "free") return plain();
+  const rs = seed.ranges || [];
+  const ranks = rs.map((_, i) => clampRank((sc.ranks || [])[i]));
+  const j = Number.isFinite(sc.just) ? Math.min(1, Math.max(0, sc.just)) : 1;
+  const partial = j < 1;
+  if (!partial && ranks.every((r) => r === 1)) return plain();
+  const rw = seed.rangeWeights && seed.rangeWeights[kind];
+  if (!Array.isArray(rw)) return null;
+  const p1 = rs.map((_, i) => rankPercent(ranges[i], 1));
+  const pr = rs.map((_, i) => rankPercent(ranges[i], ranks[i]));
+  if ([...p1, ...pr].some((p) => p === null) || rs.some((x) => !Number.isFinite(x.rangeScore) || !Number.isFinite(x.rankBonus))) return null;
+  // the all-Perfect range score: a range without Just judgements scores the same either way
+  const perfect = rs.map((x, i) => (Number.isFinite(x.rangeScorePerfect) ? x.rangeScorePerfect
+    : ranges[i] && ranges[i].mission !== JUST_MISSION ? x.rangeScore : null));
+  if (partial && (!Number.isFinite(seed.scorePerfect) || perfect.some((v) => v === null))) return null;
+  const lerp = (p, just) => (partial ? p + j * (just - p) : just);
+  // the score without the rank bonuses, all Just and all Perfect (scorePerfect holds the rank-1 bonuses of its ranges)
+  const rest = seed.score - rs.reduce((a, x) => a + x.rankBonus, 0);
+  const restP = partial ? seed.scorePerfect - perfect.reduce((a, v, i) => a + Math.trunc((v * p1[i]) / 100), 0) : rest;
+  const rangeJ = rs.map((x, i) => lerp(perfect[i], x.rangeScore));
+  const score = lerp(restP, rest) + rangeJ.reduce((a, v, i) => a + Math.trunc((v * pr[i]) / 100), 0);
+  const weights = w0.map((v, k) => (v ?? 0) + rs.reduce((a, x, i) => {
+    const d = (rw[k] && rw[k][i]) ?? 0;
+    const ratio = x.rangeScore > 0 ? rangeJ[i] / x.rangeScore : 1;         // the Just rate's, on the range's part
+    return a + ((pr[i] - p1[i]) / 100) * d + (ratio - 1) * (1 + pr[i] / 100) * d;
+  }, 0));
+  return { score: score * g, weights: weights.map((v) => v * g) };
+};
+
+// A chart's figures from its deck statistics (`chart.deck`) in a scenario (default: battle, rank 1, all Just, no
+// Great): `base` and `weights[k]` (performance position k's, of kind `kind`) as means over the seeds (`offSeeds` in
+// free), `baseRange` the seeds' [min, max] base, `seeds` their number. null without statistics, for a chart
+// unplayable with Gekisou on (battle), without the kind or without the scenario's fields.
+export const chartFigures = (deck, kind, power = POWER, scenario = null) => {
+  const free = Boolean(scenario && scenario.mode === "free");
+  const seeds = (deck && (free ? deck.offSeeds : !deck.unplayable && deck.seeds)) || [];
   if (!seeds.length || kind === null || kind === undefined) return null;
-  if (!seeds.every((s) => Array.isArray(s.weights && s.weights[kind]))) return null;
-  const bases = seeds.map((s) => s.score / power);
-  const n = deck.positions ?? seeds[0].weights[kind].length;
+  const figs = seeds.map((s) => scenarioSeed(s, deck.ranges || [], kind, scenario));
+  if (figs.some((f) => !f)) return null;
+  const bases = figs.map((f) => f.score / power);
+  const n = deck.positions ?? figs[0].weights.length;
   return {
     base: mean(bases),
     baseRange: [Math.min(...bases), Math.max(...bases)],
     seeds: seeds.length,
     skip: deck.skip ?? null,
-    weights: [...Array(n).keys()].map((k) => mean(seeds.map((s) => s.weights[kind][k] ?? 0))),
+    weights: [...Array(n).keys()].map((k) => mean(figs.map((f) => f.weights[k] ?? 0))),
   };
 };
 
-// One row per chart of music-data.json with deck figures (see chartFigures), with the song's facts; `weights[k]` is
-// performance position k's.
-export const joinCharts = (data) => {
+// ournotes-deck's measurement power of music-data.json.
+export const modelPower = (data) => (data && data.deck && data.deck.model && data.deck.model.power) || POWER;
+
+// One row per chart of music-data.json with deck figures in a scenario (see chartFigures), with the song's facts;
+// `weights[k]` is performance position k's.
+export const joinCharts = (data, scenario = null) => {
   const kind = plainKind(data);
-  const power = (data && data.deck && data.deck.model && data.deck.model.power) || POWER;
+  const power = modelPower(data);
   const out = [];
   for (const song of (data && data.songs) || []) {
     for (const chart of song.charts || []) {
-      const f = chartFigures(chart.deck, kind, power);
+      const f = chartFigures(chart.deck, kind, power, scenario);
       if (!f) continue;
       const bgm = song.bgm && song.bgm.length;
       out.push({
@@ -236,6 +347,10 @@ export const formatLength = (ms) => {
 // song choice only needs the chance of each rank and the play time; a table value is recovered from one result as
 // points * 10000 / ((10000 + bonus) * boostRate).
 //
+// Free Live rates a player's score against the song's `requiredScore`. Gekisou Live rates the room: the sum of the
+// scores of its n players against trunc(sqrt(5 / n) * battleRequiredScore * n). With every player scoring the same,
+// one player needs trunc(sqrt(5 / n) * R_battle * n) / n, about sqrt(5 / n) * R_battle (`room` = n below; 0 for solo).
+//
 // Event dominance (expected score): a beats b when L_a <= L_b and, for every rank r with thresholds R_a, R_b > 0,
 //   S_a(xbar) / R_a(r) >= S_b(xbar) / R_b(r)   for all 0 <= xbar <= X_MAX
 // (linear in xbar: both ends decide), strictly somewhere: a deck reaches every rank on a at a power no higher than on
@@ -243,23 +358,29 @@ export const formatLength = (ms) => {
 
 export const SCORE_RANKS = ["D", "C", "B", "A", "S", "SS"];
 
-// The required score of a rank on a row's song; null when the song has no such rank.
-export const rankThreshold = (row, rank) => {
+// One player's share of a Gekisou Live room threshold R_battle among n players who all score the same.
+export const roomThreshold = (R, n) => Math.trunc(Math.sqrt(5 / n) * R * n) / n;
+
+// The score one player needs for a rank on a row's song: solo (`room` 0) the song's requiredScore, in a Gekisou Live
+// room of `room` players scoring the same its roomThreshold; null when the song has no such rank.
+export const rankThreshold = (row, rank, room = 0) => {
   const hit = (row.scoreRanks || []).filter((r) => r.rank === rank).pop();
-  return hit && Number.isFinite(hit.requiredScore) ? hit.requiredScore : null;
+  if (!hit) return null;
+  if (!room) return Number.isFinite(hit.requiredScore) ? hit.requiredScore : null;
+  return Number.isFinite(hit.battleRequiredScore) ? roomThreshold(hit.battleRequiredScore, room) : null;
 };
 
 // The power at which the expected score reaches a rank's threshold; 0 for a rank needing no score, null without
-// the rank or the chart's figures. `factor` scales the score (judgement accuracy).
-export const requiredPower = (row, skills, rank, factor = 1) => {
-  const R = rankThreshold(row, rank);
+// the rank or the chart's figures. `factor` scales the score (the page folds its accuracy into the figures).
+export const requiredPower = (row, skills, rank, factor = 1, room = 0) => {
+  const R = rankThreshold(row, rank, room);
   if (R === null || !row.weights) return null;
   return R <= 0 ? 0 : R / (scoreRate(row, skills) * factor);
 };
 
 // The chance over the random skill order that a deck of `power` reaches at least `rank` on the chart.
-export const reachChance = (row, skills, power, rank, factor = 1) => {
-  const R = rankThreshold(row, rank);
+export const reachChance = (row, skills, power, rank, factor = 1, room = 0) => {
+  const R = rankThreshold(row, rank, room);
   if (R === null || !row.weights) return null;
   if (R <= 0) return 1;
   const rates = orderRates(row, skills);
@@ -267,13 +388,13 @@ export const reachChance = (row, skills, power, rank, factor = 1) => {
 };
 
 // Whether `a` beats `b` for events (see above), strictly somewhere.
-export const eventDominates = (a, b, source, xMax = X_MAX) => {
+export const eventDominates = (a, b, source, xMax = X_MAX, room = 0) => {
   const La = lengthMs(a, source);
   const Lb = lengthMs(b, source);
   if (La === null || Lb === null || La > Lb + EPS || !a.weights || !b.weights) return false;
   let any = La < Lb - EPS;
   for (const rank of SCORE_RANKS) {
-    const Ra = rankThreshold(a, rank), Rb = rankThreshold(b, rank);
+    const Ra = rankThreshold(a, rank, room), Rb = rankThreshold(b, rank, room);
     if (Rb === null) continue;                               // b never gets the rank
     if (Ra === null) return false;
     if (Rb <= 0) { if (Ra > 0) return false; continue; }     // b always gets it
@@ -289,8 +410,8 @@ export const eventDominates = (a, b, source, xMax = X_MAX) => {
 };
 
 // For each row the indexes of the rows that beat it for events.
-export const eventDominance = (rows, source, xMax = X_MAX) => rows.map((b) => {
+export const eventDominance = (rows, source, xMax = X_MAX, room = 0) => rows.map((b) => {
   const by = [];
-  rows.forEach((a, i) => { if (a !== b && eventDominates(a, b, source, xMax)) by.push(i); });
+  rows.forEach((a, i) => { if (a !== b && eventDominates(a, b, source, xMax, room)) by.push(i); });
   return by;
 });
