@@ -84,6 +84,32 @@ export const refigure = (rows, data, scenario) => {
   return rows;
 };
 
+// music-data.json's `gekisouCatalog` tables by id, built once per file.
+const CATALOGS = new WeakMap();
+const catalogOf = (data) => {
+  if (data && CATALOGS.has(data)) return CATALOGS.get(data);
+  const cat = (data && data.gekisouCatalog) || {};
+  const out = {};
+  for (const [k, list] of Object.entries(cat)) {
+    if (Array.isArray(list)) out[k] = new Map(list.filter((x) => x && x.id !== undefined).map((x) => [x.id, x]));
+  }
+  if (data && typeof data === "object") CATALOGS.set(data, out);
+  return out;
+};
+
+// A Gekisou skill (`table` "skills") or Gekisou support skill ("supportSkills") of `gekisouCatalog` by id: its name in
+// a language (pickText: else Japanese, else any language; "#id" without one), mission and maxLevel (null when the
+// catalog lacks them, as in older data).
+export const gekisouSkill = (data, table, id, lang) => {
+  const e = (catalogOf(data)[table] || new Map()).get(id);
+  return {
+    id,
+    name: pickText(e && e.name, lang) || `#${id}`,
+    mission: e ? e.mission ?? null : null,
+    maxLevel: e ? e.maxLevel ?? null : null,
+  };
+};
+
 // Whether a row matches a search text: any language of the title, reading, credits, or the music id.
 export const matches = (row, text) => {
   const t = String(text || "").trim().toLowerCase();

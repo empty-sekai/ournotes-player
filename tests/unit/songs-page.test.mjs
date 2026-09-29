@@ -2,12 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  DEFAULT_SCENARIO, X_MAX, chartFigures, dominance, dominates, eventDominates, formatLength, formatRanks, greatFactor,
-  joinCharts, lengthMs, meanSkill, orderRates, parseRanks, perMinute, pickText, plainKind, quantile, rank, rankPercent,
-  rankThreshold, reachChance, requiredPower, roomThreshold, scenarioData, scoreRate, weightSum,
+  DEFAULT_SCENARIO, MEASURES, MISSION_MEASURE, X_MAX, chartFigures, dominance, dominates, eventDominates, formatLength,
+  formatRanks, greatFactor, joinCharts, lengthMs, meanSkill, orderRates, parseRanks, perMinute, pickText, plainKind,
+  quantile, rangeMeasures, rank, rankPercent, rankThreshold, reachChance, requiredPower, roomThreshold, scenarioData,
+  scoreRate, weightSum,
 } from "../../examples/songs/ranking.js";
 import {
-  chartRows, density, extent, histogram, matches, moenotesUrl, noteKinds, refigure, sortBy, ticks,
+  chartRows, density, extent, gekisouSkill, histogram, matches, moenotesUrl, noteKinds, refigure, sortBy, ticks,
 } from "../../examples/songs/catalog.js";
 
 // music-data.json: kind 0 is a judgement score up, kind 1 the plain score up the page models
@@ -377,6 +378,55 @@ test("Gekisou Live rates the room: every player at sqrt(5 / n) of the battle thr
   // solo compares requiredScore (equal here), a room battleRequiredScore (a lower on a)
   const b = { ...a, scoreId: 2, scoreRanks: [ranks[0], { rank: "SS", requiredScore: 800, battleRequiredScore: 1100 }] };
   for (const n of [0, 1, 3, 5]) assert.equal(eventDominates(a, b, "chart", X_MAX, n), n !== 0);
+});
+
+// ---------------------------------------------------------------- Gekisou ranges and skills
+
+test("the rank measures per Gekisou range: the mission's measure, seed means and ranges", () => {
+  assert.deepEqual(MEASURES, ["maxCombo", "justCount", "luckPoints"]);
+  assert.deepEqual([1, 2, 3, 4].map((m) => MISSION_MEASURE[m]), ["maxCombo", "luckPoints", "justCount", undefined]);
+  // deck3: two seeds; range 1 has Just counts, the luck points and max combos are missing (older data)
+  const m = rangeMeasures(deck3());
+  assert.deepEqual(m.map((x) => [x.index, x.mission, x.measure]), [[0, 1, "maxCombo"], [1, 3, "justCount"], [2, 2, "luckPoints"]]);
+  assert.deepEqual(m[1].values.justCount, { mean: 40, min: 40, max: 40 });
+  assert.equal(m[0].values.maxCombo, null);
+  assert.equal(m[2].values.luckPoints, null);
+  const d = deck3();
+  d.seeds = d.seeds.map((s, k) => ({ ...s, ranges: s.ranges.map((x, i) => ({ ...x, maxCombo: 100 + i + k, luckPoints: i === 2 ? 50 + 10 * k : 0 })) }));
+  const n = rangeMeasures(d);
+  assert.deepEqual(n[0].values.maxCombo, { mean: 100.5, min: 100, max: 101 });
+  assert.deepEqual(n[2].values.luckPoints, { mean: 55, min: 50, max: 60 });
+  assert.deepEqual(n[0].values.luckPoints, { mean: 0, min: 0, max: 0 });
+  // an unknown mission ranks by nothing; no seeds or unplayable: nothing
+  assert.equal(rangeMeasures({ ...d, ranges: d.ranges.map((r) => ({ ...r, mission: 4 })) })[0].measure, null);
+  assert.deepEqual(rangeMeasures(null), []);
+  assert.deepEqual(rangeMeasures(deck3({ unplayable: "4 fevers", seeds: [] })), []);
+  assert.ok(rangeMeasures(deck3({ seeds: [] })).every((x) => MEASURES.every((k) => x.values[k] === null)));
+});
+
+test("fields of other formats (the dropped best formation deck.gekisou) leave the figures alone", () => {
+  const extra = { gekisou: { formation: [], objective: 1, evaluations: 1, seeds: deck3().seeds.map((s) => ({ ...s, score: s.score * 2 })) } };
+  for (const sc of [null, { ranks: [2, 5, 3], just: 0.5, great: 0.25 }, { mode: "free" }]) {
+    assert.deepEqual(chartFigures(deck3(extra), 1, 1000, sc), chartFigures(deck3(), 1, 1000, sc));
+  }
+  assert.deepEqual(scenarioData({ songs: [{ id: 1, charts: [{ scoreId: 1, deck: deck3(extra) }] }] }), { free: true, ranks: true, just: true });
+});
+
+test("Gekisou skill names come from gekisouCatalog in the page language, with fallbacks", () => {
+  const data = {
+    gekisouCatalog: {
+      skills: [{ id: 7, mission: 1, maxLevel: 5, name: { ja: "連撃", en: "Combo" } }, { id: 8, mission: 3, maxLevel: 5, name: null }],
+      supportSkills: [{ id: 31, mission: 3, maxLevel: 5, name: { "zh-Hans": "JUST 得分" } }],
+    },
+  };
+  assert.deepEqual(gekisouSkill(data, "skills", 7, "en"), { id: 7, name: "Combo", mission: 1, maxLevel: 5 });
+  assert.equal(gekisouSkill(data, "skills", 7, "ko").name, "連撃");              // else Japanese
+  assert.equal(gekisouSkill(data, "supportSkills", 31, "en").name, "JUST 得分");  // else any language
+  assert.deepEqual(gekisouSkill(data, "skills", 8, "ja"), { id: 8, name: "#8", mission: 3, maxLevel: 5 });   // no name
+  assert.deepEqual(gekisouSkill(data, "skills", 99, "ja"), { id: 99, name: "#99", mission: null, maxLevel: null });
+  assert.deepEqual(gekisouSkill(data, "members", 7, "ja"), { id: 7, name: "#7", mission: null, maxLevel: null });
+  assert.equal(gekisouSkill(songs, "skills", 7, "ja").name, "#7");                // older data: no catalog
+  assert.equal(gekisouSkill(null, "skills", 7, "ja").name, "#7");
 });
 
 // ---------------------------------------------------------------- catalog.js

@@ -38,6 +38,11 @@
 // combo breaks: a Great share q scales every score by 1 - 0.2 q; a Just rate j (battle only) interpolates between the
 // all-Just seeds and the all-Perfect run of the Just ranges (`scorePerfect`, `rangeScorePerfect`), with the rank
 // bonuses recomputed on the interpolated range scores and the skill weights inside a range scaled by the same ratio.
+//
+// Gekisou skills (the member cards' Gekisou skills and their snaps' Gekisou support skills) count in Gekisou Live's
+// score with Gekisou (battleLiveScore) only, never in Free Live or in the score without Gekisou (soloScore). The page's
+// decks carry none: every figure here is without them. Every Gekisou range ranks the room by its mission's measure
+// (rangeMeasures).
 
 export const DIFFICULTIES = ["easy", "normal", "hard", "expert"];
 export const EPS = 1e-12;
@@ -78,6 +83,29 @@ export const RANGES = 3;
 const JUST_MISSION = 3;
 // mode "battle" | "free"; ranks[i] the rank in range i; just and great as fractions (0..1)
 export const DEFAULT_SCENARIO = Object.freeze({ mode: "battle", ranks: Object.freeze([1, 1, 1]), just: 1, great: 0 });
+
+// The measure a Gekisou range ranks the room by, per mission (1 combo, 2 luck, 3 Just), and the measures the seeds
+// carry per range (music-data.json deck `seeds[].ranges[j]`: maxCombo, justCount, luckPoints).
+export const MISSION_MEASURE = Object.freeze({ 1: "maxCombo", 2: "luckPoints", 3: "justCount" });
+export const MEASURES = ["maxCombo", "justCount", "luckPoints"];
+
+// Per Gekisou range of a chart's deck statistics (Gekisou on, no skills): its mission, the measure it ranks by (null
+// for an unknown mission) and `values`, every measure as {mean, min, max} over the seeds; a measure some seed lacks
+// (older data) is null. [] without seeds or for a chart unplayable with Gekisou on.
+export const rangeMeasures = (deck) => {
+  if (!deck || deck.unplayable) return [];
+  const seeds = deck.seeds || [];
+  const stat = (i, key) => {
+    const v = seeds.map((s) => (s && s.ranges && s.ranges[i] ? s.ranges[i][key] : undefined));
+    return v.length && v.every(Number.isFinite) ? { mean: mean(v), min: Math.min(...v), max: Math.max(...v) } : null;
+  };
+  return (deck.ranges || []).map((r, i) => ({
+    index: i,
+    mission: r.mission ?? null,
+    measure: MISSION_MEASURE[r.mission] ?? null,
+    values: Object.fromEntries(MEASURES.map((k) => [k, stat(i, k)])),
+  }));
+};
 
 // The score factor of a Great share q (0..1) over every note: 1 - 0.2 q.
 export const greatFactor = (q) => 1 - (1 - GREAT_SCORE) * (Number.isFinite(q) ? Math.min(1, Math.max(0, q)) : 0);

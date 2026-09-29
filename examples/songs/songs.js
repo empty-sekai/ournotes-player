@@ -23,9 +23,9 @@ import {
   ticks,
 } from "./catalog.js";
 import {
-  RANGES, RANK_MAX, SCORE_RANKS, X_MAX, chartFigures, eventDominance, formatLength, formatRanks, lengthMs, meanSkill,
-  modelPower, orderRates, parseRanks, perMinute, plainKind, quantile, rank, rankThreshold, reachChance, requiredPower,
-  scenarioData, scoreRate, weightSum,
+  MEASURES, RANGES, RANK_MAX, SCORE_RANKS, X_MAX, chartFigures, eventDominance, formatLength, formatRanks, lengthMs,
+  meanSkill, modelPower, orderRates, parseRanks, perMinute, plainKind, quantile, rangeMeasures, rank, rankThreshold,
+  reachChance, requiredPower, scenarioData, scoreRate, weightSum,
 } from "./ranking.js";
 import { GUIDE, UI } from "./text.js";
 
@@ -721,6 +721,29 @@ const main = async () => {
       })));
   };
 
+  // the rank measure of every Gekisou range (ranking.js rangeMeasures, no skills): Gekisou Live only; null when the
+  // data has none of them
+  const measuresBox = (r) => {
+    const t = u();
+    const D = t.detail;
+    const measures = rangeMeasures(r.stats);
+    if (!measures.some((m) => MEASURES.some((k) => m.values[k]))) return null;
+    // a measure as its seed mean, with the seeds' min–max when they differ
+    const stat = (m) => {
+      if (!m) return "–";
+      const v = Number.isInteger(m.mean) ? fmtInt(m.mean) : fmt(m.mean, 1);
+      return m.min === m.max ? v : `${v} (${fmtInt(m.min)}–${fmtInt(m.max)})`;
+    };
+    return h("section", {}, heading("h3", "sec-head", D.measures),
+      h("div", { class: "tbl-scroll" }, h("table", { class: "ranks measures" },
+        h("thead", {}, h("tr", {}, h("th", {}, D.mRange), h("th", {}, D.mCompared), MEASURES.map((k) => h("th", {}, D.measure[k])))),
+        h("tbody", {}, measures.map((m) => h("tr", {},
+          h("td", {}, t.scen.range(m.index + 1, t.missions[m.mission] || null)),
+          h("td", {}, m.measure ? D.measure[m.measure] : "–"),
+          MEASURES.map((k) => h("td", { class: k === m.measure ? "num hi" : "num dim" }, stat(m.values[k])))))))),
+      h("p", { class: "hint" }, D.measuresHint));
+  };
+
   // a scenario changed in the detail: the view behind it redraws when the detail closes
   let behindStale = false;
   const openChart = (scoreId) => { S.chart = scoreId; renderDrawer(); save(); };
@@ -743,10 +766,12 @@ const main = async () => {
     const line = h("div", { class: "tl-scroll" });
     const weights = h("section", {});
     const ranks = h("div", {});
+    const measures = measuresBox(r);
     const draw = () => {
       const e = eff(r);
       const battle = S.mode === "battle";
       const solo = battle && r.weights ? freeRate(r) : null;
+      if (measures) measures.hidden = !battle;
       put(scores, h("div", { class: "tiles" },
         r.weights ? tile(t.col.rate, fmt(e.rate, 3), (() => {
           const v = orderRates(r, skills());
@@ -795,6 +820,7 @@ const main = async () => {
           h("section", {}, heading("h3", "sec-head", t.detail.composition), composition(r)),
           weights),
         ranks,
+        measures,
         h("p", { class: "ids" }, `${t.detail.musicId} ${r.musicId} · ${t.detail.scoreId} ${r.scoreId} · ${t.detail.musicType} ${r.song.musicType}`)));
     drawer.replaceChildren(panel);
     drawer.classList.add("open");
