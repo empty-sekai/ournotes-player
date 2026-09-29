@@ -110,6 +110,29 @@ export const gekisouSkill = (data, table, id, lang) => {
   };
 };
 
+// The skills of an aptitude shape (music-data.json deck.gekisouAptitude.shapes[]: member Gekisou skills or snap
+// Gekisou support skills with the same score effects) with their names (gekisouSkill, "#id" without one) and levels,
+// each skill once.
+export const shapeSkills = (data, shape, lang) => {
+  const table = shape && shape.source === "support" ? "supportSkills" : "skills";
+  const seen = new Set();
+  const out = [];
+  for (const s of (shape && Array.isArray(shape.skills) ? shape.skills : [])) {
+    const key = `${s.id}:${s.level}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ ...gekisouSkill(data, table, s.id, lang), level: s.level ?? null });
+  }
+  return out;
+};
+
+// The bands a shape's band condition names (skills[].bandIds), by music-data.json's `bands` ("#id" without one).
+export const shapeBands = (data, shape, lang) => {
+  const bands = new Map(((data && data.bands) || []).map((b) => [b.id, b]));
+  const ids = [...new Set((shape && Array.isArray(shape.skills) ? shape.skills : []).flatMap((s) => s.bandIds || []))].sort((a, b) => a - b);
+  return ids.map((id) => pickText(bands.get(id) && bands.get(id).name, lang) || `#${id}`);
+};
+
 // Whether a row matches a search text: any language of the title, reading, credits, or the music id.
 export const matches = (row, text) => {
   const t = String(text || "").trim().toLowerCase();
