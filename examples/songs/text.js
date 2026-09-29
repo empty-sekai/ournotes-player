@@ -62,7 +62,7 @@ export const UI = {
       efficiency: "效率（当前设置）", close: "关闭",
     },
     kinds: { tap: "点击", flick: "划键", slide: "长条", trace: "追踪", combo: "连击节点" },
-    loading: "读取中…", error: "错误", source: (r, v) => `数据：${r} 区服 · master ${v}`,
+    loading: "读取中…", error: "错误", source: (r, v) => `数据：${r} 区服 · master ${v}`, deckModel: "得分模型",
   },
   en: {
     app: "Chart data", views: { rank: "Rankings", charts: "Charts", guide: "Guide" },
@@ -123,7 +123,7 @@ export const UI = {
       efficiency: "Efficiency (current settings)", close: "Close",
     },
     kinds: { tap: "Tap", flick: "Flick", slide: "Slide", trace: "Trace", combo: "Combo tick" },
-    loading: "Loading…", error: "error", source: (r, v) => `Data: region ${r} · master ${v}`,
+    loading: "Loading…", error: "error", source: (r, v) => `Data: region ${r} · master ${v}`, deckModel: "score model",
   },
 };
 
