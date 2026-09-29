@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { UI } from "../../examples/songs/text.js";
+import { GUIDE, UI } from "../../examples/songs/text.js";
 
 import {
   DEFAULT_SCENARIO, MEASURES, MISSION_MEASURE, X_MAX, aptitudeFigures, aptitudeRate, aptitudeSe, aptitudeShapes, chartVariants, zeroGain, chartFigures, dominance, dominates, eventDominates, formatLength,
@@ -585,4 +585,14 @@ test("Beta notice explains testing, sampling error and unfinished native checks 
   for (const term of ["测试中", "数值可能调整", "采样误差", "原生整局核对尚未完成"]) assert.ok(UI.zh.betaNote.includes(term));
   for (const term of ["In testing", "figures may change", "sampling error", "native game", "not yet complete"]) assert.ok(UI.en.betaNote.includes(term));
   for (const locale of [UI.zh, UI.en]) assert.ok(!/https?:|反馈|feedback/i.test(locale.betaNote));
+});
+
+test("native evidence is limited to one chart input and final score, not full equivalence", () => {
+  const zh = GUIDE.zh.sections.find(s => s.title === "尚未纳入的机制").defs.find(([key]) => key === "核对范围")[1];
+  const en = GUIDE.en.sections.find(s => s.title === "Mechanisms not modelled yet").defs.find(([key]) => key === "Scope of the checks")[1];
+  for (const text of [zh, en]) for (const value of ["10000201", "300000", "364", "1063422", "Unity"]) assert.ok(text.includes(value));
+  assert.ok(zh.includes("逐帧分数、技能与激走尚未完成核对"));
+  assert.ok(en.includes("Per-frame scores, skills and Gekisou remain unchecked"));
+  assert.ok(!zh.includes("整局从没有用游戏代码跑过"));
+  assert.ok(!en.includes("no whole live has been run"));
 });
