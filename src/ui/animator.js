@@ -14,9 +14,9 @@ export function controllerParameters(controller){
 
 export function stateMotion(controller,state){
   const trees=state?.blendTrees||[],nodes=trees.flat();
-  if(nodes.some(n=>n.children?.length))return {unsupported:'blend_tree'};
+  if(nodes.some(n=>n.children?.length))return {unsupported:'blend_tree',duration:1};
   const motions=nodes.filter(n=>Number.isInteger(n.clip)&&controller.clips[n.clip]);
-  if(motions.length>1)return {unsupported:'multiple_motions'};
+  if(motions.length>1)return {unsupported:'multiple_motions',duration:1};
   const clip=motions.length?controller.clips[motions[0].clip]:null;
   return {clip,duration:Math.max(.000001,clip?(clip.stopTime-clip.startTime):1)};
 }
