@@ -74,6 +74,13 @@ test('Trigger transitions, numeric crossfade and deterministic seek follow the s
   session.seek(.25);assert.ok(Math.abs(session.prepare().document.nodes[0].components[0].m_Alpha-.5)<1e-6);
 });
 
+test('unsupported motions report their limit and keep a finite preview clock without writing a pose',()=>{
+  const exported=controller();exported.document.stateMachines[0].states[0].blendTrees=[[{clip:0,children:[1]}]];
+  const session=new UISession(pack()).setController(0,exported).playState('A').update(.5),out=session.prepare();
+  assert.ok(Number.isFinite(session.motion.runtime.current.normalized));assert.equal(out.document.nodes[0].components[0].m_Alpha,.3);
+  assert.ok(session.report.warnings.includes('blend_tree'));
+});
+
 test('discrete Sprite curves do not displace numeric constants and negative object indices clear a Sprite',()=>{
   const source=pack();source.document.nodes[0].components.push({class:'Image',m_Sprite:null,m_Color:{a:1}});
   const data={streamed:{curveCount:1,discreteCurveCount:1,frames:[[0,[[0,0,0,0,1],[1,0,0,0,0]]]]},constant:[.2],bindings:[{path:'',class:'CanvasGroup',attribute:'m_Alpha'},{path:'',class:'Image',attribute:'m_Sprite',pptr:true},{path:'',class:'Image',attribute:'m_Color.a'}],pptrCurveMapping:[{spriteRef:'synthetic'}]};
