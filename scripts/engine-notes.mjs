@@ -20,13 +20,16 @@ const files = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) 
 
 // [{file, notes: [text]}] in the order of the "/"-separated paths (the same on every platform); a note is the rest of
 // the line after `// ENGINE:`
-export const collect = () => files(path.join(root, "src")).map((f) => {
+export const notesFromSource = (source) => {
   const notes = [];
-  for (const line of fs.readFileSync(f, "utf8").split("\n")) {
+  for (const line of source.split(/\r?\n/)) {
     const m = line.match(/\/\/\s*ENGINE:\s*(.*)$/);
     if (m && m[1] && !m[1].startsWith("`")) notes.push(m[1].trim());
   }
-  return { file: path.relative(root, f).split(path.sep).join("/"), notes };
+  return notes;
+};
+export const collect = () => files(path.join(root, "src")).map((f) => {
+  return { file: path.relative(root, f).split(path.sep).join("/"), notes: notesFromSource(fs.readFileSync(f, "utf8")) };
 }).filter((x) => x.notes.length).sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
 
 export const render = (groups) => {
