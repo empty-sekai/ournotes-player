@@ -3,6 +3,9 @@
 What the player reproduces from the game, under which settings, what it adds as a viewer, and where it relies on
 the documented behaviour of the engine rather than on the game's own code.
 
+The independent experimental [UI prefab preview](ui-preview.md) has a separate fidelity scope. Its Canvas 2D
+graphics and motion are inspection approximations; the GPU-rendering claims below do not apply to it.
+
 ## Source of the behaviour
 
 The player follows the game's own managed code; comments in `src/` name the game class and method each piece

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Our Notes · UI preview</title>
+<link rel="stylesheet" href="ui.css">
+<body>
+<header><div><span class="brand">OUR NOTES</span><h1>UI preview <span class="badge">Experimental</span></h1></div><p>Inspect a prefab library from your own APK.</p></header>
+<form id="open"><label for="source">Library URL</label><input id="source" type="url" placeholder="http://localhost:8000/ui-data/index.json" required><button>Open library</button></form>
+<main>
+  <aside><label for="search">Find a prefab</label><input id="search" type="search" placeholder="Name or key"><select id="assets" size="15" aria-label="Prefabs"></select><p id="count">No library loaded</p></aside>
+  <section class="viewer">
+    <div class="title"><div><h2 id="name">Choose a library</h2><p id="key">Export with nnnotes ui and serve the output over HTTP.</p></div><label><input id="hidden" type="checkbox">Hidden layers</label><label><input id="bounds" type="checkbox">Bounds</label></div>
+    <div class="motions"><select id="animator" aria-label="Animator" disabled><option value="">Animator</option></select><select id="state" aria-label="Animator state" disabled><option value="">State</option></select><select id="clip" aria-label="Animation clip" disabled><option value="">Clip</option></select><select id="sequence" aria-label="DOTween sequence" disabled><option value="">Sequence</option></select><button id="play" disabled>Play</button><button id="reset" disabled>Reset</button></div>
+    <div id="parameters"></div>
+    <div class="stage"><canvas id="canvas" aria-label="Prefab preview"></canvas><p id="empty">Your exported prefab will appear here.</p></div>
+    <div class="timeline"><input id="time" type="range" min="0" max="1" step="0.001" value="0" aria-label="Motion time" disabled><output id="seconds">0.000 s</output></div>
+    <p id="status" role="status">Serialized initial states may include placeholder text and unbound images.</p>
+    <details><summary>Binding and motion diagnostics</summary><pre id="diagnostics">No motion selected.</pre></details>
+  </section>
+</main>
+<script type="module" src="ui.js"></script>
+</body></html>

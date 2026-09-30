@@ -14,6 +14,10 @@ and the npm package contain no game assets: the player reads data prepared in th
 [nnnotes](https://github.com/MetaSekaiLab/nnnotes) toolkit produces that data from the user's own game files.
 BanG Dream! and related names and trademarks belong to their respective owners.
 
+An independent experimental [UI prefab preview](docs/ui-preview.md) is available through `ournotes-player/ui`
+and `<ournotes-ui>`. It inspects `nnnotes ui` exports with Canvas 2D and a motion subset, without pixel-fidelity or
+full game-runtime claims. The [example viewer](examples/ui) loads a library supplied by the user.
+
 ## Components
 
 | | Live charts | Stories | Live2D models |

@@ -262,6 +262,15 @@ test("layout is deterministic", () => {
   assert.deepEqual(JSON.stringify(a.meshes()), JSON.stringify(b.meshes()));
 });
 
+test("middle alignment ignores trailing line feeds in the visible text bounds", () => {
+  const over = { m_VerticalAlignment: TMP_V.Middle }, rect = { x: 0, y: -30, w: 150, h: 30 };
+  const single = make("Lv.", over, rect), trailing = make("Lv.\n", over, rect);
+  assert.deepEqual(trailing.chars[0].quad, single.chars[0].quad);
+  close(trailing.anchor.y, single.anchor.y);
+  const internal = make("Lv.\n\n50", over, rect);
+  assert.notEqual(internal.anchor.y, single.anchor.y, "internal blank lines still separate visible text");
+});
+
 // a sprite asset without face info (point size 0): 32 x 32 glyphs, bearing (0, 28.8), advance 32, on a 512 x 512 sheet;
 // U+1F600 twice in the table (the first counts), U+1F602 without its glyph (left out), U+1F603 without texels
 const EMOJI = "\u{1F600}";
