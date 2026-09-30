@@ -61,7 +61,7 @@ jobs:
   publish:
     name: npm publish
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -106,7 +106,7 @@ jobs:
   release:
     name: github release
     needs: [build, publish]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write   # create the GitHub release
@@ -122,6 +122,12 @@ jobs:
           args: --latest --strip all
         env:
           OUTPUT: RELEASE_NOTES.md
+      - name: Use reviewed release notes when available
+        run: |
+          reviewed="release-notes/${GITHUB_REF_NAME}.txt"
+          if [ -f "$reviewed" ]; then
+            cp "$reviewed" RELEASE_NOTES.md
+          fi
 
       - uses: actions/download-artifact@v8
         with:

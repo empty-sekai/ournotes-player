@@ -1,0 +1,9 @@
+ournotes-player 0.1.6 adds an experimental serialized UI preview and updates the chart-data page for nnnotes music-data exports.
+
+- New `ournotes-player/ui` and `ournotes-player/ui/element` entry points provide a lazy library loader, editable session, Canvas 2D preview and `<ournotes-ui>` custom element. The [example viewer](https://github.com/empty-sekai/ournotes-player/tree/main/examples/ui) loads caller-supplied libraries.
+- The preview supports the documented layout, binding, numeric/Sprite curve, single-layer Animator and DOTween subset. It retains signed rectangles, visible prefab overflow and fixed-size layout children. Loading, rendering and element lifecycle races are guarded.
+- The chart-data page reads `music-data.json`, displays chart factors and single-skill Gekisou aptitude, and offers optional replay controls. Table layouts and replay controls work within mobile page bounds. Chart-data and aptitude features retain their Beta labels and documented validation scope.
+
+The UI preview is an inspector using Canvas 2D approximations. Full TMP/localization, GPU materials, particles, complex Animator cases and real JP UI comparisons remain outside the verified scope. See the [UI preview guide](https://github.com/empty-sekai/ournotes-player/blob/main/docs/ui-preview.md).
+
+Validation: Node.js 22, 24 and 26 CI, type checks, reproducible builds and package checks pass. The latest integration has 603 passing tests and one skipped test. Browser review covers button overflow, a numeric Animator binding and two parallel chapter tweens with no diagnostics or console errors.
