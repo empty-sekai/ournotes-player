@@ -79,22 +79,50 @@ class MotionSyncContext {
     if (audio.length < maps.length) throw new Error("MotionSync: fewer AudioParameters than Mappings");
     this.MS = MS; this.T = T;
     this.valueCount = setting.CubismParameters.length;
-    const list = T.Malloc(maps.length * 6 * 4);
-    maps.forEach((m, i) => {
-      const ids = m.Targets.map((t) => (t.Parameter ? paramId(t.Parameter) : ""));
-      const vals = m.Targets.map((t) => F(t.Value));
-      const info = T.ConvertMappingInfoCriToFloat32Array(new Float32Array(6), T.Malloc(24), m.AudioParameterId, ids, vals,
-        ids.length, F(audio[i].Scale), audio[i].Enabled ? 1 : 0);
-      for (let j = 0; j < 6; j++) (j === 4 ? T.AddValuePtrFloat : T.AddValuePtrInt32)(list, (i * 6 + j) * 4, info[j]);
-    });
-    const cfg = T.Malloc(8);
-    T.ConvertContextConfigCriToInt32Array(new Int32Array(2), cfg, MOTIONSYNC_SAMPLE_RATE, 32);
-    this.context = new MS.Context();
-    this.context.csmMotionSyncCreate(cfg, list, maps.length);
-    this.result = T.Malloc(12);
-    T.ConvertAnalysisResultToInt32Array(new Int32Array(3), this.result, this.valueCount);
-    this.config = T.Malloc(12);
+    this.pointers = new Set();
+    this.context = null;
     this.samples = 0; this.samplesCap = 0;
+    try {
+      const list = this._malloc(maps.length * 6 * 4);
+      maps.forEach((m, i) => {
+        const ids = m.Targets.map((t) => (t.Parameter ? paramId(t.Parameter) : ""));
+        const vals = m.Targets.map((t) => F(t.Value));
+        const info = T.ConvertMappingInfoCriToFloat32Array(new Float32Array(6), this._malloc(24), m.AudioParameterId, ids, vals,
+          ids.length, F(audio[i].Scale), audio[i].Enabled ? 1 : 0);
+        // The SDK helper also allocates the audio id, the model ids and their mapped values.
+        for (const p of info.slice(0, 3)) if (p) this.pointers.add(p);
+        for (let j = 0; j < 6; j++) (j === 4 ? T.AddValuePtrFloat : T.AddValuePtrInt32)(list, (i * 6 + j) * 4, info[j]);
+      });
+      const cfg = this._malloc(8);
+      T.ConvertContextConfigCriToInt32Array(new Int32Array(2), cfg, MOTIONSYNC_SAMPLE_RATE, 32);
+      this.context = new MS.Context();
+      this.context.csmMotionSyncCreate(cfg, list, maps.length);
+      this.result = this._malloc(12);
+      const result = T.ConvertAnalysisResultToInt32Array(new Int32Array(3), this.result, this.valueCount);
+      if (result[0]) this.pointers.add(result[0]);             // the result's separate float values buffer
+      this.config = this._malloc(12);
+    } catch (e) {
+      try { this.dispose(); } catch (_) { /* retain the initialization error */ }
+      throw e;
+    }
+  }
+
+  _malloc(size) {
+    const p = this.T.Malloc(size);
+    if (p) this.pointers.add(p);
+    return p;
+  }
+
+  _free(p) { if (p && this.pointers.delete(p)) this.T.Free(p); }
+
+  // Keep all mapping storage alive until the native context has been deleted; the Core may retain those pointers.
+  dispose() {
+    try { if (this.context) this.context.csmMotionSyncDelete(); }
+    finally {
+      this.context = null;
+      for (const p of this.pointers) this._free(p);
+      this.samples = this.samplesCap = 0;
+    }
   }
 
   requireSampleCount() { return this.context.csmMotionSyncGetRequireSampleCount(); }
@@ -111,8 +139,8 @@ class MotionSyncContext {
   analyze(samples) {
     const T = this.T, n = samples.length;
     if (n > this.samplesCap) {
-      if (this.samples) T.Free(this.samples);
-      this.samples = T.Malloc(n * 4); this.samplesCap = n;
+      this._free(this.samples);
+      this.samples = this._malloc(n * 4); this.samplesCap = n;
     }
     for (let i = 0; i < n; i++) T.AddValuePtrFloat(this.samples, i * 4, samples[i]);
     if (this.context.csmMotionSyncAnalyze(this.samples, n, this.result, this.config) !== this.MS.csmMotionSyncTrue)
@@ -205,11 +233,24 @@ export class CubismMotionSyncController {
       silenceDelay: F(input._silenceFallbackDelaySeconds ?? 0), fresh: false,
       lastPump: 0, timeSinceFresh: 0, carry: 0,             // _lastPumpRealtime, _timeSinceFreshPcm, _silenceFeedCarry
     };
+    this.disposed = false;
     this.source = null;                                     // the voice: {pull(), latest?(n), paused?, sampleRate}
     this.context = null;
     this.neutralCaptured = false; this.canBlend = false; this.speechHint = 0;
     this.hasFormDelta = false; this.formDelta = 0;
     this.missing = null;
+  }
+
+  // The model owns one analysis context for all its voices; releasing the model ends that lifetime.
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.isMotionSyncEnabled = false;
+    this.source = null;
+    this.ring.clear();
+    const context = this.context;
+    this.context = null;
+    if (context) context.dispose();
   }
 
   // Live2DMotionSyncCriAudioInput.SetCriAtomExPlayer (ResetAnalysisBuffer, DrainPcmCaptureCallback) for a voice, and
@@ -345,6 +386,7 @@ export class CubismMotionSyncController {
 
   // CubismMotionSyncCriProcessor.Analyze + CubismMotionSyncCriPostProcessor.Process
   _analyze() {
+    if (this.disposed) return;
     if (!this.core) { if (this.ring.length) this.missing = "Live2D Cubism MotionSync Core"; return; }
     if (!this.context) this.context = new MotionSyncContext(this.core, this.setting, this.paramId);
     const C = this.context;

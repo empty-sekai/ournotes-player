@@ -1311,10 +1311,12 @@ export class Live2DCharacter {
   setPseudoLipSyncSpeed(speed) { this.lip.setPseudoSpeed(speed); }
 
   release() {
+    if (this.alive === false) return;
     this._killTweens(this.angle);
     this._killTweens(this.look);
     this.alive = false;
-    this.core.release();
+    try { if (this.motionSync) this.motionSync.dispose(); }
+    finally { this.core.release(); }
   }
 }
 
