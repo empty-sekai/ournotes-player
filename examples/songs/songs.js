@@ -8,29 +8,28 @@
 //   &gk=free &rk=<r>[,<r>,<r>]                                              (play scenario: Free Live, else Gekisou
 //                                                                           Live with a rank 1-5 per range; default
 //                                                                           Gekisou Live at rank 1 everywhere)
-//   &gr=<Great percent> &jr=<Just percent>                                  (accuracy: Great share, default 0; Just
-//                                                                           rate in Just ranges, default 100)
 //   &p=<power> &tr=<rank> &n=<players>                                      (event: rank chance; Gekisou Live room
 //                                                                           size, default 5)
-//   &jk=off                                                                 (no jackets)
 //   &ax=<figure> &ay=<figure>                                               (scatter axes)
 //   &c=<scoreId>                                                            (the chart detail open)
 //   &moenotes=<base URL>|off                                                (song links; default https://bdon.moe/)
 //   &theme=light|dark                                                       (default: the system's)
-// The site root is this page's directory unless ?site=<URL> names another one.
+// Published beside the music-data directory; ?site=<URL> can name another data root.
 import {
   DIFFICULTIES, MOENOTES, NOTE_KINDS, chartRows, extent, histogram, matches, moenotesUrl, pickText, refigure, shapeBands, shapeSkills, sortBy,
-  ticks,
+  ticks, moenotesJacketUrl,
 } from "./catalog.js";
 import {
   MEASURES, RANGES, RANK_MAX, SCORE_RANKS, X_MAX, aptitudeFigures, aptitudeRate, aptitudeSe, aptitudeShapes, chartVariants, chartFigures, eventDominance, formatLength, formatRanks, lengthMs,
   meanSkill, modelPower, orderRates, parseRanks, perMinute, plainKind, quantile, rangeMeasures, rank, rankThreshold,
   reachChance, requiredPower, scenarioData, scoreRate, weightSum, zeroGain,
 } from "./ranking.js";
-import { GUIDE, UI } from "./text.js";
+import { GUIDE, UI, REPLAY_UI } from "./text.js";
+import { axisGoal, paretoPoints } from "./pareto.js";
+import { mountReplayPanel } from "./replay-panel.js";
 
 const q = new URLSearchParams(location.search);
-const site = new URL(q.get("site") || "./", location.href);
+const site = new URL(q.get("site") || "../music-data/", location.href);
 const moeBase = q.get("moenotes") === "off" ? null : q.get("moenotes") || MOENOTES;
 const SVG = "http://www.w3.org/2000/svg";
 // difficulty accents are CSS variables (index.html), so both themes restyle the charts too
@@ -88,6 +87,10 @@ const heading = (tag, cls, title, ...tail) => h("div", { class: cls }, icon("sta
   h("span", { class: "track", "aria-hidden": "true" }), tail.flat().filter(Boolean).length ? h("div", { class: "tail" }, tail) : null);
 const fmt = (v, d = 2) => (v === null || v === undefined || !Number.isFinite(v) ? "–" : v.toFixed(d));
 const fmtInt = (v) => (Number.isFinite(v) ? Math.round(v).toLocaleString() : "–");
+const modelText = (text) => {
+  const name = text.includes("ournotes-deck") ? "ournotes-deck" : "Rust", index = text.indexOf(name);
+  return index < 0 ? text : [text.slice(0,index), h("a",{class:"model-link",href:"https://github.com/empty-sekai/ournotes-deck",target:"_blank",rel:"noopener",title:"ournotes-deck (GitHub)"},name),text.slice(index+name.length)];
+};
 const lv = (r) => (Number.isInteger(r.displayLevel) ? String(r.displayLevel) : String(r.displayLevel));
 
 const load = async (name, optional) => {
@@ -114,10 +117,9 @@ const main = async () => {
   const boot = h("div", { class: "boot" }, h("div", { class: "spinner" }), UI.zh.loading);
   document.body.append(boot);
   const songs = await load("music-data.json");
-  // jackets are optional (nnnotes songs --jackets): one probe decides whether the site has them
-  const probe = ((songs && songs.songs) || []).find((x) => x.jacket);
-  const hasJackets = probe ? await fetch(new URL(`jackets/${probe.jacket}.webp`, site), { method: "HEAD" })
-    .then((r) => r.ok).catch(() => false) : false;
+  // Use MoeNotes' published jackets by default; a local chart site need not export another copy.
+  const hasJackets = ((songs && songs.songs) || []).some((x) => x.jacket);
+  const jacketUrl = (r) => moenotesJacketUrl(r.song.jacket, q.get("jacket-api") || "https://assets.bdon.moe");
   boot.remove();
 
   const langs = Array.isArray(songs.languages) && songs.languages.length ? songs.languages : ["ja"];
@@ -127,9 +129,9 @@ const main = async () => {
   const hasStats = rows.some((r) => r.weights);
   // what the data can show besides Gekisou Live at rank 1 (ranking.js scenarioData)
   const has = scenarioData(songs);
+  const pct = (value,fallback) => value===null||!Number.isFinite(Number(value)) ? fallback : Math.min(100,Math.max(0,Math.round(Number(value))));
   const kind = plainKind(songs);
   const power = modelPower(songs);
-  const pct = (v, def) => (v === null || !Number.isFinite(Number(v)) ? def : Math.min(100, Math.max(0, Math.round(Number(v)))));
   const S = {
     view: ["rank", "charts", "guide"].includes(q.get("v")) ? q.get("v") : "rank",
     lang: defaultLanguage(langs),
@@ -147,18 +149,19 @@ const main = async () => {
     // the play scenario (ranking.js chartFigures) and the accuracy
     mode: q.get("gk") === "free" && has.free ? "free" : "battle",
     ranks: has.ranks ? parseRanks(q.get("rk")) : Array(RANGES).fill(1),
-    great: pct(q.get("gr"), 0),
-    just: has.just ? pct(q.get("jr"), 100) : 100,
+    great: pct(q.get("gr"),0),
+    just: has.just ? pct(q.get("jr"),100) : 100,
     room: Math.min(RANK_MAX, Math.max(1, Math.round(Number(q.get("n")) || 5))),
-    jackets: q.get("jk") !== "off",
     ax: AXES.includes(q.get("ax")) ? q.get("ax") : "displayLevel",
     ay: AXES.includes(q.get("ay")) ? q.get("ay") : hasStats ? "perMinute" : "density",
+    xGoal: q.get("xg") === "max" ? "max" : q.get("xg") === "min" ? "min" : axisGoal(AXES.includes(q.get("ax")) ? q.get("ax") : "displayLevel"),
+    yGoal: q.get("yg") === "min" ? "min" : q.get("yg") === "max" ? "max" : axisGoal(AXES.includes(q.get("ay")) ? q.get("ay") : hasStats ? "perMinute" : "density"),
     chart: Number(q.get("c")) || null,
   };
   while (S.skills.length < 5) S.skills.push(0);
   if (!hasStats && EFF_RANKS.has(S.rankBy)) S.rankBy = "speed";
   const u = () => (S.lang.startsWith("zh") ? UI.zh : UI.en);
-  const showJackets = () => hasJackets && S.jackets;
+  const showJackets = () => hasJackets;
   const g = () => (S.lang.startsWith("zh") ? GUIDE.zh : GUIDE.en);
   const skills = () => S.skills.map((x) => x / 100);
   const scenario = () => ({ mode: S.mode, ranks: S.ranks, just: S.just / 100, great: S.great / 100 });
@@ -208,9 +211,10 @@ const main = async () => {
     put("gr", S.great, 0);
     put("jr", S.just, 100);
     put("n", S.room, 5);
-    put("jk", S.jackets ? null : "off", null);
     put("ax", S.ax, "displayLevel");
     put("ay", S.ay, hasStats ? "perMinute" : "density");
+    put("xg", S.xGoal, axisGoal(S.ax));
+    put("yg", S.yGoal, axisGoal(S.ay));
     put("c", S.chart, null);
     put("theme", theme, null);
     let t = p.toString();
@@ -222,7 +226,7 @@ const main = async () => {
   const jacket = (r, cls = "jk") => {
     const box = h("span", { class: cls, style: `--band:${bandColor(r)}` }, h("span", { class: "jk-fallback" }, title(r).slice(0, 1)));
     if (showJackets() && r.song.jacket) {
-      const img = h("img", { src: new URL(`jackets/${r.song.jacket}.webp`, site).href, alt: "", loading: "lazy", decoding: "async" });
+      const img = h("img", { src: jacketUrl(r), alt: "", loading: "lazy", decoding: "async" });
       img.addEventListener("error", () => img.remove());
       box.append(img);
     }
@@ -264,8 +268,6 @@ const main = async () => {
         "aria-current": S.view === v ? "page" : null, onclick: () => { S.view = v; renderAll(); scrollTo({ top: 0 }); },
       }, t.views[v]))),
       h("div", { class: "tools" },
-        hasJackets ? h("button", { class: "toggle", "aria-pressed": S.jackets ? "true" : "false", title: t.jacketsHint,
-          onclick: () => { S.jackets = !S.jackets; renderAll(); } }, icon("image"), h("span", {}, t.jackets)) : null,
         h("button", { class: "icon-btn", "aria-label": t.theme, title: t.theme,
           onclick: () => { theme = shown === "dark" ? "light" : "dark"; applyTheme(); renderHeader(); save(); } }, icon(shown === "dark" ? "sun" : "moon")),
         h("select", { class: "lang", "aria-label": "Language", onchange: (e) => { S.lang = e.target.value; renderAll(); } },
@@ -273,7 +275,7 @@ const main = async () => {
   };
 
   // Visible text plus an explicit description: the beta state does not rely on color or a hover tooltip.
-  const betaBadge = (descriptionId) => h("span", { class: "beta-badge", lang: "en", "aria-describedby": descriptionId }, u().beta);
+  const betaBadge = (descriptionId) => h("button", { class: "beta-badge", lang: "en", title:u().betaNote, "aria-describedby": descriptionId, onclick:()=>{S.view="guide";renderAll();} }, u().beta);
 
   // the route heading: the view's title and what it answers
   const renderHead = () => {
@@ -281,8 +283,7 @@ const main = async () => {
     const [title, lead] = S.view === "guide" ? [g().title, g().lead]
       : [t.heads[S.view], t.lead[S.view](songs.songs.length, rows.length)];
     put(head, h("div", { class: "page-head" }, h("div", { class: "page-head-title" }, icon("star", "ic star"), h("h1", {}, title), betaBadge("page-beta-note"),
-      h("span", { class: "track", "aria-hidden": "true" })), h("p", {}, lead),
-    h("p", { id: "page-beta-note", class: "beta-note" }, t.betaNote)));
+      h("span", { class: "track", "aria-hidden": "true" })), S.view === "guide" && g().reminder ? h("aside", {id:"page-beta-note",class:"guide-reminder",role:"note"}, h("strong",{},g().reminder.title),g().reminder.priority ? h("p",{},h("strong",{},g().reminder.priority)) : null, h("p",{},modelText(g().reminder.text))) : h("span", {id:"page-beta-note",class:"sr-only"},t.betaNote)));
   };
 
   const renderFilters = () => {
@@ -327,29 +328,17 @@ const main = async () => {
       h("small", {}, T.range(i + 1, missions ? t.missions[missions[i]] : null)),
       seg([...Array(RANK_MAX).keys()].map((k) => [k + 1, String(k + 1), k > 0 && !has.ranks]), S.ranks[i],
         (v) => { setScenario(() => { S.ranks = S.ranks.map((x, j) => (j === i ? v : x)); }); redo(); }, "seg mini")));
-    const slider = (label, value, set, off) => {
-      const out = h("output", {}, off ? T.pending : `${value}%`);
-      const inp = h("input", { type: "range", min: 0, max: 100, step: 1, value, disabled: off, "aria-label": label });
-      inp.addEventListener("input", () => {
-        const v = Number(inp.value);
-        out.textContent = `${v}%`;
-        setScenario(() => set(v));
-        live();
-        save();
-      });
-      return h("label", { class: "field" }, h("span", {}, label), inp, out);
+    const accuracySlider = (label,value,set,disabled=false) => {
+      const output=h("output",{},`${value}%`),input=h("input",{type:"range",min:0,max:100,step:1,value,disabled,"aria-label":label,oninput:()=>{output.textContent=`${input.value}%`;},onchange:()=>{setScenario(()=>set(Number(input.value)));live();save();}});
+      return h("label",{class:"field"},h("span",{},label),input,output);
     };
     return h("div", { class: "panel scen glass" },
-      h("div", { class: "field" }, h("span", {}, T.mode), modes, note(battle ? T.battleHint : T.freeHint)),
-      battle ? h("div", { class: "field" }, h("span", {}, T.ranks), ranks, note(has.ranks ? T.rankBest : `${T.rankBest} · ${T.ranksPending}`)) : null,
-      h("div", { class: "field" }, h("span", {}, T.accuracy),
-        slider(T.great, S.great, (v) => { S.great = v; }, false),
-        battle ? slider(T.just, S.just, (v) => { S.just = v; }, !has.just) : null,
-        note(battle ? T.accNote : T.accNoteFree)),
+      h("div", { class: "field" }, h("span", {}, T.mode), modes),
+      battle ? h("div", { class: "field" }, h("span", {}, T.ranks), ranks, !has.ranks ? note(T.ranksPending) : null) : null,
+      h("div",{class:"field"},h("span",{},T.accuracy),accuracySlider(T.great,S.great,value=>{S.great=value;}),battle?accuracySlider(T.just,S.just,value=>{S.just=value;},!has.just):null,h("abbr",{class:"note",title:battle?T.accNote:T.accNoteFree},t.referenceEstimate)),
       rooms && battle ? h("div", { class: "field" }, h("span", {}, T.room),
         seg([...Array(RANK_MAX).keys()].map((k) => [k + 1, String(k + 1)]), S.room, (v) => { S.room = v; redo(); }, "seg mini"),
-        note(T.roomHint)) : null,
-      rooms && !battle ? note(T.soloRanks) : null);
+        null) : null);
   };
   const redoMain = () => { renderMain(); save(); };
 
@@ -359,7 +348,8 @@ const main = async () => {
     const t = u();
     const ohOut = h("output", {}, `${S.overhead} s`);
     const oh = h("input", { type: "range", min: 0, max: 180, step: 5, value: S.overhead, "aria-label": t.overhead });
-    oh.addEventListener("input", () => { S.overhead = Number(oh.value); ohOut.textContent = `${S.overhead} s`; live(); save(); });
+    oh.addEventListener("input", () => { ohOut.textContent = `${oh.value} s`; });
+    oh.addEventListener("change", () => { S.overhead = Number(oh.value); live(); save(); });
     const mean = h("output", { class: "mean" });
     const showMean = () => { mean.textContent = t.meanSkill(Math.round(100 * meanSkill(skills(), 5))); };
     showMean();
@@ -383,6 +373,7 @@ const main = async () => {
   };
 
   let tableBox = null;
+  let allColumns = false;
   const renderRank = () => {
     const t = u();
     const tabs = seg(RANKS.filter((k) => hasStats || !EFF_RANKS.has(k)).map((k) => [k, t.rankBy[k]]), S.rankBy,
@@ -393,7 +384,7 @@ const main = async () => {
     tableBox = h("div", { class: "table-box" });
     put(main, 
       h("div", { class: "rank-head" }, tabs),
-      h("p", { class: "hint" }, t.rankHint[S.rankBy], sub),
+      sub ? h("div", { class: "hint" }, sub) : null,
       S.rankBy === "efficiency" || S.rankBy === "event"
         ? [scenarioPanel({ redo: redoMain, live: renderTable, rooms: S.rankBy === "event" }), effPanel(renderTable)] : null,
       !hasStats ? h("p", { class: "hint warn" }, t.noStats) : null,
@@ -487,57 +478,69 @@ const main = async () => {
       if (hi === "level") cell.level = h("td", { class: "num" }, bar(r.displayLevel, level(r)));
       return h("tr", { class: `${r.frontier && unsorted ? "on-front" : ""}`, tabindex: 0,
         onclick: () => openChart(r.scoreId), onkeydown: (e) => { if (e.key === "Enter") openChart(r.scoreId); } },
-      cols.map((k) => { const c = cell[k]; if (k === hi) c.classList.add("hi"); c.classList.add(`c-${k}`); return c; }));
+      cols.map((k) => { const c = cell[k]; if (k === hi) c.classList.add("hi"); c.classList.add(`c-${k}`); c.dataset.label = k === "bpm" && S.rankBy === "speed" && S.speedBy === "bpmMax" ? t.speedBy.bpmMax : t.col[k]; return c; }));
     });
     tableBox.replaceChildren(
-      h("div", { class: "count" }, `${u().chartsN(list.length)}${list.length !== all ? ` / ${all}` : ""}`),
-      h("div", { class: "table-card glass" }, list.length ? h("div", { class: "table-scroll" }, h("table", { class: "rank-table" },
+      h("div", { class: "table-toolbar" }, h("div", { class: "count" }, `${u().chartsN(list.length)}${list.length !== all ? ` / ${all}` : ""}`),
+        h("label", { class: "check columns-toggle" }, h("input", { type: "checkbox", checked: allColumns, onchange: (e) => { allColumns = e.target.checked; renderTable(); } }), t.allColumns, allColumns ? h("small", {}, t.allColumnsHint) : null)),
+      h("div", { class: "table-card glass" }, list.length ? h("div", { class: "table-scroll" }, h("table", { class: "rank-table", "data-rank-by": S.rankBy, "data-columns": allColumns ? "all" : "auto" },
         h("thead", {}, h("tr", {}, cols.map((k) => { const c = th(k); c.classList.add(`c-${k}`); return c; }))),
         h("tbody", {}, body))) : h("div", { class: "empty" }, h("b", {}, t.empty), t.emptyHint, " ",
         h("button", { class: "ghost", onclick: clearFilters }, t.clear))));
   };
 
   // ------------------------------------------------------------ charts
-  const tooltip = h("div", { class: "tip", hidden: true });
+  const tooltip = h("div", { class: "tip", role: "tooltip", hidden: true });
   document.body.append(tooltip);
   const showTip = (e, r, lines) => {
     tooltip.replaceChildren(h("div", { class: "tip-head" }, jacket(r, "jk sm"), h("div", {},
       h("div", { class: "tip-title" }, title(r)), h("div", { class: "tip-sub" }, level(r), " ", bandName(r)))),
     lines.map(([k, v]) => h("div", { class: "tip-row" }, h("span", {}, k), h("b", {}, v))));
     tooltip.hidden = false;
-    const x = Math.min(e.clientX + 14, innerWidth - tooltip.offsetWidth - 8);
-    const y = Math.min(e.clientY + 14, innerHeight - tooltip.offsetHeight - 8);
+    const x = Math.max(8, Math.min(e.clientX + 14, innerWidth - tooltip.offsetWidth - 8));
+    const y = Math.max(8, Math.min(e.clientY + 14, innerHeight - tooltip.offsetHeight - 8));
     tooltip.style.transform = `translate(${x}px, ${y}px)`;
   };
   const hideTip = () => { tooltip.hidden = true; };
 
   const scatter = () => {
     const t = u();
-    const W = 860, H = 460, m = { l: 58, r: 18, t: 16, b: 46 };
+    const W = Math.max(280, Math.min(1000, main.clientWidth - 40)), H = Math.max(320, Math.min(480, W * .55)), m = { l: 58, r: 22, t: 24, b: 50 };
     const list = pool().filter((r) => matches(r, S.search));
     const pts = list.map((r) => [figure(r, S.ax), figure(r, S.ay), r]).filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y));
     const ex = extent(pts.map((p) => p[0])), ey = extent(pts.map((p) => p[1]));
     const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, class: "plot", role: "img", "aria-label": `${t.axes[S.ax]} × ${t.axes[S.ay]}` });
     if (!ex || !ey) return svg;
+    const frontier = paretoPoints(pts, S.xGoal, S.yGoal);
+    const frontierIds = new Set(frontier.map((p) => p[2].scoreId));
     const sx = (v) => m.l + ((v - ex[0]) / (ex[1] - ex[0])) * (W - m.l - m.r);
     const sy = (v) => H - m.b - ((v - ey[0]) / (ey[1] - ey[0])) * (H - m.t - m.b);
+    svg.classList.add("scatter");
+    const defs = s("defs", {}), gradient = s("linearGradient", { id: "scatter-frontier-gradient", x1: 0, x2: 1, y1: 0, y2: 1 });
+    gradient.append(s("stop", { "stop-color": "var(--mn-accent-deep)" }), s("stop", { offset: 1, "stop-color": "var(--mn-pink)" }));
+    defs.append(gradient);
+    svg.append(defs, s("rect", { class: "plot-surface", x: m.l, y: m.t, width: W-m.l-m.r, height: H-m.t-m.b, rx: 12 }));
     const grid = s("g", { class: "grid" });
-    for (const v of ticks(ex[0], ex[1], 8)) grid.append(s("line", { x1: sx(v), x2: sx(v), y1: m.t, y2: H - m.b }), s("text", { x: sx(v), y: H - m.b + 18, "text-anchor": "middle" }, String(+v.toFixed(2))));
+    for (const v of ticks(ex[0], ex[1], W < 500 ? 4 : 8)) grid.append(s("line", { x1: sx(v), x2: sx(v), y1: m.t, y2: H - m.b }), s("text", { x: sx(v), y: H - m.b + 18, "text-anchor": "middle" }, String(+v.toFixed(2))));
     for (const v of ticks(ey[0], ey[1], 6)) grid.append(s("line", { x1: m.l, x2: W - m.r, y1: sy(v), y2: sy(v) }), s("text", { x: m.l - 8, y: sy(v) + 4, "text-anchor": "end" }, String(+v.toFixed(3))));
-    svg.append(grid,
+    const path = frontier.map(([x, y], i) => `${i ? "L" : "M"}${sx(x)},${sy(y)}`).join(" ");
+    svg.append(grid, s("path", { class: "frontier-glow", d: path }), s("path", { class: "frontier-line", d: path, style: "stroke:url(#scatter-frontier-gradient)" }),
       s("text", { class: "axis-label", x: (m.l + W - m.r) / 2, y: H - 8, "text-anchor": "middle" }, t.axes[S.ax]),
       s("text", { class: "axis-label", x: 14, y: (m.t + H - m.b) / 2, transform: `rotate(-90 14 ${(m.t + H - m.b) / 2})`, "text-anchor": "middle" }, t.axes[S.ay]));
-    const jitter = (id) => (S.ax === "displayLevel" ? (((id * 2654435761) % 1000) / 1000 - 0.5) * 0.3 : 0);
     const dots = s("g", { class: "dots" });
+    // The detailed popup replaces SVG titles, which would display a second native tooltip.
     for (const [x, y, r] of pts) {
-      const c = s("circle", { cx: sx(x + jitter(r.scoreId)), cy: sy(y), r: 5.5, style: `fill:${bandColor(r)};stroke:${DIFF_COLOR[r.difficulty]}`, tabindex: 0 });
+      const c = s("circle", { cx: sx(x), cy: sy(y), r: frontierIds.has(r.scoreId) ? 6.5 : 4.5, class: frontierIds.has(r.scoreId) ? "pareto-point" : "regular-point", style: `fill:${bandColor(r)};stroke:${DIFF_COLOR[r.difficulty]}`, tabindex: 0, "aria-label": `${title(r)} · ${t.axes[S.ax]} ${fmt(x, 3)} · ${t.axes[S.ay]} ${fmt(y, 3)}` });
       c.addEventListener("mousemove", (e) => showTip(e, r, [[t.axes[S.ax], fmt(x, S.ax === "displayLevel" ? 1 : 3)], [t.axes[S.ay], fmt(y, 3)]]));
       c.addEventListener("mouseleave", hideTip);
+      c.addEventListener("focus", () => { const box=c.getBoundingClientRect();showTip({clientX:box.left+box.width/2,clientY:box.top+box.height/2},r,[[t.axes[S.ax],fmt(x,3)],[t.axes[S.ay],fmt(y,3)]]); });
+      c.addEventListener("blur", hideTip);
       c.addEventListener("click", () => { hideTip(); openChart(r.scoreId); });
+      c.addEventListener("keydown", (e) => { if (e.key === "Enter") openChart(r.scoreId); });
       dots.append(c);
     }
     svg.append(dots);
-    return svg;
+    return h("div", { class: "scatter-canvas" }, h("div", { class: "plot-summary" }, h("span", {}, t.plotted(pts.length)), h("span", { class: "frontier-key" }, t.paretoCount(frontier.length))), svg, h("details", { class: "pareto-note" }, h("summary",{},t.paretoHelp),h("p",{},t.paretoHint)));
   };
 
   const levelChart = () => {
@@ -591,6 +594,7 @@ const main = async () => {
     const axes = AXES.filter((k) => hasStats || !EFF_AXES.has(k));
     const pick = (label, value, set) => h("label", { class: "field" }, h("span", {}, label), h("select", { onchange: (e) => { set(e.target.value); renderMain(); save(); } },
       axes.map((k) => h("option", { value: k, selected: k === value }, t.axes[k]))));
+    const goal = (label, value, set) => h("label", { class: "field" }, h("span", {}, label), h("select", { onchange: (e) => { set(e.target.value); renderMain(); save(); } }, ["min", "max"].map(v=>h("option", {value:v, selected:v===value}, v==="min"?t.lowerBetter:t.higherBetter))));
     const plot = h("div", { class: "plot-box" }, scatter());
     const legend = h("div", { class: "legend" },
       [...bands].map(([, b]) => h("span", {}, h("i", { class: "dot", style: `background:${b.mainColor}` }), pickText(b.name, S.lang))),
@@ -599,7 +603,8 @@ const main = async () => {
     put(main, 
       h("section", { class: "card glass" },
         heading("h2", "sec-head", t.scatter,
-          h("div", { class: "axes" }, pick(t.x, S.ax, (v) => { S.ax = v; }), h("button", { class: "ghost", "aria-label": t.swap, title: t.swap, onclick: () => { [S.ax, S.ay] = [S.ay, S.ax]; renderMain(); save(); } }, icon("swap")), pick(t.y, S.ay, (v) => { S.ay = v; }))),
+          h("div", { class: "axes" }, pick(t.x, S.ax, (v) => { S.ax = v; S.xGoal = axisGoal(v); }), h("button", { class: "ghost", "aria-label": t.swap, title: t.swap, onclick: () => { [S.ax, S.ay] = [S.ay, S.ax]; [S.xGoal,S.yGoal]=[S.yGoal,S.xGoal]; renderMain(); save(); } }, icon("swap")), pick(t.y, S.ay, (v) => { S.ay = v; S.yGoal = axisGoal(v); }))),
+        h("div", { class: "pareto-controls" }, h("span", {class:"frontier-key"}, t.pareto), goal(t.xGoal,S.xGoal,v=>{S.xGoal=v;}), goal(t.yGoal,S.yGoal,v=>{S.yGoal=v;})),
         EFF_AXES.has(S.ax) || EFF_AXES.has(S.ay)
           ? [scenarioPanel({ redo: redoMain, live: () => plot.replaceChildren(scatter()) }), effPanel(() => plot.replaceChildren(scatter()))] : null,
         plot, legend),
@@ -615,12 +620,17 @@ const main = async () => {
     const G = g();
     const no = (i) => String(i + 1).padStart(2, "0");
     const links = G.sections.map((x, i) => h("a", { href: `#g${i}` }, h("span", {}, no(i)), x.title));
-    put(main, h("div", { class: "guide" },
-      h("nav", { class: "toc glass", "aria-label": G.title }, links),
+    put(main, G.method ? h("section", {class:"guide-method",id:"sources"}, h("h2",{},G.method.title), h("p",{},modelText(G.method.text))) : null, h("div", { class: "guide" },
+      h("nav", { class: "toc", "aria-label": G.title }, links),
+      h("details",{class:"toc-mobile"},h("summary",{},G.contentsLabel),h("nav",{"aria-label":G.title},G.sections.map((x,i)=>h("a",{href:`#g${i}`,onclick:e=>e.currentTarget.closest("details")?.removeAttribute("open")},h("span",{},no(i)),x.title)))),
       h("article", { class: "g-body" }, G.sections.map((x, i) => h("section", { id: `g${i}`, class: "g-section" },
-        heading("h2", "sec-head", [h("span", { class: "g-no" }, no(i)), " ", x.title]),
-        (x.body || []).map((p) => h("p", {}, p)),
+        h("header",{class:"guide-section-head"},h("span",{class:"g-no"},no(i)),h("h2",{},x.title)),
+        !x.table ? (x.body || []).map((p) => h("p", {}, p)) : null,
         x.math && x.math.length ? h("div", { class: "formula" }, x.math.map((m) => h("code", {}, m))) : null,
+        x.table ? h("div", { class: "verification-scroll",tabindex:0,role:"region","aria-label":x.title }, h("table", { class: "verification" },
+          x.table.caption ? h("caption",{},x.table.caption) : null,
+          h("thead", {}, h("tr", {}, x.table.headers.map((heading) => h("th", { scope: "col" }, heading)))),
+          h("tbody", {}, x.table.rows.map((row) => h("tr", {}, row.map((cell) => h("td", {}, cell))))))) : null,
         (x.after || []).map((p) => h("p", {}, p)),
         x.defs && x.defs.length ? h("dl", { class: "defs" }, x.defs.flatMap(([term, def]) => [h("dt", {}, term), h("dd", {}, def)])) : null)))));
     // the contents follow the reading: the first section in the band from under the header to 45% of the window
@@ -831,6 +841,7 @@ const main = async () => {
 
   // a scenario changed in the detail: the view behind it redraws when the detail closes
   let behindStale = false;
+  let disposeReplay = null;
   const openChart = (scoreId) => { S.chart = scoreId; renderDrawer(); save(); };
   const closeChart = () => {
     S.chart = null;
@@ -839,6 +850,7 @@ const main = async () => {
     save();
   };
   const renderDrawer = () => {
+    disposeReplay?.(); disposeReplay = null;
     const r = S.chart && byScore.get(S.chart);
     if (!r) { drawer.classList.remove("open"); drawer.replaceChildren(); document.body.classList.remove("locked"); return; }
     const t = u();
@@ -853,6 +865,11 @@ const main = async () => {
     const ranks = h("div", {});
     const measures = measuresBox(r);
     const aptitude = aptitudeBox(r, () => { draw(); behindStale = true; save(); });
+    const replayHost = h("div", {});
+    const replayText = REPLAY_UI[S.lang.startsWith("zh") ? "zh" : "en"];
+    const replay = songs.replay ? h("details", { class: "replay", ontoggle: (event) => {
+      if (event.currentTarget.open && !disposeReplay) disposeReplay = mountReplayPanel(replayHost, {site:site.href,reference:songs.replay,scoreId:r.scoreId,power:S.power||300000,mode:S.mode==="free"?{kind:"normal"}:{kind:"fixedSoloGekisou",ranks:S.ranks},text:replayText,noteKindLabels:t.kinds});
+    } }, h("summary", {}, replayText.title), replayHost) : null;
     const draw = () => {
       const e = eff(r);
       const battle = S.mode === "battle";
@@ -887,7 +904,7 @@ const main = async () => {
     draw();
     const panel = h("div", { class: "drawer", role: "dialog", "aria-modal": "true", "aria-label": title(r) },
       h("div", { class: "d-hero", style: `--band:${bandColor(r)}` },
-        showJackets() && r.song.jacket ? h("div", { class: "d-bg", style: `background-image:url("${new URL(`jackets/${r.song.jacket}.webp`, site).href}")` }) : null,
+        showJackets() && r.song.jacket ? h("div", { class: "d-bg", style: `background-image:url("${jacketUrl(r)}")` }) : null,
         jacket(r, "jk xl"),
         h("div", { class: "d-title" },
           h("div", { class: "d-band" }, h("i", { class: "dot", style: `background:${bandColor(r)}` }), bandName(r)),
@@ -908,8 +925,9 @@ const main = async () => {
           h("section", {}, heading("h3", "sec-head", t.detail.composition), composition(r)),
           weights),
         ranks,
-        measures, aptitude.element,
-        h("p", { class: "ids" }, `${t.detail.musicId} ${r.musicId} · ${t.detail.scoreId} ${r.scoreId} · ${t.detail.musicType} ${r.song.musicType}`)));
+        measures,
+        h("p", { class: "ids" }, `${t.detail.musicId} ${r.musicId} · ${t.detail.scoreId} ${r.scoreId} · ${t.detail.musicType} ${r.song.musicType}`),
+        replay, aptitude.element));
     drawer.replaceChildren(panel);
     drawer.classList.add("open");
     document.body.classList.add("locked");
@@ -936,11 +954,17 @@ const main = async () => {
     put(foot, h("footer", { class: "foot" }, h("span", {},
       h("span", { title: u().sourceHint(p.region ?? "?", master, client) }, u().source(/^[0-9a-f]{32}$/i.test(master) ? master.slice(0, 8) : master)),
       deckLink ? [` · ${u().deckModel} `, deckLink] : null),
-      h("span", {}, u().caveat),
+      p.developmentSample ? h("span", {title:`${p.developmentSample}${p.localModel?.sourceTreeSha256 ? ` · SHA-256 ${p.localModel.sourceTreeSha256}` : ""}`}, u().developmentData, p.localModel?.workingTreeDirty ? ` · ${u().uncommittedModel}` : "") : null,
       moeBase ? h("span", {}, h("a", { href: moeBase, target: "_blank", rel: "noopener" }, "moenotes", icon("out")), ` · ${u().moenotesHint}`) : null));
   };
   const renderAll = () => { renderHeader(); renderHead(); renderFilters(); renderMain(); renderFoot(); renderDrawer(); save(); };
   renderAll();
+  let observedWidth = main.clientWidth;
+  new ResizeObserver(() => {
+    if (main.clientWidth === observedWidth) return;
+    observedWidth = main.clientWidth;
+    if (S.view === "charts") main.querySelector(".plot-box")?.replaceChildren(scatter());
+  }).observe(main);
 };
 
 main().catch((e) => {

@@ -579,20 +579,28 @@ test("master skill factor uses float32 before truncation, unlike user percentage
   assert.equal(meanSkill([130 / 100], 1), 1.3); // UI percent conversion must not use masterSkillFactor
 });
 
-test("Beta notice explains testing, sampling error and unfinished native checks in both languages", () => {
+test("Beta notice identifies the model and native checks", () => {
   assert.equal(UI.zh.beta, "Beta");
   assert.equal(UI.en.beta, "Beta");
-  for (const term of ["测试中", "数值可能调整", "采样误差", "原生整局核对尚未完成"]) assert.ok(UI.zh.betaNote.includes(term));
-  for (const term of ["In testing", "figures may change", "sampling error", "native game", "not yet complete"]) assert.ok(UI.en.betaNote.includes(term));
+  for (const term of ["Rust", "ARM64"]) assert.ok(UI.zh.betaNote.includes(term));
+  for (const term of ["Rust", "ARM64"]) assert.ok(UI.en.betaNote.includes(term));
   for (const locale of [UI.zh, UI.en]) assert.ok(!/https?:|反馈|feedback/i.test(locale.betaNote));
 });
 
-test("native evidence is limited to one chart input and final score, not full equivalence", () => {
-  const zh = GUIDE.zh.sections.find(s => s.title === "尚未纳入的机制").defs.find(([key]) => key === "核对范围")[1];
-  const en = GUIDE.en.sections.find(s => s.title === "Mechanisms not modelled yet").defs.find(([key]) => key === "Scope of the checks")[1];
-  for (const text of [zh, en]) for (const value of ["10000201", "300000", "364", "1063422", "Unity"]) assert.ok(text.includes(value));
-  assert.ok(zh.includes("逐帧分数、技能与激走尚未完成核对"));
-  assert.ok(en.includes("Per-frame scores, skills and Gekisou remain unchecked"));
+test("native evidence table is aligned across languages and states its coverage boundaries", () => {
+  const zh = GUIDE.zh.method.text;
+  const en = GUIDE.en.method.text;
+  assert.ok(zh.includes("不包含真实设备或服务器结算"));
+  assert.ok(en.includes("Real devices and server results are outside"));
+  const tables = [GUIDE.zh, GUIDE.en].map(g => g.sections.find(s => s.table).table);
+  assert.equal(tables[0].headers.length, 4);
+  assert.equal(tables[0].rows.length, tables[1].rows.length);
+  for (const table of tables) for (const row of table.rows) {
+    assert.equal(row.length, table.headers.length);
+    assert.ok(row.every(cell => typeof cell === "string" && cell.length));
+  }
+  // Counts and identifiers are shared between translations; no translation can silently enlarge the evidence.
+  assert.deepEqual(tables[0].rows.map(r => r.slice(0, 2).join(" ").match(/\d+/g)), tables[1].rows.map(r => r.slice(0, 2).join(" ").match(/\d+/g)));
   assert.ok(!zh.includes("整局从没有用游戏代码跑过"));
   assert.ok(!en.includes("no whole live has been run"));
 });
