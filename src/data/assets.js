@@ -66,54 +66,74 @@ export class AssetStore {
     const here = globalThis.document ? globalThis.document.baseURI : globalThis.location ? globalThis.location.href : undefined;
     const manifestUrl = new URL(String(url), here);
     const root = base ? new URL(String(base), here) : new URL("../", manifestUrl);
-    const get = async (u) => {
-      if (signal) signal.throwIfAborted();
-      const r = await fetch(u, signal ? { signal } : undefined);
-      if (!r.ok) throw new Error(`${u}: HTTP ${r.status}`);
-      return r;
-    };
-    const man = await (await get(manifestUrl.href)).json();
-    if (!man || typeof man.files !== "object") throw new Error(`${manifestUrl.href}: not a chart manifest`);
-    const jobs = new Map();                                // asset -> {size, stored, path}: each asset fetched once
-    for (const [path, f] of Object.entries(man.files)) {
-      const list = f.parts ? f.parts.map((p) => [p[1], p[2], p[3]]) : [[f.asset, f.size, f.stored]];
-      for (const [asset, size, stored] of list) jobs.set(asset, { size, stored, path });
+    // A failed asset ends the whole load: cancel in-flight requests and stop peers before their next job.
+    const controller = new AbortController(), requestSignal = controller.signal;
+    const cancel = () => controller.abort(signal.reason);
+    if (signal) {
+      if (signal.aborted) cancel();
+      else signal.addEventListener("abort", cancel, { once: true });
     }
-    const list = [...jobs.entries()];
-    const weight = (j) => j.stored ?? j.size;
-    const total = list.reduce((n, [, j]) => n + weight(j), 0);
-    const got = new Map(), dec = new TextDecoder("utf-8");
-    let next = 0, loaded = 0;
-    const worker = async () => {
-      while (next < list.length) {
-        const [asset, j] = list[next++];
-        const raw = new Uint8Array(await (await get(new URL(asset, root).href)).arrayBuffer());
-        let buf = raw;
-        if (j.stored !== undefined && raw.byteLength === j.stored) {
-          const encoding = assetEncoding(asset);
-          if (!encoding) throw new Error(`${j.path}: ${asset} has a stored size but no .gz / .br name`);
-          try { buf = u8(await decode(raw, encoding)); } catch (e) { throw new Error(`${j.path}: ${asset}: ${e.message}`); }
-          if (buf.byteLength !== j.size) throw new Error(`${j.path}: ${buf.byteLength} bytes decoded, manifest ${j.size}`);
-        } else if (raw.byteLength !== j.size) {
-          throw new Error(`${j.path}: ${raw.byteLength} bytes, manifest ${j.stored !== undefined ? `${j.stored} stored, ` : ""}${j.size}`);
-        }
-        got.set(asset, buf);
-        loaded += weight(j);
-        if (onProgress) onProgress(loaded, total);
+    try {
+      const get = async (u) => {
+        requestSignal.throwIfAborted();
+        const r = await fetch(u, { signal: requestSignal });
+        requestSignal.throwIfAborted();
+        if (!r.ok) throw new Error(`${u}: HTTP ${r.status}`);
+        return r;
+      };
+      const man = await (await get(manifestUrl.href)).json();
+      requestSignal.throwIfAborted();
+      if (!man || typeof man.files !== "object") throw new Error(`${manifestUrl.href}: not a chart manifest`);
+      const jobs = new Map();                                // asset -> {size, stored, path}: each asset fetched once
+      for (const [path, f] of Object.entries(man.files)) {
+        const list = f.parts ? f.parts.map((p) => [p[1], p[2], p[3]]) : [[f.asset, f.size, f.stored]];
+        for (const [asset, size, stored] of list) jobs.set(asset, { size, stored, path });
       }
-    };
-    await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, list.length)) }, worker));
-    const text = new Map(), bin = new Map(), enc = new TextEncoder();
-    for (const [path, f] of Object.entries(man.files)) {
-      if (f.parts) {
-        const t = `{${f.parts.map(([k, asset]) => `${JSON.stringify(k)}:${dec.decode(got.get(asset))}`).join(",")}}`;
-        if (enc.encode(t).byteLength !== f.size) throw new Error(`${path}: rebuilt text is not ${f.size} bytes`);
-        text.set(path, t);
-      } else if (TEXT_FILE.test(path)) text.set(path, dec.decode(got.get(f.asset)));
-      else bin.set(path, got.get(f.asset));
+      const list = [...jobs.entries()];
+      const weight = (j) => j.stored ?? j.size;
+      const total = list.reduce((n, [, j]) => n + weight(j), 0);
+      const got = new Map(), dec = new TextDecoder("utf-8");
+      let next = 0, loaded = 0;
+      const worker = async () => {
+        while (next < list.length) {
+          requestSignal.throwIfAborted();
+          const [asset, j] = list[next++];
+          const raw = new Uint8Array(await (await get(new URL(asset, root).href)).arrayBuffer());
+          requestSignal.throwIfAborted();
+          let buf = raw;
+          if (j.stored !== undefined && raw.byteLength === j.stored) {
+            const encoding = assetEncoding(asset);
+            if (!encoding) throw new Error(`${j.path}: ${asset} has a stored size but no .gz / .br name`);
+            try { buf = u8(await decode(raw, encoding)); } catch (e) { throw new Error(`${j.path}: ${asset}: ${e.message}`); }
+            requestSignal.throwIfAborted();
+            if (buf.byteLength !== j.size) throw new Error(`${j.path}: ${buf.byteLength} bytes decoded, manifest ${j.size}`);
+          } else if (raw.byteLength !== j.size) {
+            throw new Error(`${j.path}: ${raw.byteLength} bytes, manifest ${j.stored !== undefined ? `${j.stored} stored, ` : ""}${j.size}`);
+          }
+          got.set(asset, buf);
+          loaded += weight(j);
+          if (onProgress) onProgress(loaded, total);
+        }
+      };
+      await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, list.length)) }, worker));
+      requestSignal.throwIfAborted();
+      const text = new Map(), bin = new Map(), enc = new TextEncoder();
+      for (const [path, f] of Object.entries(man.files)) {
+        if (f.parts) {
+          const t = `{${f.parts.map(([k, asset]) => `${JSON.stringify(k)}:${dec.decode(got.get(asset))}`).join(",")}}`;
+          if (enc.encode(t).byteLength !== f.size) throw new Error(`${path}: rebuilt text is not ${f.size} bytes`);
+          text.set(path, t);
+        } else if (TEXT_FILE.test(path)) text.set(path, dec.decode(got.get(f.asset)));
+        else bin.set(path, got.get(f.asset));
+      }
+      const { files, ...info } = man;
+      return new AssetStore({ text, bytes: bin, info });
+    } catch (e) {
+      controller.abort(e);
+      throw requestSignal.reason;
+    } finally {
+      if (signal) signal.removeEventListener("abort", cancel);
     }
-    const { files, ...info } = man;
-    return new AssetStore({ text, bytes: bin, info });
   }
 
   has(path) { return this._text.has(path) || this._bin.has(path); }

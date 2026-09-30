@@ -240,3 +240,81 @@ test("fromManifest: bytes from a decoder that returns a Node Buffer are copied b
   a[0] = 1;
   assert.equal(s.bytes("x.bin")[0], 7);
 });
+
+
+test("fromManifest: one failed asset aborts its peers and leaves queued assets unread", async () => {
+  let fail, releasePeer, peerStarted;
+  const failed = new Promise((r) => { fail = r; });
+  const peer = new Promise((r) => { releasePeer = r; });
+  const started = new Promise((r) => { peerStarted = r; });
+  const requested = [], progress = [];
+  let peerSignal;
+  const man = { files: Object.fromEntries(["bad", "peer", "queued1", "queued2"].map((id) =>
+    [`${id}.bin`, { asset: `assets/${id}.bin`, size: 1 }])) };
+  const fetch = async (url, init) => {
+    if (url.endsWith("manifest.json")) return { ok: true, json: async () => man };
+    requested.push(url);
+    if (url.endsWith("bad.bin")) { await failed; return { ok: false, status: 503 }; }
+    if (url.endsWith("peer.bin")) {
+      peerSignal = init?.signal;
+      peerStarted();
+      if (peerSignal) await Promise.race([peer, new Promise((_, reject) => {
+        peerSignal.addEventListener("abort", () => reject(peerSignal.reason), { once: true });
+      })]);
+      else await peer;
+    }
+    return { ok: true, arrayBuffer: async () => new Uint8Array([1]).buffer };
+  };
+  const loading = AssetStore.fromManifest(`${ROOT}charts/manifest.json`, {
+    fetch, concurrency: 2, onProgress: (...p) => progress.push(p),
+  });
+  const rejected = assert.rejects(loading, /bad\.bin: HTTP 503/);
+  await started;
+  fail();
+  try {
+    await rejected;
+    assert.equal(peerSignal?.aborted, true, "the in-flight fetch must be cancelled");
+  } finally {
+    releasePeer();
+    await new Promise(setImmediate);
+  }
+  assert.equal(requested.length, 2, "the failed load must not fetch queued assets");
+  assert.deepEqual(progress, [], "the rejected load must not emit late progress");
+});
+
+test("fromManifest: cancellation while decoding rejects with its reason and emits no progress", async () => {
+  const { files, z1 } = encodedFixture("gzip");
+  const man = { files: { "live.json": { asset: "assets/a.json.gz", size: 1, stored: z1.byteLength } } };
+  files[`${ROOT}charts/1_easy.json`] = JSON.stringify(man);
+  const controller = new AbortController(), reason = new Error("load cancelled"), progress = [];
+  let finishDecode, decodeStarted;
+  const decoding = new Promise((r) => { decodeStarted = r; });
+  const loading = AssetStore.fromManifest(`${ROOT}charts/1_easy.json`, {
+    ...site(files), signal: controller.signal, onProgress: (...p) => progress.push(p),
+    decode: async () => { decodeStarted(); return new Promise((r) => { finishDecode = r; }); },
+  });
+  const rejected = assert.rejects(loading, (e) => e === reason);
+  await decoding;
+  controller.abort(reason);
+  finishDecode(new Uint8Array([1]));
+  await rejected;
+  assert.deepEqual(progress, []);
+});
+
+test("fromManifest: cancellation while reading an empty manifest still rejects", async () => {
+  const controller = new AbortController(), reason = new Error("manifest cancelled");
+  let finishRead, readStarted;
+  const reading = new Promise((r) => { readStarted = r; });
+  const loading = AssetStore.fromManifest(`${ROOT}charts/manifest.json`, {
+    signal: controller.signal,
+    fetch: async () => ({ ok: true, json: async () => {
+      readStarted();
+      return new Promise((r) => { finishRead = r; });
+    } }),
+  });
+  const rejected = assert.rejects(loading, (e) => e === reason);
+  await reading;
+  controller.abort(reason);
+  finishRead({ files: {} });
+  await rejected;
+});
