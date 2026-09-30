@@ -1,6 +1,6 @@
 {
   "name": "ournotes-player",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Browser player for BanG Dream! Our Notes: live charts, story episodes and Live2D models with the game's own shaders (WebGL2 + WebAudio, custom elements)",
   "keywords": [
     "bang-dream",
