@@ -190,6 +190,12 @@ export const histogram = (rows, get, step = 1) => {
 
 // moenotes (bdon.moe) has the song pages (credits, vocals, audio, jacket, chart previews); this page links to them.
 export const MOENOTES = "https://bdon.moe/";
+/** Same published path as MoeNotes' getMusicJacketUrl; independent of a local --jackets export. */
+export function moenotesJacketUrl(assetName, assetBase = "https://assets.bdon.moe") {
+  if (!assetName) return null;
+  const key = `Image/Jacket/${assetName}`;
+  return `${assetBase.replace(/\/+$/, "")}/${["zh-Hans", ...key.split("/"), `${key.split("/").at(-1)}.webp`].map(encodeURIComponent).join("/")}`;
+}
 const MOENOTES_PREFIX = { "zh-Hans": "", "zh-Hant": "zh-tw", ja: "ja", en: "en", ko: "ko" };
 
 // The moenotes page of a song in the language nearest to `lang` (default: Simplified Chinese, its root).
