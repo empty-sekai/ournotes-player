@@ -373,7 +373,6 @@ const main = async () => {
   };
 
   let tableBox = null;
-  let allColumns = false;
   const renderRank = () => {
     const t = u();
     const tabs = seg(RANKS.filter((k) => hasStats || !EFF_RANKS.has(k)).map((k) => [k, t.rankBy[k]]), S.rankBy,
@@ -436,6 +435,8 @@ const main = async () => {
       list = sortBy(list, (r) => lengthOf(r), S.rankBy === "short");
       hi = "time";
     }
+    const highlighted = cols.indexOf(hi);
+    if (highlighted > 2) cols.splice(2, 0, ...cols.splice(highlighted, 1));
     const all = list.length;
     const byPool = S.rankBy === "efficiency" ? list : null;
     list = list.filter((r) => matches(r, S.search) && (!S.frontier || !unsorted || r.frontier));
@@ -481,9 +482,8 @@ const main = async () => {
       cols.map((k) => { const c = cell[k]; if (k === hi) c.classList.add("hi"); c.classList.add(`c-${k}`); c.dataset.label = k === "bpm" && S.rankBy === "speed" && S.speedBy === "bpmMax" ? t.speedBy.bpmMax : t.col[k]; return c; }));
     });
     tableBox.replaceChildren(
-      h("div", { class: "table-toolbar" }, h("div", { class: "count" }, `${u().chartsN(list.length)}${list.length !== all ? ` / ${all}` : ""}`),
-        h("label", { class: "check columns-toggle" }, h("input", { type: "checkbox", checked: allColumns, onchange: (e) => { allColumns = e.target.checked; renderTable(); } }), t.allColumns, allColumns ? h("small", {}, t.allColumnsHint) : null)),
-      h("div", { class: "table-card glass" }, list.length ? h("div", { class: "table-scroll" }, h("table", { class: "rank-table", "data-rank-by": S.rankBy, "data-columns": allColumns ? "all" : "auto" },
+      h("div", { class: "table-toolbar" }, h("div", { class: "count" }, `${u().chartsN(list.length)}${list.length !== all ? ` / ${all}` : ""}`)),
+      h("div", { class: "table-card glass" }, list.length ? h("div", { class: "table-scroll" }, h("table", { class: "rank-table", "data-rank-by": S.rankBy },
         h("thead", {}, h("tr", {}, cols.map((k) => { const c = th(k); c.classList.add(`c-${k}`); return c; }))),
         h("tbody", {}, body))) : h("div", { class: "empty" }, h("b", {}, t.empty), t.emptyHint, " ",
         h("button", { class: "ghost", onclick: clearFilters }, t.clear))));
@@ -796,8 +796,8 @@ const main = async () => {
         : [`${A.unknown} #${v.shape}`];
       const gain = h("td", { class: "num" }), ratio = h("td", { class: "num" }), hint = h("small", {});
       const raw = h("details", {}, h("summary", {}, A.changes), h("p", { class: "note" }, A.raw),
-        h("table", { class: "ranks measures" }, h("thead", {}, h("tr", {}, h("th", {}, D.mRange), MEASURES.map((k) => h("th", {}, `Δ ${D.measure[k]}`)))),
-          h("tbody", {}, (v.ranges || []).map((x, i) => h("tr", {}, h("td", {}, String(i + 1)), MEASURES.map((k) => h("td", {}, pair(x[k]))))))),
+        h("div", { class: "tbl-scroll" }, h("table", { class: "ranks measures" }, h("thead", {}, h("tr", {}, h("th", {}, D.mRange), MEASURES.map((k) => h("th", {}, `Δ ${D.measure[k]}`)))),
+          h("tbody", {}, (v.ranges || []).map((x, i) => h("tr", {}, h("td", {}, String(i + 1)), MEASURES.map((k) => h("td", {}, pair(x[k])))))))),
         h("p", {}, A.rawScore, " ", pair(v.score)), h("p", {}, A.rawPerfect, " ", pair(v.scorePerfect)),
         h("p", {}, A.converted, " ", pair(v.converted)));
       const zero = zeroGain(v);
@@ -891,7 +891,7 @@ const main = async () => {
         !r.weights && !(battle && r.unplayable) && r.stats ? tile(t.detail.noFigures, "–", t.scen.pending) : null));
       put(line, timeline(r));
       put(weights, r.weights ? [heading("h3", "sec-head", t.detail.weights), weightsChart(r), h("p", { class: "hint" }, t.detail.weightsHint)] : null);
-      put(ranks, r.weights && r.scoreRanks.length ? h("section", {}, heading("h3", "sec-head", t.detail.ranks), ranksTable(r),
+      put(ranks, r.weights && r.scoreRanks.length ? h("section", {}, heading("h3", "sec-head", t.detail.ranks), h("div", { class: "tbl-scroll" }, ranksTable(r)),
         h("p", { class: "hint" }, room() ? t.detail.ranksHintRoom(S.room) : t.detail.ranksHint)) : null);
     };
     const panelHere = () => (hasStats ? scenarioPanel({

@@ -16,16 +16,17 @@ export function mountReplayPanel(host,options){
   const {text:t,site,reference,scoreId,power:initialPower=300000,mode:initialMode={kind:"normal"}}=options;
   const root=host.shadowRoot??host.attachShadow({mode:"open"});root.replaceChildren();
   const styles=el("style",{},`
-    :host{display:block;color:var(--mn-text);font:inherit;min-width:0}*{box-sizing:border-box}
-    .controls{display:flex;flex-wrap:wrap;gap:10px;align-items:end;margin:12px 0}label{display:grid;gap:5px;font-size:12px}
+    :host{display:block;color:var(--mn-text);font:inherit;min-width:0;max-width:100%}*{box-sizing:border-box}
+    .controls{display:flex;flex-wrap:wrap;gap:10px;align-items:end;margin:12px 0}label{display:grid;gap:5px;font-size:12px;min-width:0;max-width:100%}
+    .controls>*{min-width:0;max-width:100%}button,input,select{min-width:0;max-width:100%}button,.note,summary{overflow-wrap:anywhere}
     button,input,select{font:inherit;color:inherit;background:var(--mn-paper);border:1px solid var(--mn-border);border-radius:8px;padding:6px 9px}
     button{cursor:pointer}button:disabled{opacity:.5;cursor:default}input[type=number]{width:110px}input[type=file]{max-width:220px}
-    .note{color:var(--mn-text-muted);font-size:12px;line-height:1.6}.scroll{max-height:350px;overflow:auto;border:1px solid var(--mn-border);border-radius:10px}
+    .note{color:var(--mn-text-muted);font-size:12px;line-height:1.6}.scroll{min-width:0;max-width:100%;max-height:350px;overflow:auto;border:1px solid var(--mn-border);border-radius:10px}
     table{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}th,td{padding:7px 10px;text-align:left;border-bottom:1px solid var(--mn-border)}
     th{position:sticky;top:0;background:var(--mn-paper)}.stats{display:flex;gap:15px;flex-wrap:wrap;margin:12px 0}.stats strong{display:block;font-size:20px}
     details{margin:10px 0}summary{cursor:pointer;font-size:13px}.status{overflow-wrap:anywhere}output{display:block}
     .accuracy{display:flex;flex-wrap:wrap;gap:12px 22px;padding:12px;border:1px solid var(--mn-border);border-radius:10px;align-items:center}
-    .accuracy label{display:flex;align-items:center;gap:8px}.accuracy input{width:130px;padding:0;accent-color:var(--mn-accent,#8bbde5)}.accuracy output{min-width:4ch;font-variant-numeric:tabular-nums}.plan{margin:7px 0}
+    .accuracy label{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.accuracy input{width:130px;padding:0;accent-color:var(--mn-accent,#8bbde5)}.accuracy output{min-width:4ch;font-variant-numeric:tabular-nums}.plan{margin:7px 0}
     .accuracy input[type=number]{width:65px;padding:6px}.segments{overflow:auto;max-width:100%;margin:10px 0}.segments:empty{display:none}.segments table{min-width:660px}.segments input[type=number]{width:58px;padding:5px}.segments .time-input{width:65px}.segments th{position:static;white-space:nowrap}.segments td{padding:6px}.segment-actions{display:flex;flex-wrap:wrap;gap:7px;align-items:center;margin:10px 0}.segment-actions button{font-size:12px}.segment-actions label{display:flex;align-items:center;gap:6px}.segment-actions input{width:90px}.segments small{white-space:nowrap}
   `);
   const status=el("p",{className:"note status",role:"status"},t.loading),results=el("output",{}),notes=el("div",{className:"scroll"});
@@ -139,7 +140,7 @@ export function mountReplayPanel(host,options){
       if(!result.complete)throw new Error(t.incomplete);
       const stat=(name,value)=>el("div",{},el("span",{className:"note"},name),el("strong",{},Number(value).toLocaleString()));
       results.replaceChildren(el("div",{className:"stats"},stat(t.score,result.score),stat(t.frameScore,result.frameScore),stat(t.life,result.life),stat(t.combo,result.combo)),el("p",{className:"note"},["just","perfect","great","good","bad","miss"].map(k=>`${k.toUpperCase()} ${result.judgements[k]}`).join(" · ")));
-      if(result.ranges.length)results.append(el("table",{},el("thead",{},el("tr",{},...[t.range,t.combo,t.just,t.luck].map(x=>el("th",{},x)))),el("tbody",{},...result.ranges.map((range,i)=>el("tr",{},...[i+1,range.maxCombo,range.justCount,range.luckPoints].map(x=>el("td",{},String(x))))))));
+      if(result.ranges.length)results.append(el("div",{className:"scroll"},el("table",{},el("thead",{},el("tr",{},...[t.range,t.combo,t.just,t.luck].map(x=>el("th",{},x)))),el("tbody",{},...result.ranges.map((range,i)=>el("tr",{},...[i+1,range.maxCombo,range.justCount,range.luckPoints].map(x=>el("td",{},String(x)))))))));
       status.textContent=t.complete;
     }catch(error){fail(error);}finally{ready=true;endWork();}
   };

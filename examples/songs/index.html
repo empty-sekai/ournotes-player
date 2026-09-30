@@ -276,7 +276,7 @@
 
   /* cards and charts */
   .card { padding: 18px 20px; margin: 0 0 18px; border-radius: var(--cut); }
-  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
   .grid2 > .card { margin: 0; }
   .card .panel { background: color-mix(in srgb, var(--mn-cream-deep) 45%, transparent); border: 1px solid var(--mn-glass-border); box-shadow: none; backdrop-filter: none; }
   .axes { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -370,10 +370,11 @@
     border-radius: 2px 10px 2px 10px; border: 1px solid var(--mn-orbit-edge); background: var(--mn-glass); color: var(--mn-orbit-light);
   }
   .d-close:hover { background: var(--mn-accent-soft); color: var(--mn-accent-deep); }
-  .d-body { padding: 10px 28px 32px; }
+  .d-body { padding: 10px 28px 32px; min-width: 0; overflow-wrap: anywhere; }
+  .d-body > * { min-width: 0; max-width: 100%; }
   .d-body .sec-head { margin: 26px 0 12px; }
   .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 12px; }
-  .tile { display: grid; gap: 2px; padding: 12px 14px; border-radius: 3px 16px 3px 16px; border: 1px solid var(--mn-glass-border); background: var(--mn-glass); }
+  .tile { display: grid; min-width: 0; overflow-wrap: anywhere; gap: 2px; padding: 12px 14px; border-radius: 3px 16px 3px 16px; border: 1px solid var(--mn-glass-border); background: var(--mn-glass); }
   .tile span { color: var(--mn-text-muted); font-size: 12px; }
   .tile b { font-size: 20px; font-weight: 500; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
   .tile small { color: var(--mn-text-muted); font-size: 11px; line-height: 1.5; }
@@ -392,7 +393,8 @@
   .comp-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; color: var(--mn-text-muted); font-size: 12px; }
   .comp-legend span { display: inline-flex; align-items: center; gap: 5px; }
   .comp-legend b { color: var(--mn-text); font-weight: 500; }
-  .weights { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; align-items: end; }
+  .weights { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; align-items: end; }
+  .wcol { min-width: 0; overflow-wrap: anywhere; }
   .wcol { display: grid; justify-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
   .wcol b { font-size: 12px; font-weight: 500; }
   .wbar { display: flex; align-items: flex-end; width: 100%; max-width: 44px; height: 88px; overflow: hidden; border-radius: 3px 10px 3px 10px; background: var(--mn-cream-deep); }
@@ -410,7 +412,8 @@
   .rk-SS { color: var(--mn-orbit-light); background: var(--mn-orbit-night); border-color: var(--mn-orbit-edge); }
   .rk-S { color: var(--mn-accent-deep); background: var(--mn-accent-soft); border-color: color-mix(in srgb, var(--mn-accent) 40%, transparent); }
   /* Single-skill aptitude: numeric cells update without rebuilding the expanded details. */
-  .apt-table { min-width: 680px; }
+  .apt-table { min-width: 680px; table-layout: fixed; }
+  .apt-table > thead > tr > th:first-child { width: 260px; }
   .apt-table > thead > tr > th, .apt-table > tbody > tr > td { vertical-align: top; }
   .apt-table > tbody > tr > td:first-child { min-width: 220px; max-width: 380px; overflow-wrap: anywhere; }
   .apt-table small { display: block; color: var(--mn-text-muted); font-size: 11px; white-space: normal; }
@@ -422,7 +425,7 @@
   .aptitude .panel { margin-top: 10px; }
   .factors { min-width: 640px; }
   /* the rank measures of the Gekisou ranges */
-  .tbl-scroll { overflow-x: auto; }
+  .tbl-scroll, .tl-scroll { width: 100%; min-width: 0; max-width: 100%; overflow-x: auto; }
   .ranks td.hi { font-weight: 600; color: var(--mn-text); }
   .measures th:nth-child(2), .measures td:nth-child(2) { text-align: left; }
   .measures td { white-space: nowrap; }
@@ -441,7 +444,7 @@
     .toc { position: static; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
   }
   @media (max-width: 860px) {
-    .grid2 { grid-template-columns: 1fr; }
+    .grid2 { grid-template-columns: minmax(0, 1fr); }
     .defs { grid-template-columns: 1fr; }
     .defs dt { border-top: 1px solid var(--mn-glass-border); }
     .defs dd { border-top: 0; }
@@ -490,14 +493,18 @@
 .field, .skills { min-width: 0; max-width: 100%; }
 .table-toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
 .table-toolbar .count { margin: 0; }
-.columns-toggle { display: none; }
-.columns-toggle small { color: var(--mn-text-muted); font-size: 11px; }
-.table-scroll { max-width: 100%; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--mn-accent) var(--mn-cream-deep); }
+.table-scroll { width: 100%; min-width: 0; max-width: 100%; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--mn-accent) var(--mn-cream-deep); }
 .table-box > .table-scroll { max-height: 70vh; }
+.rank-table { min-width: 760px; }
+.rank-table[data-rank-by="efficiency"] { min-width: 1060px; }
+.rank-table[data-rank-by="event"] { min-width: 960px; }
 .rank-table th { position: sticky; top: 0; z-index: 2; background: var(--mn-paper); }
 .rank-table .spread { display: block; }
-.rank-table .c-song { width: 23%; }
-.rank-table .song-title .t { max-width: clamp(110px, 17cqw, 230px); }
+.rank-table .c-song { width: 220px; white-space: normal; }
+.rank-table .song { width: 200px; max-width: 100%; }
+.rank-table .song-text { flex: 1; }
+.rank-table .song-title .t { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; overflow: visible; text-overflow: clip; }
+.rank-table .song-band { flex-wrap: wrap; }
 @container chart-view (max-width: 1200px) {
   .tabs { flex-wrap: wrap; overflow: visible; }
   .tabs button { padding: 7px 12px; }
@@ -509,35 +516,20 @@
   .num-in.skill { width: 54px; }
 }
 @container chart-ranking (max-width: 1200px) {
-  .columns-toggle { display: inline-flex; }
   .rank-table { font-size: 12px; }
   .rank-table :is(th, td) { padding: 7px 6px; }
   .rank-table th { white-space: normal; font-size: 11px; line-height: 1.4; }
   .rank-table .song { gap: 7px; }
   .rank-table .jk { width: 32px; height: 32px; }
-  .rank-table .song-title .t { max-width: 150px; }
   .rank-table .song-band { font-size: 11px; }
   .rank-table .bar { min-width: 66px; padding: 1px 4px; }
-  .rank-table[data-columns="auto"] :is(.c-relative, .c-dom) { display: none; }
-  .rank-table[data-columns="all"] { min-width: 1000px; }
-  .rank-table[data-columns="all"] :is(.c-rank, .c-song) { position: sticky; background: var(--mn-paper); z-index: 1; }
-  .rank-table[data-columns="all"] .c-rank { left: 0; min-width: 40px; width: 40px; }
-  .rank-table[data-columns="all"] .c-song { left: 40px; width: 180px; }
-  .rank-table[data-columns="all"] th:is(.c-rank, .c-song) { z-index: 3; }
-}
-@container chart-ranking (max-width: 860px) {
-  .rank-table[data-columns="auto"][data-rank-by="efficiency"] :is(.c-bpm, .c-notes, .c-density) { display: none; }
-  .rank-table[data-columns="auto"][data-rank-by="event"] .c-perHour { display: none; }
-  .rank-table .song-title .t { max-width: 130px; white-space: normal; overflow-wrap: anywhere; }
+  .rank-table .c-song { position: sticky; left: 0; width: 160px; background: var(--mn-paper); z-index: 1; }
+  .rank-table .song { width: 148px; }
+  .rank-table th.c-song { z-index: 3; }
 }
 @container chart-ranking (max-width: 500px) {
   .rank-table :is(th, td) { padding: 7px 4px; }
-  .rank-table .song-title .t { max-width: 110px; }
-  .rank-table .song-band { display: none; }
-  .rank-table .lv small { display: none; }
   .rank-table .no { min-width: 22px; padding: 0 2px; }
-  .rank-table[data-columns="auto"] :is(.c-time, .c-bpm, .c-notes, .c-density, .c-rate, .c-chance) { display: none; }
-  .rank-table[data-columns="auto"] :is(.c-time, .c-bpm, .c-notes, .c-density).hi { display: table-cell; }
 }
 .verification-scroll { max-width: 100%; overflow-x: auto; margin: 16px 0; border: 1px solid var(--mn-glass-border); border-radius: 10px; }
 .verification { width: 100%; min-width: 640px; border-collapse: collapse; table-layout: fixed; font-size: 12px; }
