@@ -4,9 +4,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { collect, current, render } from "../../scripts/engine-notes.mjs";
+import { collect, current, render, notesFromSource } from "../../scripts/engine-notes.mjs";
 
 const doc = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "docs", "fidelity.md");
+
+test("engine-note collection is the same for LF and CRLF source files", () => {
+  const lines = ["// ordinary comment", "// ENGINE: keep the signed size.", "// ENGINE: `literal example`"];
+  assert.deepEqual(notesFromSource(lines.join("\n")), ["keep the signed size."]);
+  assert.deepEqual(notesFromSource(lines.join("\r\n")), ["keep the signed size."]);
+});
 
 test("the ENGINE: list in docs/fidelity.md matches the sources", () => {
   const groups = collect();

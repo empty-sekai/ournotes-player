@@ -565,4 +565,12 @@ Every `ENGINE:` note in `src/`, by file. `npm test` checks that this list matche
 - Animator.writeDefaultValuesOnDisable is not applied: every animated node here is invisible while disabled and resampled on its first update after enable.
 - UniTask's DOTween awaiter completes on the tween's kill callback, so a flash killed by the next Flash call (or Refresh) ends its await inside DOKill and hides the view before the new flash shows it.
 
+**`src/ui/layout.js`**
+
+- RectTransform sizes remain signed. A negative intermediate rect can
+
+**`src/ui/text-layout.js`**
+
+- TMP's vertical anchor and preferred height use the visible text
+
 <!-- engine-notes:end -->
