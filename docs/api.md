@@ -10,8 +10,10 @@ live UI, with the chart's music and sound effects, auto-played at Perfect. The d
 |---|---|
 | `ournotes-player` | `ChartPlayer`, `ChartSession`, `AssetStore`, `defineOurnotesPlayer`, `OurnotesPlayerElement`, `LIVE_SPEEDS`, `LIVE_OPTIONS`, `LIVE_OPTION_GROUPS`, `LiveSettingsError`, `PLAYER_LANGUAGES`, `formatTime` |
 | `ournotes-player/element` | the same exports; importing it defines `<ournotes-player>` |
+| `ournotes-player/ui` (experimental) | `UILibrary`, `UISession`, `UIPlayer`, `OurnotesUIElement`, `defineOurnotesUI`; [prefab preview API and limits](ui-preview.md) |
+| `ournotes-player/ui/element` (experimental) | the same UI exports; importing it defines `<ournotes-ui>` |
 
-Every time in the API is in milliseconds of chart time.
+Chart API times are in milliseconds of chart time. The independent UI preview API uses seconds.
 
 ## `<ournotes-player>`
 

@@ -38,6 +38,9 @@ const BUNDLES = [
   { entry: "src/story/index.js", out: "ournotes-player.story", format: "esm" },
   { entry: "src/story/define.js", out: "ournotes-player.story.element", format: "esm" },
   { entry: "src/story/define.js", out: "ournotes-player.story.global", format: "iife", globalName: "OurnotesStory" },
+  { entry: "src/ui/index.js", out: "ournotes-player.ui", format: "esm" },
+  { entry: "src/ui/define.js", out: "ournotes-player.ui.element", format: "esm" },
+  { entry: "src/ui/define.js", out: "ournotes-player.ui.global", format: "iife", globalName: "OurnotesUI" },
 ];
 
 async function build(outdir) {

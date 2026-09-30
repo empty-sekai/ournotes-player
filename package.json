@@ -51,6 +51,14 @@
       "types": "./types/story.d.ts",
       "default": "./src/story/define.js"
     },
+    "./ui": {
+      "types": "./types/ui.d.ts",
+      "default": "./src/ui/index.js"
+    },
+    "./ui/element": {
+      "types": "./types/ui.d.ts",
+      "default": "./src/ui/define.js"
+    },
     "./dist/*": "./dist/*",
     "./schema/*": "./schema/*",
     "./package.json": "./package.json"
@@ -65,6 +73,9 @@
     "./src/story/define.js",
     "./src/story/player-core.js",
     "./src/story/features/*.js",
+    "./src/ui/define.js",
+    "./dist/ournotes-player.ui.element*.js",
+    "./dist/ournotes-player.ui.global*.js",
     "./dist/ournotes-player.story.element*.js",
     "./dist/ournotes-player.story.global*.js"
   ],
@@ -81,6 +92,7 @@
     "examples/songs/",
     "examples/story/",
     "examples/story-list/",
+    "examples/ui/",
     "LICENSE",
     "LICENSE-EXCEPTION"
   ],

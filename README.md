@@ -6,6 +6,8 @@ ournotes-player 在网页中重现 BanG Dream! Our Notes 的三类画面：Live 
 
 本项目为非官方爱好者项目，与游戏的开发、发行和运营方无关。仓库与 npm 包不包含任何游戏资源：播放器读取按数据格式（[Live 与 Live2D](docs/data-format.md)、[剧情](docs/story-data-format.md)）准备的数据，数据由使用者自行提供；[nnnotes](https://github.com/MetaSekaiLab/nnnotes) 工具包可以从使用者自己的游戏文件生成这种数据。BanG Dream! 及相关名称与商标归各自权利人所有。
 
+另有独立、实验性的 [UI 预制体预览](docs/ui-preview.md)：`ournotes-player/ui` 与 `<ournotes-ui>` 读取 `nnnotes ui` 导出的数据，以 Canvas 2D 检查布局和部分动画，不宣称像素一致或完整游戏业务逻辑。可使用 [examples/ui](examples/ui) 打开自己的库。
+
 ## 组件
 
 | | Live 谱面 | 剧情 | Live2D 模型 |
