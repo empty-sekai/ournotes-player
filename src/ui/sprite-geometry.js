@@ -7,6 +7,8 @@ const finite=(value,label)=>{
 export function previewSpriteGeometryPlan(geometry,imageWidth,imageHeight){
   const r=geometry?.rect,t=geometry?.textureRect,o=geometry?.textureRectOffset;
   if(!r||!t||!o)throw Error('Preview Sprite requires original rect, textureRect and textureRectOffset');
+  const settings=geometry.settingsRaw??0;
+  if(!Number.isSafeInteger(settings)||settings<0||settings&1&&(settings>>2)&15||(geometry.downscaleMultiplier??1)!==1)throw Error('Preview Sprite bitmap contract requires unrotated, unscaled source metadata');
   const width=finite(r.width,'rect.width'),height=finite(r.height,'rect.height');
   const x=finite(t.x,'textureRect.x'),y=finite(t.y,'textureRect.y'),tw=finite(t.width,'textureRect.width'),th=finite(t.height,'textureRect.height');
   const ox=finite(o.x,'textureRectOffset.x'),oy=finite(o.y,'textureRectOffset.y');

@@ -37,3 +37,9 @@ test('reject mismatched or incomplete original Sprite metadata',()=>{
   assert.throws(()=>previewSpriteGeometryPlan({...geometry,textureRectOffset:null},60,140),/requires original/);
   assert.throws(()=>previewSpriteGeometryPlan({...geometry,rect:{width:NaN,height:200}},60,140),/rect.width/);
 });
+
+test('rotated or downscaled exports require a separate explicit bitmap contract',()=>{
+  const geometry={rect:{width:100,height:200},textureRect:{x:30,y:40,width:60,height:140},textureRectOffset:{x:20,y:10}};
+  assert.throws(()=>previewSpriteGeometryPlan({...geometry,settingsRaw:5},60,140),/unrotated, unscaled/);
+  assert.throws(()=>previewSpriteGeometryPlan({...geometry,downscaleMultiplier:2},60,140),/unrotated, unscaled/);
+});
