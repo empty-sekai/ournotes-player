@@ -569,6 +569,10 @@ Every `ENGINE:` note in `src/`, by file. `npm test` checks that this list matche
 
 - RectTransform sizes remain signed. A negative intermediate rect can
 
+**`src/ui/projection.js`**
+
+- reference-resolution Screen Space - Camera coordinates. Scene sizing
+
 **`src/ui/text-layout.js`**
 
 - TMP's vertical anchor and preferred height use the visible text

@@ -8,11 +8,11 @@ import {sequencePlan,sequenceAnimatorCalls} from './tween.js';
 // This exposes the serialized UI restoration work without claiming pixel parity.
 export class UIPlayer extends EventTarget {
   static async create(host,options={}){const player=new UIPlayer(host,options);try{await player.load(options.entry??options.src);return player;}catch(error){player.destroy();throw error;}}
-  constructor(host,{library=null,assetBase,viewport=[1920,1080],showHidden=false,bounds=false,bindings=true}={}){
+  constructor(host,{library=null,assetBase,viewport=[1920,1080],showHidden=false,bounds=false,bindings=true,projection,framing='root'}={}){
     super();if(!host)throw Error('UIPlayer requires a host element');
     this.canvas=host.tagName?.toLowerCase()==='canvas'?host:document.createElement('canvas');if(this.canvas!==host)host.append(this.canvas);
     this.canvas.style.cssText='display:block;max-width:100%;max-height:100%;object-fit:contain';this.context=this.canvas.getContext('2d');if(!this.context)throw Error('Canvas 2D unavailable');
-    this.library=library;this.assetBase=assetBase;this._explicitAssetBase=assetBase;this.options={viewport,showHidden,bounds,bindings};this.session=null;this.paused=true;this.destroyed=false;this._revision=0;this._loadRevision=0;this._playRevision=0;this._raf=null;
+    this.library=library;this.assetBase=assetBase;this._explicitAssetBase=assetBase;this.options={viewport,showHidden,bounds,bindings,projection,framing};this.session=null;this.paused=true;this.destroyed=false;this._revision=0;this._loadRevision=0;this._playRevision=0;this._raf=null;
   }
   emit(name,detail){this.dispatchEvent(new CustomEvent(name,{detail}));}
   get nodes(){return this.session?.nodes||[];}

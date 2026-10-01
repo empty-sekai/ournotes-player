@@ -65,6 +65,16 @@ UIPlayer wraps the same session with `load`, `controller`, `playState`, `selectC
 caller-supplied `{node, component, field, value}` patches; `_previewSource` image URLs resolve against its optional
 baseURL. Page-specific sample data and business rules belong to the caller.
 
+For an external bitmap cropped from a Unity Sprite's `textureRect`, patch the
+same `Image` with `_previewSpriteGeometry: {rect, textureRect, textureRectOffset,
+pixelsPerUnit, border?}` from that Sprite's verified source metadata. The player
+restores its transparent logical rectangle and trim offset, and the enclosing
+AspectRatioFitter uses `rect.width / rect.height` as UIAddressableImage does.
+This expects the export's integer crop (`floor(min)..ceil(max)`); mismatched
+bitmap dimensions are rejected. A full texture bitmap already containing the
+Sprite's logical rectangle must not be described as a trimmed crop. Without
+geometry, existing `_previewSource` bindings retain their bitmap aspect.
+
 Events are `ready`, `render`, `play`, `pause`, `timechange` and `error`, with CustomEvent details. Reports retain
 applied numeric/Sprite counts, unsupported/missing-binding diagnostics and recorded animation events.
 Recorded events do not execute arbitrary native callbacks. Destroying a player stops scheduled playback and
@@ -83,6 +93,36 @@ the parent to zero. Isolated prefab canvases include graphics outside the root, 
 the requested viewport. Fixed-size layout children remain fixed inside flexible cells. Trailing text line feeds
 do not add to visible vertical alignment. VibeMO ASCII faces use separate exported glyph metrics; available FZ
 TTFs provide the fallback text face. Other font faces fall back to the browser font.
+
+### Source-defined perspective and content framing
+
+For a perspective Screen Space - Camera prefab, pass actual serialized Camera/Canvas fields and the source
+CanvasScaler reference resolution. No camera parameters or card angles are inferred from the artwork:
+
+```js
+import { cameraProjection, UIPlayer } from 'ournotes-player/ui';
+
+const projection = cameraProjection(cameraComponent, canvasComponent, referenceResolution);
+const player = new UIPlayer(host, { assetBase, projection, framing: 'content' });
+await player.load(pack);
+await player.applyFixture({ patches });
+const { bounds, regions, padding, scale } = await player.render();
+```
+
+Projection preserves serialized quaternion, local depth, scale and RectTransform pivot. Each planar subtree
+is assembled with its original masks/painter order before projective mapping, including foreground extending
+past a card frame. A Canvas 2D triangle mesh approximates the final texture projection. Nested nonplanar
+subtrees, projection across an ancestor mask, shifted lenses, partial camera viewports and near-plane crossing
+fail explicitly. Runtime camera composition and Presenter-driven scene sizing remain outside this path.
+
+`framing: 'content'` uses visible graphic bounds, including labels and graphics outside the root, and crops
+only the output canvas's transparent margins; source geometry is unchanged. Its bounds are conservative
+RectTransform/mask bounds, not an alpha-pixel scan. Default `framing: 'root'` retains the previous viewport.
+Render results expose `regions[nodeId || path]`, four projected corners in top-left, top-right, bottom-right,
+bottom-left order for visible nodes. Coordinates are logical root coordinates before canvas padding/scale;
+convert a point to bitmap coordinates as `(point - bounds.min + padding) * scale`. Stable IDs avoid ambiguity
+for duplicate instance paths. Regions describe the node rectangle; caller input handling and mask-aware hit
+testing remain the caller's responsibility.
 
 TMP rich text, exact glyph layout/antialiasing, width-dependent preferred height and uGUI rebuild ordering,
 CanvasGroup/mask details, custom GPU materials, particles, localization, dynamic lists, Presenter data,
