@@ -1,5 +1,6 @@
 // ENGINE: reference-resolution Screen Space - Camera coordinates. Scene sizing
 // and custom camera matrices remain outside this optional static preview path.
+import {projectiveSurface} from './projective-raster.js';
 export const identity4=()=>[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
 export function multiply4(a,b){
   const out=Array(16).fill(0);
@@ -73,22 +74,7 @@ export function quadPoint(quad,u,v){
   quad.forEach((p,i)=>{const k=factors[i]*p.weight;x+=p.x*k;y+=p.y*k;w+=k;});
   return {x:x/w,y:y/w};
 }
-function triangle(ctx,image,source,target){
-  const [a,b,c]=source,[p,q,r]=target,den=(b.x-a.x)*(c.y-a.y)-(c.x-a.x)*(b.y-a.y);
-  if(Math.abs(den)<1e-9)return;
-  const xx=((q.x-p.x)*(c.y-a.y)-(r.x-p.x)*(b.y-a.y))/den;
-  const xy=((r.x-p.x)*(b.x-a.x)-(q.x-p.x)*(c.x-a.x))/den;
-  const yx=((q.y-p.y)*(c.y-a.y)-(r.y-p.y)*(b.y-a.y))/den;
-  const yy=((r.y-p.y)*(b.x-a.x)-(q.y-p.y)*(c.x-a.x))/den;
-  ctx.save();try{ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(q.x,q.y);ctx.lineTo(r.x,r.y);ctx.closePath();ctx.clip();
-    ctx.transform(xx,yx,xy,yy,p.x-xx*a.x-xy*a.y,p.y-yx*a.x-yy*a.y);ctx.drawImage(image,0,0);
-  }finally{ctx.restore();}
-}
-/** Canvas 2D projective texture approximation; UV points use exact homogeneous interpolation. */
-export function drawProjected(ctx,image,quad,divisions=12){
-  for(let y=0;y<divisions;y++)for(let x=0;x<divisions;x++){
-    const uv=[[x/divisions,y/divisions],[(x+1)/divisions,y/divisions],[(x+1)/divisions,(y+1)/divisions],[x/divisions,(y+1)/divisions]];
-    const s=uv.map(([u,v])=>({x:u*image.width,y:v*image.height})),t=uv.map(([u,v])=>quadPoint(quad,u,v));
-    triangle(ctx,image,[s[0],s[1],s[2]],[t[0],t[1],t[2]]);triangle(ctx,image,[s[0],s[2],s[3]],[t[0],t[2],t[3]]);
-  }
+/** Project the complete transparent surface once; no internal Canvas clip seams. */
+export function drawProjected(ctx,image,quad){
+  const surface=projectiveSurface(image,quad);ctx.drawImage(surface.canvas,surface.x,surface.y,surface.width,surface.height);
 }

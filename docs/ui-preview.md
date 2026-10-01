@@ -111,7 +111,10 @@ const { bounds, regions, padding, scale } = await player.render();
 
 Projection preserves serialized quaternion, local depth, scale and RectTransform pivot. Each planar subtree
 is assembled with its original masks/painter order before projective mapping, including foreground extending
-past a card frame. A Canvas 2D triangle mesh approximates the final texture projection. Nested nonplanar
+past a card frame. The final transparent quad uses WebGL2 shared-vertex rasterization when available;
+otherwise destination pixels use an inverse-homography RGBA sampler. Canvas 2D remains the final compositor.
+This avoids internal triangle clipping seams and applies source alpha once, without an opaque background.
+Nested nonplanar
 subtrees, projection across an ancestor mask, shifted lenses, partial camera viewports and near-plane crossing
 fail explicitly. Runtime camera composition and Presenter-driven scene sizing remain outside this path.
 

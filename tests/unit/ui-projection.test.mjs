@@ -32,7 +32,7 @@ test('homogeneous interpolation matches projection of an interior source point',
   const sample=quadPoint(quad,.23,.7),actual=projectedQuad(m,{x:23,y:70,w:0,h:0},camera())[0];near(sample.x,actual.x);near(sample.y,actual.y);
 });
 
-function context(){return {globalAlpha:1,save(){},restore(){},scale(){},translate(){},rotate(){},setTransform(){},getTransform(){return {};},transform(){},drawImage(){},fillRect(){},beginPath(){},rect(){},clip(){},moveTo(){},lineTo(){},closePath(){}};}
+function context(){return {globalAlpha:1,save(){},restore(){},scale(){},translate(){},rotate(){},setTransform(){},getTransform(){return {};},transform(){},drawImage(){},fillRect(){},beginPath(){},rect(){},clip(){},moveTo(){},lineTo(){},closePath(){},getImageData(_x,_y,w,h){return {data:new Uint8ClampedArray(w*h*4)};},createImageData(w,h){return {data:new Uint8ClampedArray(w*h*4)};},putImageData(){}};}
 globalThis.document={baseURI:'https://example.invalid/',createElement:()=>({width:1,height:1,getContext:()=>context()})};
 const node=(path,id,w,h,components=[],pos={x:0,y:0})=>({path,nodeId:id,active:true,components,rect:{m_SizeDelta:{x:w,y:h},m_AnchorMin:{x:0,y:1},m_AnchorMax:{x:0,y:1},m_AnchoredPosition:pos,m_Pivot:{x:0,y:1}}});
 const image={class:'Image',m_Color:{r:1,g:1,b:1,a:1}};
