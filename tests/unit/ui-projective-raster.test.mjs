@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {inverseQuad,rasterizeProjected} from '../../src/ui/projective-raster.js';
+import {inverseQuad,rasterizeProjected,projectiveSurface} from '../../src/ui/projective-raster.js';
 import {nodeMatrix4,projectedQuad,quadPoint} from '../../src/ui/projection.js';
 
 const close=(a,b)=>assert.ok(Math.abs(a-b)<1e-8);
@@ -31,4 +31,17 @@ test('outside a skewed quad remains transparent and a singular surface contribut
   const out=rasterizeProjected(rgba,1,1,quad,{x:0,y:0,width:4,height:4,scale:1});
   assert.equal(out[3],0);assert.equal(out[(1*4+2)*4+3],255);
   assert.deepEqual(rasterizeProjected(rgba,1,1,rectQuad(0,1),{x:0,y:0,width:1,height:1,scale:1}),new Uint8ClampedArray(4));
+});
+test('GPU composition uses one shared-vertex fan and premultiplied source alpha without blending',()=>{
+  const calls=[],noop=()=>{},gl={VERTEX_SHADER:1,FRAGMENT_SHADER:2,COMPILE_STATUS:3,LINK_STATUS:4,ARRAY_BUFFER:5,FLOAT:6,TEXTURE_2D:7,TEXTURE_WRAP_S:8,TEXTURE_WRAP_T:9,CLAMP_TO_EDGE:10,TEXTURE_MIN_FILTER:11,TEXTURE_MAG_FILTER:12,LINEAR:13,UNPACK_PREMULTIPLY_ALPHA_WEBGL:14,UNPACK_FLIP_Y_WEBGL:15,BLEND:16,MAX_TEXTURE_SIZE:17,COLOR_BUFFER_BIT:18,STREAM_DRAW:19,RGBA:20,UNSIGNED_BYTE:21,TRIANGLE_FAN:22,
+    createShader:()=>({}),shaderSource:noop,compileShader:noop,getShaderParameter:()=>true,createProgram:()=>({}),attachShader:noop,linkProgram:noop,getProgramParameter:()=>true,deleteShader:noop,useProgram:noop,createBuffer:()=>({}),createTexture:()=>({}),bindBuffer:noop,getAttribLocation:()=>0,enableVertexAttribArray:noop,vertexAttribPointer:noop,bindTexture:noop,texParameteri:noop,uniform1i:noop,getUniformLocation:()=>0,isContextLost:()=>false,getParameter:()=>4096,viewport:noop,clearColor:noop,clear:noop,
+    pixelStorei:(...args)=>calls.push(['pixelStore',...args]),disable:(...args)=>calls.push(['disable',...args]),bufferData:(_target,data)=>calls.push(['vertices',...data]),texImage2D:(...args)=>calls.push(['texture',args.at(-1)]),drawArrays:(...args)=>calls.push(['draw',...args])};
+  globalThis.document={createElement:()=>({width:1,height:1,getContext:mode=>{assert.equal(mode,'webgl2');return gl;}})};
+  const image={width:2,height:2},result=projectiveSurface(image,rectQuad(4,4));
+  assert.equal(result.canvas.width,4);assert.equal(result.canvas.height,4);
+  assert.ok(calls.some(c=>c[0]==='pixelStore'&&c[1]===gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL&&c[2]===true));
+  assert.ok(calls.some(c=>c[0]==='disable'&&c[1]===gl.BLEND));
+  assert.deepEqual(calls.filter(c=>c[0]==='draw'),[['draw',gl.TRIANGLE_FAN,0,4]]);
+  assert.deepEqual(calls.find(c=>c[0]==='vertices').slice(1,6),[-1,1,1,0,0]);
+  assert.deepEqual(calls.find(c=>c[0]==='texture'),['texture',image]);
 });
