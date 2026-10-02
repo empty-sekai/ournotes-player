@@ -2,4 +2,5 @@
 export {UILibrary} from './library.js';
 export {UISession} from './session.js';
 export {UIPlayer} from './player.js';
+export {cameraProjection} from './projection.js';
 export {OurnotesUIElement,defineOurnotesUI} from './element.js';
