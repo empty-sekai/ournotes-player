@@ -83,6 +83,14 @@ Versions follow [SemVer](https://semver.org/); during `0.x` a minor version may 
 `vX.Y.Z` matching `version` in `package.json`; the release workflow runs the tests, builds, publishes the package to
 npm with provenance, and creates the GitHub release with notes from git-cliff and the bundles attached.
 
+The commit that sets the new `version` also regenerates [CHANGELOG.md](CHANGELOG.md), which ships in the package:
+
+```sh
+npx git-cliff@2.14.2 --tag vX.Y.Z -o CHANGELOG.md
+```
+
+The release workflow fails when `CHANGELOG.md` has no section for the tagged version.
+
 ## License
 
 By contributing you agree that your contributions are licensed under the repository's license (AGPL-3.0-only, with

@@ -42,6 +42,10 @@ jobs:
             echo "package.json version ${CURRENT} does not match tag ${VERSION}" >&2
             exit 1
           fi
+          if ! grep -qF "## [${VERSION}]" CHANGELOG.md; then
+            echo "CHANGELOG.md has no section for ${VERSION}" >&2
+            exit 1
+          fi
 
       - name: Pack
         run: |

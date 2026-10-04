@@ -94,7 +94,8 @@
     "examples/story-list/",
     "examples/ui/",
     "LICENSE",
-    "LICENSE-EXCEPTION"
+    "LICENSE-EXCEPTION",
+    "CHANGELOG.md"
   ],
   "engines": {
     "node": ">=22"

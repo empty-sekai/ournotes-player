@@ -1,7 +1,11 @@
-# git-cliff configuration: release notes from conventional commits (see CONTRIBUTING.md).
+# git-cliff configuration: CHANGELOG.md and the release notes from conventional commits (see CONTRIBUTING.md).
 
 [changelog]
-header = "# Changelog\n"
+header = """
+# Changelog
+
+All notable changes to this package. Versions follow [Semantic Versioning](https://semver.org/).\n
+"""
 body = """
 {% if version %}\
 ## [{{ version | trim_start_matches(pat="v") }}]\
@@ -13,7 +17,7 @@ body = """
 {% endif %}\
 {% for group, commits in commits | filter(attribute="merge_commit", value=false) | group_by(attribute="group") %}
 ### {{ group | striptags | trim | upper_first }}
-{% for commit in commits | sort(attribute="committer.timestamp") -%}
+{% for commit in commits | unique(attribute="message") | sort(attribute="committer.timestamp") -%}
 - {% if commit.breaking %}**BREAKING** {% endif %}{{ commit.message | split(pat="\n") | first | trim }}{% if commit.scope %} _({{ commit.scope }})_{% endif %}
 {% endfor %}
 {% endfor %}\n
