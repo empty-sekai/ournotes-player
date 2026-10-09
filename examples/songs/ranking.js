@@ -1,7 +1,7 @@
-// Chart efficiency ranking: pure functions over a site's music-data.json (nnnotes.music-data/1, whose deck
-// statistics are ournotes-deck.chart-stats/2).
+// Chart efficiency ranking: pure functions over a site's music-data.json. New chart-stats/3 data uses nominal
+// expectations with numerical enclosures. Legacy music-data/1 seed statistics remain readable.
 //
-// Score model (music-data.json `deck`, checked per seed against the whole-live simulation): on the theoretical best
+// Score model (music-data.json `deck`, checked against the complete expectation or legacy whole-live samples): on the theoretical best
 // play with Gekisou on (the chart's fevers with the song's missions, rank 1 in every range), a deck of power P whose
 // live skills are plain score-up skills (effect type 2000 for 5 s on the whole deck, no targets or conditions) raising
 // the note score by x_1 .. x_n scores
@@ -10,9 +10,10 @@
 //
 // where `base` (the no-skill score per unit of power, rank bonuses included) and the skill event weights `w_k` (the
 // score a factor-1 plain skill at performance position k adds, per unit of power) are the chart's own and pi is the
-// skill order of the live. Luck ranges draw from the play's random seed, so the deck statistics are per seed of a
-// seed set; the page takes the mean over those seeds, which is not the game's own expectation (its seed law is
-// unknown). The client draws pi at the start of every live: `MemberDataContainer` fills the skill order with 0..n-1
+// skill order of the live. Chart-stats/3 integrates the model's independent nominal lottery and skill probabilities;
+// replaySeeds are examples only and never enter that expectation. Legacy statistics instead average their seed set,
+// which need not follow the game's unknown seed law. The client draws pi at the start of every live:
+// `MemberDataContainer` fills the skill order with 0..n-1
 // and Fisher-Yates shuffles it with the MemberShuffle random stream, seeded from the client clock (a solo retry keeps
 // the seed, so the order). pi is uniform over the n! orders, and so
 //
@@ -27,13 +28,16 @@
 // corners xbar in {0, X_MAX}, c in {0, infinity} decide it: S_a >= S_b and S_a / L_a >= S_b / L_b at both ends.
 // The deck power must be the same on both charts: song type and tag bonuses change a deck's power per song.
 //
-// Play scenarios (see scenarioSeed): "battle" is Gekisou Live (撃奏ライブ, up to 5 players, Gekisou on) with a rank
+// Legacy play scenarios (see scenarioSeed): "battle" is Gekisou Live (撃奏ライブ, up to 5 players, Gekisou on) with a rank
 // r_i in 1..5 per Gekisou range; the seeds are its rank-1 simulations, and the other ranks follow from them linearly
 // (the rank bonus trunc(rangeScore * p / 100) is added at the range's end and changes nothing else):
 //
 //   base_r = (score - sum_i rankBonus_i + sum_i trunc(rangeScore_i * p_i(r_i) / 100)) / power
 //   w_r[k] = w[k] + sum_i (p_i(r_i) - p_i(1)) / 100 * rangeWeights[k][i]
 //
+// Nominal scenarios (see scenarioExpectation) retain the measured expected bonus in every rank-1 range. Other
+// ranks substitute the target percentage times the expected range score as a linear approximation: truncating
+// an expectation is not an expected truncated score. Only untransformed figures carry the exported enclosure.
 // "free" is Free Live (solo, Gekisou off), its own simulation (`offSeeds`). Two accuracy approximations, without
 // combo breaks: a Great share q scales every score by 1 - 0.2 q; a Just rate j (battle only) interpolates between the
 // all-Just seeds and the all-Perfect run of the Just ranges (`scorePerfect`, `rangeScorePerfect`), with the rank
@@ -43,6 +47,8 @@
 // score with Gekisou (battleLiveScore) only, never in Free Live or in the score without Gekisou (soloScore). The page's
 // decks carry none: every figure here is without them. Every Gekisou range ranks the room by its mission's measure
 // (rangeMeasures).
+
+import { hasNominalExpectation, isEstimate, scenarioExpectation } from "./expectation.js";
 
 export const DIFFICULTIES = ["easy", "normal", "hard", "expert"];
 export const EPS = 1e-12;
@@ -90,19 +96,24 @@ export const MISSION_MEASURE = Object.freeze({ 1: "maxCombo", 2: "luckPoints", 3
 export const MEASURES = ["maxCombo", "justCount", "luckPoints"];
 
 // Per Gekisou range of a chart's deck statistics (Gekisou on, no skills): its mission, the measure it ranks by (null
-// for an unknown mission) and `values`, every measure as {mean, min, max} over the seeds; a measure some seed lacks
-// (older data) is null. [] for a chart unplayable with Gekisou on.
+// for an unknown mission) and `values`, every measure as {mean, min, max}. Nominal data uses its center and exported
+// enclosure, legacy data its seed mean and min–max. Missing measures are null; an unplayable chart returns [].
 export const rangeMeasures = (deck) => {
   if (!deck || deck.unplayable) return [];
   const seeds = deck.seeds || [];
   const stat = (i, key) => {
+    if (hasNominalExpectation(deck)) {
+      const v = deck.expectation?.ranges?.[i]?.[key];
+      if (isEstimate(v)) return { mean: v[0], min: v[0] - v[1], max: v[0] + v[1] };
+      return Number.isFinite(v) ? { mean: v, min: v, max: v } : null;
+    }
     const v = seeds.map((s) => (s && s.ranges && s.ranges[i] ? s.ranges[i][key] : undefined));
     return v.length && v.every(Number.isFinite) ? { mean: mean(v), min: Math.min(...v), max: Math.max(...v) } : null;
   };
-  return (deck.ranges || []).map((r, i) => ({
+  return (Array.isArray(deck.ranges) ? deck.ranges : []).map((r, i) => ({
     index: i,
-    mission: r.mission ?? null,
-    measure: MISSION_MEASURE[r.mission] ?? null,
+    mission: r?.mission ?? null,
+    measure: MISSION_MEASURE[r?.mission] ?? null,
     values: Object.fromEntries(MEASURES.map((k) => [k, stat(i, k)])),
   }));
 };
@@ -110,7 +121,7 @@ export const rangeMeasures = (deck) => {
 // The score factor of a Great share q (0..1) over every note: 1 - 0.2 q.
 export const greatFactor = (q) => 1 - (1 - GREAT_SCORE) * (Number.isFinite(q) ? Math.min(1, Math.max(0, q)) : 0);
 
-const clampRank = (r) => (Number.isInteger(r) && r >= 1 && r <= RANK_MAX ? r : 1);
+export const clampRank = (r) => (Number.isInteger(r) && r >= 1 && r <= RANK_MAX ? r : 1);
 
 // "r" or "r1,r2,r3" (the query's rk) as three ranks; a bad or missing value is rank 1.
 export const parseRanks = (text) => {
@@ -143,8 +154,24 @@ export const scenarioData = (data) => {
     for (const chart of song.charts || []) {
       const d = chart.deck;
       if (!d) continue;
-      const seeds = d.seeds || [];
       if ((d.offSeeds || []).length) has.free = true;
+      if (hasNominalExpectation(d)) {
+        if (d.unplayable) continue;
+        const e = d.expectation;
+        const ranges = d.ranges || [];
+        const kinds = Array.isArray(e?.weights) ? e.weights : [];
+        const usable = kinds.map((_, kind) => chartFigures(d, kind)).some(Boolean);
+        if (usable) {
+          if (ranges.length && ranges.every((r) => Array.isArray(r.rankBonusPercents)
+            && r.rankBonusPercents.length >= RANK_MAX
+            && r.rankBonusPercents.slice(0, RANK_MAX).every(Number.isFinite))
+            && kinds.some((_, kind) => chartFigures(d, kind, POWER, { ranks: ranges.map(() => RANK_MAX) }))) has.ranks = true;
+          if (kinds.some((_, kind) => chartFigures(d, kind, POWER, { just: 0 }))) has.just = true;
+          if (shapes && chartVariants(d).length) has.aptitude = true;
+        }
+        continue;
+      }
+      const seeds = d.seeds || [];
       if ((d.ranges || []).length && d.ranges.every((r) => Array.isArray(r.rankBonusPercents) && r.rankBonusPercents.length >= RANK_MAX)
         && seeds.some((s) => s.rangeWeights)) has.ranks = true;
       if (seeds.some((s) => Number.isFinite(s.scorePerfect) && s.rangeWeights)) has.just = true;
@@ -193,11 +220,28 @@ export const scenarioSeed = (seed, ranges, kind, scenario) => {
 };
 
 // A chart's figures from its deck statistics (`chart.deck`) in a scenario (default: battle, rank 1, all Just, no
-// Great): `base` and `weights[k]` (performance position k's, of kind `kind`) as means over the seeds (`offSeeds` in
-// free), `baseRange` the seeds' [min, max] base, `seeds` their number. null without statistics, for a chart
+// Great): `base` and `weights[k]` (performance position k's, of kind `kind`). Nominal figures have nominal=true,
+// seeds=0 and baseRange enclosing only an untransformed expectation (null after scenario adjustments). Legacy
+// figures average the seeds (`offSeeds` in free), with baseRange their min–max and seeds their count. null without statistics, for a chart
 // unplayable with Gekisou on (battle), without the kind or without the scenario's fields.
 export const chartFigures = (deck, kind, power = POWER, scenario = null) => {
   const free = Boolean(scenario && scenario.mode === "free");
+  if (!free && hasNominalExpectation(deck)) {
+    if (deck.unplayable || !Number.isInteger(kind) || kind < 0 || !Number.isFinite(power) || power <= 0) return null;
+    const f = scenarioExpectation(deck.expectation, deck.ranges || [], kind, scenario);
+    if (!f || (deck.positions !== undefined && f.weights.length !== deck.positions)) return null;
+    const base = f.score / power;
+    const baseRange = f.scoreBounds ? f.scoreBounds.map((x) => x / power) : null;
+    if (!Number.isFinite(base) || (baseRange && !baseRange.every(Number.isFinite))) return null;
+    return {
+      base,
+      baseRange,
+      seeds: 0,
+      nominal: true,
+      skip: deck.skip ?? null,
+      weights: f.weights,
+    };
+  }
   const seeds = (deck && (free ? deck.offSeeds : !deck.unplayable && deck.seeds)) || [];
   if (!seeds.length || kind === null || kind === undefined) return null;
   const figs = seeds.map((s) => scenarioSeed(s, deck.ranges || [], kind, scenario));
@@ -218,8 +262,9 @@ export const chartFigures = (deck, kind, power = POWER, scenario = null) => {
 // `deck.gekisouAptitude.shapes`, the chart's `deck.gekisouAptitude.variants`). A shape is the class of member Gekisou
 // skills (at their highest level) or snap Gekisou support skills (at the level of the highest rank) with the same score
 // effects; a support skill with a band condition has two variants, the condition met (bandMatch true) or not (false).
-// Every figure of a variant is a gain Δ over deck.seeds (same seeds, same play, rank 1) as [mean, standard error] over
-// its own seeds; a deterministic variant ran one seed, with se 0. For a scenario (SCHEMA 1.6, P₀ the measurement power):
+// Chart-stats/3 expresses gains as [center, numerical enclosure half-width], subtracting no-skill expectations under
+// the same nominal probability model. Legacy figures subtract the same seed and use [mean, standard error]; a
+// deterministic legacy variant ran one seed, with SE 0. For a legacy scenario (P₀ the measurement power):
 //   rank 1 everywhere:  Δscore = score                       (Just play; scorePerfect in the Perfect play)
 //   ranks r:            Δscore = tail + Σ_i rangeScore_i · (1 + p_i(r_i) / 100)      (±1 point per range)
 //   plain skill cross:  Δw[k](r) = weights[k] + Σ_i (p_i(r_i) − p_i(1)) / 100 · rangeWeights[k][i]
@@ -231,6 +276,8 @@ export const chartFigures = (deck, kind, power = POWER, scenario = null) => {
 // P · (Δscore / P₀ + x̄ · Σ_k Δw[k]): aptitudeFigures has the shape of chartFigures, so scoreRate applies. Free Live has
 // no Gekisou: no aptitude. The gains of several skills do not add up (combo boosts saturate, rush support and luck
 // gauge skills reinforce each other, 13005 conversion may change other skills’ triggers): one skill at a time.
+// Nominal rank changes require rangeWeights (the declared linear domain) and replace only changed ranges' measured
+// expected rank bonuses. Their original numerical radius is not a standard error and is never assigned to a transform.
 
 const CACHE = new WeakMap();
 const cached = (data, key, make) => {
@@ -257,20 +304,26 @@ const mOf = (x) => (Array.isArray(x) && Number.isFinite(x[0]) ? x[0] : null);
 const seOf = (x) => (Array.isArray(x) && Number.isFinite(x[1]) ? x[1] : 0);
 
 // A variant's gain in a scenario (see above; `ranges` the chart's deck ranges, default power P₀ 300000): `base` the
-// score gain per unit of power, `baseSe` its raw standard error only (null after transformations),
+// score gain per unit of power, `baseSe` its legacy raw standard error only (null after transformations and for
+// nominal data), `baseRadius` the nominal raw enclosure half-width only (null after transformations),
 // `weights[k]` the gain of position k's plain skill weight (null when the data has no cross terms), `crossAtRank1` true
 // when the cross terms stay at rank 1 (no rangeWeights) while the ranks are not, and the variant's seed facts. null in
 // Free Live or without the scenario's fields.
-export const aptitudeFigures = (variant, ranges, power = POWER, scenario = null) => {
+export const aptitudeFigures = (variant, ranges, power = POWER, scenario = null, nominal = false) => {
   const sc = { ...DEFAULT_SCENARIO, ...(scenario || {}) };
   if (!variant || sc.mode === "free" || mOf(variant.score) === null) return null;
   const rs = Array.isArray(variant.ranges) ? variant.ranges : [];
+  if (nominal && (!Number.isFinite(power) || power <= 0 || !isEstimate(variant.score)
+    || !Array.isArray(variant.ranges) || !Array.isArray(ranges) || rs.length !== ranges.length
+    || rs.some((r) => !r || typeof r !== "object")
+    || (variant.weights != null && (!Array.isArray(variant.weights) || !variant.weights.every(isEstimate))))) return null;
   const ranks = rs.map((_, i) => clampRank((sc.ranks || [])[i]));
   const j = Number.isFinite(sc.just) ? Math.min(1, Math.max(0, sc.just)) : 1;
   const partial = j < 1;
   const lerp = (p, just) => (partial ? p + j * (just - p) : just);
   const g = greatFactor(sc.great);
   const pick = (x, xp) => {                                  // a Just-play figure at the Just rate
+    if (nominal && (!isEstimate(x) || (partial && !isEstimate(xp)))) return null;
     const a = mOf(x);
     if (a === null) return null;
     if (!partial) return a;
@@ -278,9 +331,24 @@ export const aptitudeFigures = (variant, ranges, power = POWER, scenario = null)
     return b === null ? null : lerp(b, a);
   };
   const rank1 = ranks.every((r) => r === 1);
+  if (nominal && !rank1 && !Array.isArray(variant.rangeWeights)) return null;
+  if (nominal && variant.rangeWeights != null && (!Array.isArray(variant.weights)
+    || !Array.isArray(variant.rangeWeights) || variant.rangeWeights.length !== variant.weights.length
+    || !variant.rangeWeights.every((w) => Array.isArray(w) && w.length === rs.length && w.every(isEstimate)))) return null;
   let score;
   if (rank1) {
     score = pick(variant.score, variant.scorePerfect);
+  } else if (nominal) {
+    score = pick(variant.score, variant.scorePerfect);
+    if (score === null) return null;
+    for (let i = 0; i < rs.length; i++) {
+      if (ranks[i] === 1) continue;
+      const p = rankPercent(ranges[i], ranks[i]);
+      const rangeScore = pick(rs[i].rangeScore, rs[i].rangeScorePerfect);
+      const rankBonus = pick(rs[i].rankBonus, rs[i].rankBonusPerfect);
+      if (p === null || rangeScore === null || rankBonus === null) return null;
+      score += rangeScore * p / 100 - rankBonus;
+    }
   } else {
     const tail = pick(variant.tail, variant.tailPerfect);
     const pr = rs.map((_, i) => rankPercent(ranges[i], ranks[i]));
@@ -289,20 +357,28 @@ export const aptitudeFigures = (variant, ranges, power = POWER, scenario = null)
     if (tail === null || [...pr, ...p1].some((p) => p === null) || rsj.some((v) => v === null)) return null;
     score = tail + rsj.reduce((a, v, i) => a + v * (1 + pr[i] / 100), 0);
   }
-  if (score === null) return null;
+  if (score === null || (nominal && !Number.isFinite(score))) return null;
   let weights = null;
   let crossAtRank1 = false;
   if (!partial && Array.isArray(variant.weights)) {
     const rw = variant.rangeWeights;
     crossAtRank1 = !rank1 && !Array.isArray(rw);
+    if (nominal && !rank1 && rs.some((_, i) => rankPercent(ranges[i], 1) === null
+      || rankPercent(ranges[i], ranks[i]) === null)) return null;
     const shift = rs.map((_, i) => (rank1 || !Array.isArray(rw) ? 0 : (rankPercent(ranges[i], ranks[i]) - rankPercent(ranges[i], 1)) / 100));
     weights = variant.weights.map((w, k) => ((mOf(w) ?? 0)
       + shift.reduce((a, d, i) => a + (d ? d * (mOf(rw[k] && rw[k][i]) ?? 0) : 0), 0)) * g);
   }
+  if (nominal && weights && !weights.every(Number.isFinite)) return null;
+  const raw = rank1 && !partial && sc.great === 0;
+  const base = (score * g) / power;
+  const baseRadius = nominal && raw ? variant.score[1] / power : null;
+  if (nominal && (!Number.isFinite(base) || (baseRadius !== null && !Number.isFinite(baseRadius)))) return null;
   return {
-    base: (score * g) / power,
+    base,
     // Only the original sampled statistic has an SE; aggregate transformed means have no covariance data.
-    baseSe: rank1 && !partial && sc.great === 0 ? seOf(variant.score) / power : null,
+    baseSe: !nominal && raw ? seOf(variant.score) / power : null,
+    ...(nominal ? { nominal: true, baseRadius } : {}),
     weights,
     missingPerfectCross: partial,
     crossAtRank1,
@@ -322,7 +398,11 @@ export const aptitudeRate = (fig, skills) => {
 
 // Only the raw all-Just, rank-1, no-Great, no-ordinary-skill gain has an exported SE.
 // No SE is assigned to transformed or combined results: joint samples/covariances are absent.
-export const aptitudeSe = (fig, skills) => (fig && !skillValues(skills).some((x) => x > 0) ? fig.baseSe : null);
+export const aptitudeSe = (fig, skills) => (fig && !fig.nominal && !skillValues(skills).some((x) => x > 0) ? fig.baseSe : null);
+
+// The nominal enclosure is exported for the raw score gain only. It does not quantify model error, seed spread,
+// or the uncertainty of a changed rank, accuracy, or combined ordinary-skill result.
+export const aptitudeRadius = (fig, skills) => (fig?.nominal && !skillValues(skills).some((x) => x > 0) ? fig.baseRadius : null);
 
 // A variant that adds no score: "measures" when it still moves a range measure (or converts judgements), "none" when
 // it changes nothing in the theoretical best play; null for a variant with a score gain or cross term.

@@ -33,6 +33,7 @@ const figures = (e) => ({
   base: e ? e.base : null,
   baseRange: e ? e.baseRange : null,
   seeds: e ? e.seeds : null,
+  nominal: e?.nominal === true,
   weights: e ? e.weights : null,
 });
 
