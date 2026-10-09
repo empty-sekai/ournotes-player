@@ -20,10 +20,11 @@ import {
   ticks, moenotesJacketUrl,
 } from "./catalog.js";
 import {
-  MEASURES, RANGES, RANK_MAX, SCORE_RANKS, X_MAX, aptitudeFigures, aptitudeRate, aptitudeSe, aptitudeShapes, chartVariants, chartFigures, eventDominance, formatLength, formatRanks, lengthMs,
+  MEASURES, RANGES, RANK_MAX, SCORE_RANKS, X_MAX, aptitudeFigures, aptitudeRadius, aptitudeRate, aptitudeSe, aptitudeShapes, chartVariants, chartFigures, eventDominance, formatLength, formatRanks, lengthMs,
   meanSkill, modelPower, orderRates, parseRanks, perMinute, plainKind, quantile, rangeMeasures, rank, rankThreshold,
   reachChance, requiredPower, scenarioData, scoreRate, weightSum, zeroGain,
 } from "./ranking.js";
+import { hasNominalExpectation, isEstimate } from "./expectation.js";
 import { GUIDE, UI, REPLAY_UI } from "./text.js";
 import { axisGoal, paretoPoints } from "./pareto.js";
 import { mountReplayPanel } from "./replay-panel.js";
@@ -87,6 +88,8 @@ const heading = (tag, cls, title, ...tail) => h("div", { class: cls }, icon("sta
   h("span", { class: "track", "aria-hidden": "true" }), tail.flat().filter(Boolean).length ? h("div", { class: "tail" }, tail) : null);
 const fmt = (v, d = 2) => (v === null || v === undefined || !Number.isFinite(v) ? "–" : v.toFixed(d));
 const fmtInt = (v) => (Number.isFinite(v) ? Math.round(v).toLocaleString() : "–");
+// Keep the numerical endpoints visible even when a narrow enclosure would round to zero at display precision.
+const fmtBounds = (lo, hi) => `[${lo}, ${hi}]`;
 const modelText = (text) => {
   const name = text.includes("ournotes-deck") ? "ournotes-deck" : "Rust", index = text.indexOf(name);
   return index < 0 ? text : [text.slice(0,index), h("a",{class:"model-link",href:"https://github.com/empty-sekai/ournotes-deck",target:"_blank",rel:"noopener",title:"ournotes-deck (GitHub)"},name),text.slice(index+name.length)];
@@ -740,13 +743,14 @@ const main = async () => {
   const measuresBox = (r) => {
     const t = u();
     const D = t.detail;
+    const nominal = hasNominalExpectation(r.stats);
     const measures = rangeMeasures(r.stats);
     if (!measures.some((m) => MEASURES.some((k) => m.values[k]))) return null;
-    // a measure as its seed mean, with the seeds' min–max when they differ
+    // A nominal enclosure and a legacy seed range are different quantities.
     const stat = (m) => {
       if (!m) return "–";
       const v = Number.isInteger(m.mean) ? fmtInt(m.mean) : fmt(m.mean, 1);
-      return m.min === m.max ? v : `${v} (${fmtInt(m.min)}–${fmtInt(m.max)})`;
+      return m.min === m.max ? v : nominal ? `${v} ${fmtBounds(m.min, m.max)}` : `${v} (${fmtInt(m.min)}–${fmtInt(m.max)})`;
     };
     return h("section", {}, heading("h3", "sec-head", D.measures),
       h("div", { class: "tbl-scroll" }, h("table", { class: "ranks measures" },
@@ -755,13 +759,14 @@ const main = async () => {
           h("td", {}, t.scen.range(m.index + 1, t.missions[m.mission] || null)),
           h("td", {}, m.measure ? D.measure[m.measure] : "–"),
           MEASURES.map((k) => h("td", { class: k === m.measure ? "num hi" : "num dim" }, stat(m.values[k])))))))),
-      h("p", { class: "hint" }, D.measuresHint));
+      h("p", { class: "hint" }, nominal ? D.nominalMeasuresHint : D.measuresHint));
   };
 
   // Aptitude only describes taking one skill; it never changes the baseline rows used by rankings.
   // Build names and raw measure tables once. Slider updates only replace the numerical cells.
   const aptitudeBox = (r, changed) => {
     const A = u().aptitude, D = u().detail;
+    const nominal = hasNominalExpectation(r.stats);
     const element = h("section", { class: "aptitude" },
       heading("h3", "sec-head", [A.title, " ", betaBadge("aptitude-beta-note")]),
       h("p", { id: "aptitude-beta-note", class: "hint beta-note" }, u().betaNote));
@@ -772,8 +777,12 @@ const main = async () => {
       return { element, update() {} };
     }
     const shapes = aptitudeShapes(songs);
-    const pair = (x) => Array.isArray(x) && Number.isFinite(x[0])
-      ? `${fmt(x[0], Number.isInteger(x[0]) ? 0 : 2)}${x[1] > 0 ? ` ± ${fmt(x[1], 2)}` : ""}` : "–";
+    const pair = (x) => {
+      if (nominal) return isEstimate(x) ? `${fmt(x[0], Number.isInteger(x[0]) ? 0 : 2)}${x[1] > 0
+        ? ` ${fmtBounds(x[0] - x[1], x[0] + x[1])}` : ""}` : "–";
+      return Array.isArray(x) && Number.isFinite(x[0])
+        ? `${fmt(x[0], Number.isInteger(x[0]) ? 0 : 2)}${x[1] > 0 ? ` ± ${fmt(x[1], 2)}` : ""}` : "–";
+    };
     const input = h("input", { type: "number", class: "num-in power", min: 0, step: 1000, value: S.power || "", "aria-label": A.power });
     input.addEventListener("input", () => { S.power = Math.max(0, Math.round(Number(input.value) || 0)); changed(); });
     const xs = S.skills.map((x, k) => {
@@ -786,7 +795,7 @@ const main = async () => {
       h("div", { class: "panel" }, h("label", { class: "field" }, A.power, input),
         h("small", { class: "note" }, A.defaultPower(fmtInt(power))),
         h("div", { class: "field" }, u().skills, xs)),
-      h("p", { class: "hint" }, A.accuracy), h("p", { class: "hint" }, A.se));
+      h("p", { class: "hint" }, A.accuracy), h("p", { class: "hint" }, nominal ? A.intervalNote : A.se));
     const items = chartVariants(r.stats).map((v) => {
       const shape = shapes.get(v.shape);
       const names = shapeSkills(songs, shape, S.lang);
@@ -805,35 +814,38 @@ const main = async () => {
         h("td", {}, shape ? A[shape.source] || shape.source : "–"),
         h("td", { title: shapeBands(songs, shape, S.lang).join(" / ") }, v.bandMatch === true ? A.match : v.bandMatch === false ? A.mismatch : A.noBand),
         gain, ratio,
-        h("td", {}, `${v.seeds ?? "–"} / ${v.crossSeeds ?? "–"}`,
-          !v.deterministic ? h("small", {}, A.rawScore, ": ", pair(v.score)) : null,
-          v.seTargetMet === false ? h("small", { class: "warn" }, A.warning) : null,
-          v.deterministic ? h("small", {}, A.deterministic) : null,
+        h("td", {}, nominal ? A.nominal : `${v.seeds ?? "–"} / ${v.crossSeeds ?? "–"}`,
+          nominal ? h("small", {}, A.interval) : !v.deterministic ? h("small", {}, A.rawScore, ": ", pair(v.score)) : null,
+          !nominal && v.seTargetMet === false ? h("small", { class: "warn" }, A.warning) : null,
+          !nominal && v.deterministic ? h("small", {}, A.deterministic) : null,
           zero ? h("small", {}, zero === "none" ? A.zero : A.onlyMeasures) : null));
       return { v, gain, ratio, hint, row };
     });
     if (!items.length) element.append(h("p", { class: "hint" }, A.empty));
     else element.append(h("div", { class: "tbl-scroll" }, h("table", { class: "ranks apt-table" },
-      h("thead", {}, h("tr", {}, [A.skill, A.source, A.band, A.gain, A.ratio, A.seeds].map((x) => h("th", {}, x)))),
+      h("thead", {}, h("tr", {}, [A.skill, A.source, A.band, A.gain, A.ratio, nominal ? A.method : A.seeds].map((x) => h("th", {}, x)))),
       h("tbody", {}, items.map((x) => x.row)))));
     const factors = data.factors || [];
     const keys = ["judgedNotes", "justNotes", "perfectNotes", "tailNotes", "comboAtStart", "lotteries"];
     if (factors.length) element.append(heading("h3", "sec-head", A.factors), h("div", { class: "tbl-scroll" },
       h("table", { class: "ranks measures factors" }, h("thead", {}, h("tr", {}, h("th", {}, D.mRange), keys.map((k) => h("th", {}, A[k])))),
         h("tbody", {}, factors.map((x, i) => h("tr", {}, h("td", {}, String(i + 1)), keys.map((k) => h("td", {}, k === "lotteries" ? pair(x[k]) : fmtInt(x[k])))))))),
-      h("p", { class: "hint" }, A.factorNote));
+      h("p", { class: "hint" }, nominal ? A.nominalFactorNote : A.factorNote));
     return { element, update() {
       const sc = scenario();
       const P = S.power || power;
       for (const { v, gain, ratio, hint } of items) {
         // A missing/mismatched plain kind must not be mistaken for measured zero cross terms.
         const usable = header.plainKind === kind && kind !== null ? v : { ...v, weights: null, rangeWeights: null };
-        const f = aptitudeFigures(usable, r.stats.ranges || [], power, sc);
+        const f = aptitudeFigures(usable, r.stats.ranges || [], power, sc, nominal);
         const rate = aptitudeRate(f, skills());
         const se = aptitudeSe(f, skills());
-        put(gain, rate === null ? "–" : `${fmt(P * rate, 1)}${se === null ? "" : ` ± ${fmt(P * se, 1)}`}`);
+        const radius = aptitudeRadius(f, skills());
+        put(gain, rate === null ? "–" : `${fmt(P * rate, 1)}${radius === null
+          ? se === null ? "" : ` ± ${fmt(P * se, 1)}` : ` ${fmtBounds(P * (rate - radius), P * (rate + radius))}`}`);
         put(ratio, rate !== null && r.base > 0 ? `${fmt(100 * rate / r.base, 2)}%` : "–");
-        put(hint, rate === null ? [f && f.missingPerfectCross ? A.missingPerfect : A.missingCross,
+        put(hint, rate === null ? [nominal && !f ? (!Array.isArray(usable.rangeWeights) && sc.ranks.some((rank) => rank !== 1)
+          ? A.missingRank : u().scen.pending) : f && f.missingPerfectCross ? A.missingPerfect : A.missingCross,
           f ? ` ${A.baseOnly}: ${fmt(P * f.base, 1)}` : ""] : f.crossAtRank1 ? A.rank1 : "");
       }
     } };
@@ -883,14 +895,16 @@ const main = async () => {
           return v[v.length - 1] > v[0] + 1e-12 ? `${t.detail.orders} ${fmt(v[0], 3)}–${fmt(v[v.length - 1], 3)} · P10 ${fmt(quantile(v, 0.1), 3)}` : t.detail.sameOrder;
         })()) : null,
         r.weights ? tile(t.col.base, fmt(r.base, 3), `W ${fmt(weightSum(r), 3)} · ${t.col.skip} ${fmt(r.skip, 3)}`
-          + (r.seeds > 1 ? ` · ${t.detail.seeds(r.seeds)} ${fmt(r.baseRange[0], 3)}–${fmt(r.baseRange[1], 3)}` : "")) : null,
+          + (r.nominal ? ` · ${t.detail.nominal}${r.baseRange ? ` · ${t.detail.interval} ${fmtBounds(...r.baseRange)}` : ` · ${t.approximateShort}`}`
+            : r.seeds > 1 ? ` · ${t.detail.seeds(r.seeds)} ${fmt(r.baseRange[0], 3)}–${fmt(r.baseRange[1], 3)}` : "")) : null,
         r.weights ? tile(t.col.perMinute, fmt(e.perMinute, 3), `${t.length} ${t[S.len]} + ${S.overhead} s`) : null,
         battle && r.weights ? tile(t.detail.twoScores, `${fmt(e.rate, 3)} / ${solo === null ? t.scen.pending : fmt(solo, 3)}`,
           t.detail.twoScoresHint, "wide") : null,
         battle && r.unplayable ? tile(t.detail.unplayable, "–", `${t.detail.unplayableHint}${has.free ? t.detail.unplayableFree : ""}`) : null,
         !r.weights && !(battle && r.unplayable) && r.stats ? tile(t.detail.noFigures, "–", t.scen.pending) : null));
       put(line, timeline(r));
-      put(weights, r.weights ? [heading("h3", "sec-head", t.detail.weights), weightsChart(r), h("p", { class: "hint" }, t.detail.weightsHint)] : null);
+      put(weights, r.weights ? [heading("h3", "sec-head", t.detail.weights), weightsChart(r),
+        h("p", { class: "hint" }, r.nominal ? t.detail.nominalWeightsHint : t.detail.weightsHint)] : null);
       put(ranks, r.weights && r.scoreRanks.length ? h("section", {}, heading("h3", "sec-head", t.detail.ranks), h("div", { class: "tbl-scroll" }, ranksTable(r)),
         h("p", { class: "hint" }, room() ? t.detail.ranksHintRoom(S.room) : t.detail.ranksHint)) : null);
     };

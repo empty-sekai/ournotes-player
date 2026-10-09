@@ -49,6 +49,7 @@ export const UI = {
       empty: "没有适用于本谱任务的技能变体。", skill: "技能 / 等级", source: "来源", member: "成员", support: "支援",
       band: "乐队条件", match: "匹配", mismatch: "不匹配", noBand: "无条件", unknown: "未知形状",
       gain: "Δ得分", ratio: "占无技能得分", seeds: "种子 / 交叉项", changes: "区间指标变化", converted: "转换数 Δ",
+      method: "计算方法", nominal: "标称概率期望", interval: "计算包围区间",
       more: (n) => `同形状的其他 ${n} 个技能`,
       warning: "标准误未达目标", deterministic: "确定性检验通过", zero: "理论最佳打法下无增量", onlyMeasures: "只改变指标",
       power: "换算综合力", defaultPower: (p) => `未填综合力时按测量综合力 ${p} 显示`,
@@ -56,12 +57,15 @@ export const UI = {
       accuracy: "Just 率插值、Great 比例缩放都是近似。Just < 100% 且普通技能非零时，缺少 Perfect 交叉权重，不提供完整增量。",
       missingPerfect: "缺少 Perfect 交叉权重；完整增量不可用。", baseOnly: "无普通技能增量（近似）", rawScore: "原始无普通技能 Δ分（P₀、全 Just、第 1 名）", rawPerfect: "原始全 Perfect Δ分（测量综合力）",
       se: "± 仅附在原始采样统计量上，表示标准误，不是置信区间。名次、准率或普通技能改变后的合成结果没有协方差，不附 ±。展开区间指标可看原始 Δscore ± 标准误；未达目标针对原始 Δscore，调整参数不会重测。",
+      intervalNote: "方括号是原始期望值的计算包围区间，反映数值计算及导出精度；它不是标准误、置信区间或模型误差。使用模型中的独立标称概率确定性计算，重放种子不参与期望。改变名次、准率或普通技能后的近似结果不附原始区间。",
+      missingRank: "当前名次缺少已验证的区间交叉权重，无法换算；可恢复全部第 1 名查看原始期望。",
       rank1: "此项缺少区间交叉权重，交叉项仍按名次 1，不能精确跟随当前名次。",
       missingCross: "没有可用的普通技能交叉项；将普通技能倍率设为 0 可看基础增量。",
       raw: "以下指标及转换数是全 Just、无 Great 的原始增量，不随准率滑块变化；名次由你指定，指标增量不直接换算成更高名次。",
       factors: "谱面因子（不带技能）", judgedNotes: "区间判定数", justNotes: "Just 音符", perfectNotes: "Just 区间 Perfect 音符",
       tailNotes: "尾部音符", comboAtStart: "进入时连击", lotteries: "抽签次数",
       factorNote: "区间计数为 Start 帧之后至 End 帧；尾部为 End 至 Complete，受技能影响但不计入区间分。抽签次数取基线种子均值 ± 标准误。",
+      nominalFactorNote: "区间计数为 Start 帧之后至 End 帧；尾部为 End 至 Complete，受技能影响但不计入区间分。抽签次数为无技能基线的标称概率期望，方括号为计算包围区间。",
     },
     allColumns: "全部列", allColumnsHint: "可左右滚动对比",
     frontier: "只看前沿", col: {
@@ -97,6 +101,8 @@ export const UI = {
       span: "音符区间", musicLength: "谱面长度", timeline: "时间轴", fever: "Fever", skill: "技能", mission: "激走任务",
       composition: "音符构成", weights: "技能位权重",
       weightsHint: "第 k 位成员带一个 +100% 普通加分技能时整局多得的分数 ÷ 综合力（整局模拟：窗口、帧、连击都算在内；撃奏ライブ另含 Just 与所选名次的排名加成），取种子平均，并按准率缩放；百分比为占 W 的份额。哪位成员落在哪个位置每局随机，所以期望只用到 W。",
+      nominalWeightsHint: "第 k 位成员带一个 +100% 普通加分技能时整局增加的期望分数 ÷ 综合力，按模型中的独立标称概率计算，包含窗口、帧、连击、Just 与所选名次的排名加成；名次与准率调整为近似。百分比为占 W 的份额。技能顺序每局随机，所以顺序平均只用到 W；重放种子不参与此期望。",
+      nominal: "标称概率期望", interval: "计算包围区间",
       seeds: (n) => `${n} 个种子`, unplayable: "撃奏ライブ无法游玩", unplayableHint: "Fever 超过 3 个：从反编译代码看，游戏只保留 3 个激走区间，第 4 个 Fever 开始时会出错",
       unplayableFree: "；自由 Live 不开激走，可以照常游玩，切到自由 Live 可看它的数值",
       score: "得分（当前场景）", noFigures: "得分", twoScores: "撃奏ライブ的两套分数（每点综合力）",
@@ -104,6 +110,7 @@ export const UI = {
       measures: "各区间的名次指标", mRange: "区间", mCompared: "比的指标",
       measure: { maxCombo: "最大连击", justCount: "Just 数", luckPoints: "幸运点数" },
       measuresHint: "撃奏ライブ的每个区间按该区间任务的指标与房间内其他人比名次：连击任务比最大连击，幸运任务比幸运点数，Just 任务比 Just 数（加粗的一格）。按本模型，理论最佳打法、不带激走技能，取种子平均，括号内为种子间的最小–最大；“–”表示数据里没有这一项。本页不模拟对手，名次由你选定。",
+      nominalMeasuresHint: "各区间按最大连击、幸运点数或 Just 数比拼名次（加粗的一格）。数据采用理论最佳打法、不带激走技能，按模型中的独立标称概率计算；方括号内为期望值的计算包围区间，不是种子间的波动范围。“–”表示数据缺失。本页不模拟对手，名次由你选定。",
       orders: "顺序区间", sameOrder: "技能相同，顺序不影响得分", ranks: "评级门槛", rank: "评级", required: "所需分数", needPower: "所需综合力（期望）",
       needRange: "所需综合力（顺序区间）", chanceAt: (p) => `综合力 ${p} 达成率`, requiredRoom: (n) => `所需分数（${n} 人房间，每人）`,
       ranksHint: "门槛按歌定义，各难度共用；自由 Live 用单人门槛。所需综合力 = 门槛 ÷ 每点综合力的期望得分（已含准率）。",
@@ -164,6 +171,7 @@ export const UI = {
       empty: "No skill variants apply to this chart's missions.", skill: "Skill / level", source: "Source", member: "Member", support: "Support",
       band: "Band condition", match: "matched", mismatch: "unmatched", noBand: "none", unknown: "Unknown shape",
       gain: "Score Δ", ratio: "Share of no-skill score", seeds: "Seeds / cross terms", changes: "Range measure changes", converted: "Conversions Δ",
+      method: "Method", nominal: "Nominal expectation", interval: "Numerical enclosure",
       more: (n) => `${n} other skills of this shape`,
       warning: "SE target not met", deterministic: "Passed determinism test", zero: "No gain in best play", onlyMeasures: "Measures only",
       power: "Power for conversion", defaultPower: (p) => `Empty power uses the measurement power ${p}`,
@@ -171,12 +179,15 @@ export const UI = {
       accuracy: "Just interpolation and Great scaling are approximate. Below 100% Just with nonzero ordinary skills, Perfect cross weights are missing: no complete gain is provided.",
       missingPerfect: "Perfect cross weights missing; complete gain unavailable.", baseOnly: "No-ordinary-skill gain (approximate)", rawScore: "Raw no-ordinary-skill score Δ (P₀, all Just, rank 1)", rawPerfect: "Raw all-Perfect score Δ (measurement power)",
       se: "± labels raw sampled statistics only: standard error, not a confidence interval. Combined results after ranks, accuracy or ordinary skills change have no covariance data and no ±. Expand range measures for raw score gain ± SE. The target flag concerns original score gain; changing settings does not resample it.",
+      intervalNote: "Square brackets enclose the original expectation and reflect numerical calculation and export precision. They are not a standard error, confidence interval or model error. The calculation deterministically integrates the model's independent nominal probabilities; replay seeds do not enter the expectation. Approximations after ranks, accuracy or ordinary skills change carry no original enclosure.",
+      missingRank: "Validated range cross weights are unavailable at these ranks. Restore rank 1 everywhere to see the original expectation.",
       rank1: "No range cross weights: cross terms stay at rank 1, not exactly at the chosen ranks.",
       missingCross: "Ordinary-skill cross terms unavailable; set ordinary skills to 0 to see the base gain.",
       raw: "Measures and conversions below are raw all-Just, no-Great gains, unchanged by accuracy sliders. Ranks are chosen by you; higher measures do not directly become higher ranks.",
       factors: "Chart factors (no skills)", judgedNotes: "Range judged notes", justNotes: "Just notes", perfectNotes: "Perfects in Just ranges",
       tailNotes: "Tail notes", comboAtStart: "Entry combo", lotteries: "Lotteries",
       factorNote: "Range counts cover after Start through End; the tail covers after End through Complete, affected by skills but outside the range score. Lottery counts are the baseline seed mean ± standard error.",
+      nominalFactorNote: "Range counts cover after Start through End; the tail covers after End through Complete, affected by skills but outside the range score. Lottery counts are the no-skill nominal expectation; square brackets give its numerical enclosure.",
     },
     allColumns: "All columns", allColumnsHint: "Scroll sideways to compare",
     frontier: "Frontier only", col: {
@@ -211,6 +222,8 @@ export const UI = {
       bpmChanges: (n) => `${n} changes`, span: "Notes span", musicLength: "Chart length", timeline: "Timeline",
       fever: "Fever", skill: "Skill", mission: "Gekisou mission", composition: "Notes by kind", weights: "Skill position weights",
       weightsHint: "The score a +100 % plain score-up skill on the member at position k adds over the whole live, per point of power (whole-live simulation: windows, frames and combo included; in Gekisou Live also Just and the rank bonuses of the ranks chosen), averaged over the seeds and scaled by the accuracy; and its share of W. Which member lands on which position is drawn every live, so the expectation only uses W.",
+      nominalWeightsHint: "The expected score a +100% plain score-up skill at position k adds over the whole live, per point of power, under the model's independent nominal probabilities. This includes windows, frames, combo, Just and the chosen rank bonuses; rank and accuracy adjustments are approximate. Percentages show each position's share of W. Skill order is drawn every live, so its average uses W; replay seeds do not enter this expectation.",
+      nominal: "Nominal expectation", interval: "Numerical enclosure",
       seeds: (n) => `${n} seeds`, unplayable: "Unplayable in Gekisou Live", unplayableHint: "More than 3 fevers: by the decompiled code the game keeps three Gekisou ranges and fails when a fourth fever starts",
       unplayableFree: "; Free Live has no Gekisou and plays it as usual: switch to Free Live for its figures",
       score: "Score (current scenario)", noFigures: "Score", twoScores: "Gekisou Live's two scores (per point of power)",
@@ -218,6 +231,7 @@ export const UI = {
       measures: "Rank measures per range", mRange: "Range", mCompared: "Ranked by",
       measure: { maxCombo: "Max combo", justCount: "Just count", luckPoints: "Luck points" },
       measuresHint: "Every Gekisou Live range ranks the room by its mission's measure: combo missions by the max combo, luck missions by the luck points, Just missions by the Just count (the bold cell). By this model, in the theoretical best play without Gekisou skills: seed means, with the seeds' min–max in brackets; “–” where the data lacks the measure. The page does not model opponents and takes the ranks you pick.",
+      nominalMeasuresHint: "Each range ranks players by maximum combo, Luck points or Just count (the bold cell). Values use ideal play without Gekisou skills and the model's independent nominal probabilities. Square brackets enclose the calculated expectation, not the spread between replay seeds; “–” marks missing data. The page does not model opponents and takes the ranks you pick.",
       orders: "Order range", sameOrder: "Equal skills: the order does not matter", ranks: "Score ranks", rank: "Rank", required: "Score", needPower: "Power (expected)",
       needRange: "Power (order range)", chanceAt: (p) => `Chance at ${p}`, requiredRoom: (n) => `Score (room of ${n}, each)`,
       ranksHint: "Thresholds are the song's, shared by every difficulty; Free Live uses the solo thresholds. Power needed = threshold ÷ expected score per power (accuracy included).",
@@ -340,7 +354,7 @@ export const REPLAY_UI = {
 export const GUIDE = {
   "zh": {
     "title": "定义、推导与成立条件",
-    "lead": "排行与适性展示理论最佳打法的统计参考；谱面详情还可逐音符计算给定输入的一局。两者使用同一套 ournotes-deck Rust 模型，原生逐帧核对的案例见下表。",
+    "lead": "排行与适性展示理论最佳打法的统计参考；谱面详情还可逐音符计算给定输入的一局。新 chart-stats/3 使用标称概率期望与计算包围区间，旧 music-data/1 的采样统计仍可读取。两者使用同一套 ournotes-deck Rust 模型，原生逐帧核对的案例见下表。",
     "sections": [
       {
         "title": "得分模型",
@@ -352,10 +366,11 @@ export const GUIDE = {
           "base = score / P₀,   w_k = (位置 k 带因子 1 的技能时的得分 − score) / P₀,   P₀ = 300000"
         ],
         "after": [
-          "score 是模型算出的无技能得分（撃奏ライブ场景含区间排名加成），w_k 是第 k 位成员带一个因子 1（技能值 10000，即 +100%）的普通加分技能时整局多得的分数；两者都除以测量综合力 P₀。技能值换算成因子时有取整（⌊值/10000 × 10⁵⌋/10⁵），各音符得分也有取整，所以上式在取整范围内成立：deck 对每个种子用一副真实技能值的随机卡组、在另一个综合力（1000003）下整局重算，偏差超过上界的谱面直接报错；现有 340 张全部通过。这项核对只说明上式与模拟自洽，不能说明模拟与游戏一致。",
+          "score 是模型算出的无技能得分（撃奏ライブ场景含区间排名加成），w_k 是第 k 位成员带一个因子 1（技能值 10000，即 +100%）的普通加分技能时整局多得的分数；两者都除以测量综合力 P₀。技能值换算成因子时有取整（⌊值/10000 × 10⁵⌋/10⁵），各音符得分也有取整，所以上式在取整范围内成立：旧格式的 deck 对每个种子用一副真实技能值的随机卡组、在另一个综合力（1000003）下整局重算，偏差超过上界的谱面直接报错；该旧快照的 340 张全部通过。这项核对只说明上式与模拟自洽，不能说明模拟与游戏一致。",
           "每首歌有三个激走任务（连击、幸运或 Just，按歌定义，各难度共用），依次对应谱面的三个 Fever 区间。Just 判定只在 Just 任务区间内开启，所以三个任务里没有 Just 的歌（85 首中 41 首：21 首全是连击、20 首全是幸运）整局都没有 Just；三个任务全是 Just 的有 27 首，另有 17 首连击、幸运、Just 各一个。",
           "按本模型，激走的影响很大：与激走关闭相比，Expert 谱面的无技能得分高 1.6–4.7 倍（中位 2.4 倍）。主要来源是区间排名加成（MasterLiveGekisouRankingScoreBonus）：每个完成的区间再加上该区间得分的一个百分比，按名次查表，默认按第 1 名计；三个激走任务相同的歌（85 首中 68 首）为 250%，三个任务各不相同的（17 首）为 370%，多人游玩时即使是第 5 名也有 100%。按第 1 名计，Expert 谱面的 base 中有 36%–69%（中位 53%）来自它。其次是 Just 任务区间内的 Just 判定（230%，Perfect 为 100%）：区间长、Just 音符多的谱面倍数最高，4.7 倍的那张三个 Just 区间共约 52 秒、233 个 Just 音符；连击任务区间的激走连击系数在没有激走技能时影响很小（约 1%）。技能落在激走区间内时，排名加成随之放大，所以区间内的技能位权重明显更高。",
-          "幸运任务区间的抽签与幸运冲刺取自本局的随机种子。含幸运区间的谱面（340 张中 148 张）给出前 8 个公开种子的结果，本页取种子平均，并在详情里给出种子间 base 的区间（中位相差 1.3%，最大 4.2%）。游戏的种子规律未知，所以种子平均未必等于游戏内的真实期望。"
+          "数据格式决定统计含义。chart-stats/3 的 expectation 按模型中的独立标称抽签与技能概率确定性计算，每项 [中心值, 向外包围半径] 给出计算期望的区间，包含数值计算及导出精度；不是标准误、置信区间或实机误差。replaySeeds 仅是可重放的单局样本，改变其数量或内容不会改变期望。旧 music-data/1 的 seeds 则取样本平均，详情区间表示样本最小–最大。游戏的种子规律未知，两种参考都不承诺等于游戏中的真实分布。",
+          "本节及后续涉及 85 首歌、340 张谱面的数值举例来自旧采样数据快照，不代表当前曲目总数或新期望值的重新测量。该旧快照有 148 张含幸运区间，使用前 8 个公开种子；base 的样本范围中位相差 1.3%、最大 4.2%。新格式的公式核对改用完整期望及取整上界，重放样本数量不参与核对值的期望计算。"
         ]
       },
       {
@@ -365,11 +380,12 @@ export const GUIDE = {
           "单局 JSON 可给出固定 Solo 名次，由完整引擎结算；外部排名输入则明确给出确认帧、区间、名次与加成百分比，采用客户端的帧快照计分。两种方式不同。本页不模拟对手、网络延迟或服务器裁定。"
         ],
         "math": [
-          "base_r = ( score − Σ_i B_i + Σ_i trunc( RS_i · p_i(r_i) / 100 ) ) / P₀",
+          "chart-stats/3: base_r ≈ ( E[score] + Σ_{i: r_i ≠ 1} ( E[RS_i] · p_i(r_i) / 100 − E[B_i] ) ) / P₀",
+          "旧单种子: base_r = ( score − Σ_i B_i + Σ_i trunc( RS_i · p_i(r_i) / 100 ) ) / P₀",
           "w_r[k] = w[k] + Σ_i ( p_i(r_i) − p_i(1) ) / 100 · u_i[k]"
         ],
         "after": [
-          "RS_i 是区间 i 的得分，p_i(r) 是区间 i 在名次 r 时的加成百分比，B_i = trunc(RS_i · p_i(1) / 100) 是名次 1 的加成（现有数据的每个种子、每个区间都满足这个等式），u_i[k] 是位置 k 的技能让区间 i 多得的分数 ÷ P₀。依据：从反编译代码看，加成在区间结束时一次性记入，不改变之后音符的得分系数；名次只影响一种技能条件（7012），现有主数据里没有技能用到它。所以按本模型，换名次只改变加成这一项，w_r 的误差来自技能加成的取整，小于 3/P₀。deck 另用随机名次整局实跑核对了这组线性式，现有数据全部落在误差上界内。按本模型，三个区间全是第 1 名时的无技能得分是全是第 5 名时的 1.25–1.65 倍（340 张谱面，中位 1.46 倍）。",
+          "RS_i 是区间得分，p_i(r) 是该名次的加成百分比，B_i 是第 1 名的实际结算加成，u_i[k] 是位置 k 的技能让该区间增加的分数 ÷ P₀。旧格式先逐种子计算截断加成再平均。新格式保留所有仍为第 1 名区间的已计算 E[B_i]，仅替换改变名次的区间；不能用 trunc(E[RS_i] · p/100) 冒充 E[trunc(RS_i · p/100)]。页面按实数乘积作线性参考，不把原始包围区间贴在变换结果上。只有数据声明的线性范围可换算权重；激走适性缺少 rangeWeights 时，不提供非第 1 名的结果。原始固定名次及取整界限由数据生成器的完整模型核对。旧快照中三个区间全第 1 名的无技能分数为全第 5 名的 1.25–1.65 倍（340 张谱面，中位 1.46 倍）。",
           "自由 Live 场景的数值来自另一次激走关闭的整局模拟，不是从撃奏ライブ减去加成得到的：关闭激走时也没有 Just、激走连击系数和幸运冲刺。关闭激走时没有幸运抽签，本页用到的技能也没有概率条件，所以每张谱面只有一个种子；Fever 超过 3 个、撃奏ライブ无法游玩的谱面，在自由 Live 场景照常计算。",
           "从反编译代码看，撃奏ライブ同时上报两套分数：一套含全部激走效果（Just、幸运、激走连击、排名加成和激走技能），本页撃奏ライブ场景的数值对应这一套（暂不含激走技能，第 7 节）；另一套不含任何激走效果（激走技能也不计），存为歌曲的最高分，按本模型约等于自由 Live 的分数。谱面详情里两个数字都列出。服务器怎样使用这两套分数（例如计算活动积分），客户端代码里看不到。"
         ]
@@ -385,7 +401,7 @@ export const GUIDE = {
         ],
         "after": [
           "推论一：期望只取决于技能平均值 x̄，与技能在成员间如何分配、谁在第几位无关。“最强技能放在权重最高的位置”只是 120 种排列中最好的一种，是上界，不是期望。",
-          "推论二：离散度等于技能离散度与位置权重离散度的乘积；5 个技能相同时，每一局得分都相同。按本模型，以技能 [140, 100, 60, 30, 0]% 为例，在全部 Expert 谱面上，最好与最差排列相差中位 15.4%、最大 29.2%，最佳排列比期望高中位 7.6%；激走区间让位置权重差距拉大，顺序的影响远大于不计激走时。页面给出期望、120 种排列的区间和 P10。",
+          "推论二：顺序离散度等于技能离散度与位置权重离散度的乘积；5 个技能相同时，排列不改变这里的参考得分，单局仍可能有幸运等随机波动。旧快照以技能 [140, 100, 60, 30, 0]% 为例，在全部 Expert 谱面上，最好与最差排列相差中位 15.4%、最大 29.2%，最佳排列比平均高中位 7.6%。页面的区间和 P10 仅描述 120 种顺序的参考值；新格式每种顺序已经对标称概率取期望，不代表所有单局结果的分布。",
           "单局计算不取 120 种顺序的平均。JSON 明确列出成员、skillOrder 与 seed；技能事件依次映射到该顺序，成员属性与配对支援仍随成员记录。相同数据与输入可以重放同一局。"
         ]
       },
@@ -418,7 +434,7 @@ export const GUIDE = {
         "after": [
           "歌曲只通过评级进入积分，所以每个 boost 换到的积分与选哪首歌无关；歌曲的差别只在于各评级的达成概率和一局的时长。活动支配只要求 v 随评级不减，不需要知道积分表：满足上式时，任何卡组达成任何评级在 a 上所需的综合力都不高于 b，而 a 不更长。",
           "积分表可以反推，不必等主数据：一局的加成和倍率已知，所以 v = 积分 × 10000 / ((10000 + 加成) × 倍率)，截断带来的误差小于 1/倍率；每个评级一条样本就能唯一确定 v。",
-          "达成率是在 120 种技能顺序上 P · S_π ≥ R 成立的比例（S 为所选场景的理论最佳基线）；所需综合力取期望，区间取最好与最差排列。按本模型，技能全 140%、撃奏ライブ名次 1、5 人房间时，Expert 达到 SS 所需综合力从 27 万到 205 万，相差 7.5 倍。SS 门槛对本模型的得分容量做过原点的最小二乘拟合，中位相对残差约 32%：门槛看来不是按容量定的，所以活动选曲最好逐曲计算，不宜直接拿效率排行代替。85 首歌里有 20 首的 Hard 比 Expert 更容易拿到 SS。"
+          "达成率是在 120 种技能顺序上 P · S_π ≥ R 成立的比例（S 为所选场景的理论最佳参考值），不包含单局幸运波动，也不由数值包围区间推断概率；所需综合力取期望，区间取最好与最差排列。按本模型，技能全 140%、撃奏ライブ名次 1、5 人房间时，Expert 达到 SS 所需综合力从 27 万到 205 万，相差 7.5 倍。SS 门槛对本模型的得分容量做过原点的最小二乘拟合，中位相对残差约 32%：门槛看来不是按容量定的，所以活动选曲最好逐曲计算，不宜直接拿效率排行代替。85 首歌里有 20 首的 Hard 比 Expert 更容易拿到 SS。"
         ]
       },
       {
@@ -442,18 +458,19 @@ export const GUIDE = {
           "建模了什么。成员卡带激走技能，与它配对的支援卡带激走支援技能。从反编译代码看，它们只在激走开启时建立，只加进含激走的那套分数（battleLiveScore），不进不含激走的那套（soloScore），自由 Live 里也没有。每个技能属于一种激走任务（连击、幸运或 Just），只在同任务的区间里触发，与演奏位置和洗牌无关；支援技能可以带乐队条件（条件 5000），看配对的成员是否属于指定乐队。效果按类型有激走连击加成、幸运槽倍率、加幸运点、加满槽、Just 数加成与累计 Just、幸运冲刺期间的得分加成、每 10 连击或每个 Just 的加分，以及连击保护、Great 转 Perfect、转 Just、放宽 Just 判定等，ournotes-deck 在整局模拟里逐帧计算这些效果。",
           "名次与判定。固定名次的统计参考使用第 2 节的区间加成公式；实际单局按给定判定流运行。判定转换、每个 Just 加分与累计 Just 可能改变后续状态，不能用平均准率缩放这些效果。",
           "理论最佳基线不能体现所有技能的收益。连击保护与判定转换需要对应的断连或判定输入，窗口放宽需要原始判定元数据；只提高任务指标的技能可能帮助真实对局取得更高名次，但固定名次参考不会自动改变名次。可用单局 JSON 核对具体输入下的效果。",
-          "种子。幸运区间的抽签取自本局的随机种子，幸运类激走技能的效果也随种子变化，所以带激走技能时幸运区间的种子间差别可能更大。页面取所给种子的平均，这不是游戏里的期望，游戏的种子规律未知。演奏位置每局洗牌，但激走技能与位置无关；洗牌只改变单个种子里概率判定的抽取次序，不改变期望。",
+          "概率与重放。chart-stats/3 对模型中的独立标称抽签和技能概率计算期望；replaySeeds 用于单局对照，不作为期望的样本。旧 music-data/1 仍读取所给种子的平均与标准误。实际游戏的种子规律未知；单局 JSON 则始终按明确种子重放。演奏位置每局洗牌，单个种子的概率抽取顺序可能随之变化。",
           "原生覆盖按场景记录在验证表中。普通技能和不带卡上激走技能的更新链已有逐帧证据；这不代表每种卡上激走技能及所有组合都已验证。未核对的效果和条件仍是未核对。",
           "适性只测单个技能。每个成员卡激走技能取最高等级，每个支援卡激走支援技能取最高突破时的等级；计分参数相同的技能合并成形状，乐队条件分匹配与不匹配。成员技能由一名演奏者单独携带；支援技能搭配同任务、无效果的合成空激走技能，统一测量，不借用真卡。数据缺失时显示“数据待更新”，不会当作零。排行与图表的默认基线仍不带卡上激走技能。",
-          "适性增量由同一随机种子下带与不带单个技能的整局相减得到。理论最佳、名次 1 使用 score 增量均值；普通技能倍率与名次调整使用已导出的权重和区间增量，是受取整与线性假设限制的参考。具体技能与混合判定的一局使用第 6 节的完整引擎。",
+          "新格式的适性增量为带与不带单个技能的完整标称期望之差；旧格式则对同种子整局差值取平均。理论最佳、名次 1 直接使用已导出的 score 增量，保留排名加成的期望。只在数据具有已验证的区间交叉权重时调整名次，且仅替换改变名次区间的加成；普通技能倍率、名次和准率调整是受取整与线性假设限制的参考。具体技能与混合判定的一局使用第 6 节的完整引擎。",
           "多个技能的增量不能相加：激走连击系数会饱和，幸运冲刺支援与幸运槽技能存在交互，判定转换也可能改变其它效果的触发；这些不能用单技能增量拼出整副编成。适性是单个技能的响应，不是组卡结果。谱面因子列出区间判定音符、Just 音符、Just 区间只能 Perfect 的音符、End 至 Complete 的尾部音符、开始时连击及无技能抽签次数，用来解释差异。",
-          "每项 [均值, 标准误] 的标准误是样本标准差除以种子数的平方根，不是模型误差。先检查随机依赖，再做四种子探测；四次相等不能单独证明确定性。随机变体从 32 个种子逐批加倍，护栏为 65536；理论最佳与全 Perfect 两端的 score 增量都须达到目标：增量绝对值的 1% 与同种子无技能基线的 0.1% 中较宽者。可能只满足基线目标，不表示增量达到 1%。正式产物要求两端都达标，护栏内未收敛就拒绝生成。交叉项最多取前 64 个种子，缺少协方差，不能当作独立误差合成。",
+          "chart-stats/3 的每项 [中心值, 包围半径] 来自确定性概率计算，原始分数、增量、交叉权重和抽签次数都使用这套含义。它没有采样标准误、种子收敛标记或采样预算。页面只在未改变名次、准率与普通技能的原始无普通技能增量上展示包围区间；换算后的均值不冒用原区间。",
+          "旧采样格式才使用 [均值, 标准误]，其中标准误为样本标准差除以种子数平方根。旧生成器先检查随机依赖与四种子探测，随机变体从 32 逐批加倍至 65536，要求理论最佳和全 Perfect 两端达到增量绝对值 1% 与基线 0.1% 中较宽的目标；交叉项最多 64 个种子。旧 SE 不是模型误差，缺少协方差时也不能当作独立误差合成。这些采样规则不用于新格式。",
           "适性没有全 Perfect 打法的普通技能交叉权重。缺少对应权重的统计调整只能作有限精度参考；任意判定与多技能组合须交给单局计算，不能拼接端点增量。"
         ],
         "defs": [
           [
             "概率发动（条件 4011）",
-            "模型按技能随机流抽取 float32 值，再与发动门槛比较。当前主数据的条件 4011 用于幸运激走成员技能 11003 与支援技能 11005。两组真实卡与支援的原生整局核对已通过，包含发动、未发动及 5% 概率成功分支，结果见下表。给定种子的单局结果由完整模型计算；种子平均与标准误用于描述适性。普通技能输入表示无条件加分，不能用 p × 技能值替代概率效果。"
+            "单局模型按技能随机流抽取 float32 值，再与发动门槛比较。已核对的主数据中，条件 4011 用于幸运激走成员技能 11003 与支援技能 11005；两组真实卡与支援的原生整局核对包含发动、未发动及 5% 概率成功分支，见下表。给定种子的单局由完整模型重放；新适性按独立标称概率求期望，旧适性使用种子平均与标准误。普通技能输入表示无条件加分，不能用 p × 技能值替代概率效果。"
           ]
         ]
       },
@@ -622,7 +639,7 @@ export const GUIDE = {
   },
   "en": {
     "title": "Definitions, derivations and conditions",
-    "lead": "Rankings and aptitude show statistical references for theoretical best play. Chart details can also calculate one play from per-note inputs. Both use the same ournotes-deck Rust model; the native frame checks are listed below.",
+    "lead": "Rankings and aptitude show statistical references for theoretical best play. Chart details can also calculate one play from per-note inputs. New chart-stats/3 data uses nominal expectations and numerical enclosures; legacy music-data/1 samples remain readable. Both use the same ournotes-deck Rust model; the native frame checks are listed below.",
     "sections": [
       {
         "title": "Score model",
@@ -634,10 +651,11 @@ export const GUIDE = {
           "base = score / P₀,   w_k = (score with a factor-1 skill at position k − score) / P₀,   P₀ = 300000"
         ],
         "after": [
-          "score is the model's no-skill score (in Gekisou Live with the range rank bonuses), w_k the score a factor-1 plain skill (value 10000, +100 %) on the member at position k adds over the whole live; both per point of the measurement power P₀. The value becomes a factor with a floor (⌊value/10000 × 10⁵⌋/10⁵) and every note score is floored, so the formula holds up to the floors: for every seed deck plays a random deck of real skill values at another power (1000003) through the whole live, and a chart whose deviation exceeds the bound fails. All 340 current charts pass. This check only shows that the formula agrees with the simulation, not that the simulation agrees with the game.",
+          "score is the model's no-skill score (in Gekisou Live with the range rank bonuses), w_k the score a factor-1 plain skill (value 10000, +100 %) on the member at position k adds over the whole live; both per point of the measurement power P₀. The value becomes a factor with a floor (⌊value/10000 × 10⁵⌋/10⁵) and every note score is floored, so the formula holds up to the floors: in the legacy format, for every seed deck plays a random deck of real skill values at another power (1000003) through the whole live, and a chart whose deviation exceeds the bound fails. All 340 charts in that legacy snapshot pass. This check only shows that the formula agrees with the simulation, not that the simulation agrees with the game.",
           "Every song has three Gekisou missions (combo, luck or Just, set per song and shared by every difficulty), one for each of the chart's three fevers in order. Just judgements are only on inside Just mission ranges, so the songs without a Just mission (41 of 85: 21 all combo, 20 all luck) have no Just all live; 27 songs have three Just missions, and 17 have one each of combo, luck and Just.",
           "By this model Gekisou weighs a lot: against Gekisou off, an Expert chart's no-skill score is 1.6–4.7 times higher (median 2.4). Most of it is the range rank bonus (MasterLiveGekisouRankingScoreBonus): every completed range adds a percentage of its own score, looked up by rank, rank 1 by default; that is 250 % on the songs whose three missions are the same (68 of 85) and 370 % on those whose three missions all differ (17), and in multiplayer even rank 5 gets 100 %. At rank 1 it makes 36–69 % (median 53 %) of an Expert chart's base. Next come the Just judgements inside Just mission ranges (230 %, against 100 % for a Perfect): charts with long ranges and many Just notes gain the most, and the 4.7 times chart has three Just ranges of about 52 s in all with 233 Just notes; the Gekisou combo factor of combo mission ranges matters little without Gekisou skills (about 1 %). A skill inside a Gekisou range raises the rank bonus too, so the positions inside ranges weigh much more.",
-          "Luck mission ranges draw their lottery and luck rushes from the live's random seed. Charts with a luck range (148 of 340) come with the first 8 published seeds; the page takes the mean over the seeds and shows the seeds' base range in the details (1.3 % apart at the median, 4.2 % at most). The game's seed law is unknown, so the seed mean need not equal the game's own expectation."
+          "The data format determines the statistics. chart-stats/3 deterministically integrates the model's independent nominal lottery and skill probabilities. Each expectation estimate is [center, outward enclosure half-width], accounting for numerical calculation and export precision, not a standard error, confidence interval or device error. replaySeeds are individual examples only: their count and contents do not change the expectation. Legacy music-data/1 instead averages seeds and displays their min–max. The game's seed law is unknown, so neither reference promises the game's actual distribution.",
+          "Numerical examples mentioning 85 songs and 340 charts in this guide come from a legacy sampled snapshot, not the current catalog count or a new nominal measurement. Of those charts, 148 had Luck ranges and used the first 8 published seeds; their base ranges differed by 1.3% at the median and 4.2% at most. New formula checks use complete expectations and flooring bounds; replay sample count does not enter those expectations."
         ]
       },
       {
@@ -647,11 +665,12 @@ export const GUIDE = {
           "A single-play JSON can specify fixed Solo ranks and let the complete engine settle them. External ranking instead supplies the confirmation frame, range, group rank and bonus percentage, using client frame snapshots. These are different inputs. The page does not simulate opponents, network delays or server decisions."
         ],
         "math": [
-          "base_r = ( score − Σ_i B_i + Σ_i trunc( RS_i · p_i(r_i) / 100 ) ) / P₀",
+          "chart-stats/3: base_r ≈ ( E[score] + Σ_{i: r_i ≠ 1} ( E[RS_i] · p_i(r_i) / 100 − E[B_i] ) ) / P₀",
+          "Legacy single seed: base_r = ( score − Σ_i B_i + Σ_i trunc( RS_i · p_i(r_i) / 100 ) ) / P₀",
           "w_r[k] = w[k] + Σ_i ( p_i(r_i) − p_i(1) ) / 100 · u_i[k]"
         ],
         "after": [
-          "RS_i is range i's score, p_i(r) range i's bonus percent at rank r, B_i = trunc(RS_i · p_i(1) / 100) the rank-1 bonus (every range of every seed of the current data meets this), and u_i[k] the score the skill at position k adds to range i, per P₀. Why: by the decompiled code the bonus is added once at the range's end and leaves the score factors of the notes after it alone, and the rank reaches one skill condition only (7012), which no skill of the current master data uses. So by this model a rank changes the bonus term only; w_r is off by the skill floors, less than 3/P₀. deck also runs whole lives at random ranks against these formulas, and the current data stays within the error bound. By this model the no-skill score at rank 1 in all three ranges is 1.25–1.65 times that at rank 5 (340 charts, median 1.46).",
+          "RS_i is a range score, p_i(r) its bonus percent at rank r, B_i its settled rank-1 bonus, and u_i[k] the extra range score from position k's skill per P₀. Legacy data truncates each seed's bonus before averaging. New data retains the calculated E[B_i] wherever rank 1 is kept and replaces only changed ranges. trunc(E[RS_i] · p/100) must not stand in for E[trunc(RS_i · p/100)]. The page uses a real-valued linear approximation and assigns it no original numerical enclosure. Weights can be adjusted only in the declared linear domain; nominal aptitude without rangeWeights is unavailable at other ranks. The generator checks original fixed-rank results and flooring bounds with the complete model. In the old snapshot, rank 1 everywhere scored 1.25–1.65 times rank 5 (340 charts, median 1.46).",
           "The Free Live figures come from a separate whole-live simulation with Gekisou off, not from Gekisou Live minus the bonuses: without Gekisou there are no Just judgements, Gekisou combo factor or luck rushes either. Without Gekisou there is no luck lottery, and the page's skill has no probability condition, so every chart has one seed; charts with more than 3 fevers, unplayable in Gekisou Live, are computed as usual in Free Live.",
           "By the decompiled code, Gekisou Live reports two scores: one with every Gekisou effect (Just, luck, the Gekisou combo, the rank bonuses and the Gekisou skills), which the page's Gekisou Live figures stand for (without the Gekisou skills for now, section 7); the other without any Gekisou effect (Gekisou skills included), kept as the song's best score, by this model about the Free Live score. The chart details show both. How the server uses the two (for event points, say) is not in the client code."
         ]
@@ -667,7 +686,7 @@ export const GUIDE = {
         ],
         "after": [
           "First: the expectation depends on the mean skill value only, not on how the values are spread over members or who stands where. The strongest skill on the heaviest position is the best of the 120 orders, an upper bound, not the expectation.",
-          "Second: the spread is the product of the skills' spread and the position weights' spread; five equal skills score the same every live. By this model, with skills [140, 100, 60, 30, 0] % over every Expert chart, the best and the worst order differ by 15.4 % at the median and 29.2 % at most, and the best order is 7.6 % (median) above the expectation; the Gekisou ranges pull the position weights apart, so the order matters far more than without Gekisou. The page shows the expectation, the range over the 120 orders and P10.",
+          "Second: order spread is the product of the skills' spread and the position weights' spread. With five equal skills, order leaves this reference score unchanged; a play can still vary with Luck and other randomness. In the old Expert snapshot, skills [140, 100, 60, 30, 0]% gave a best–worst difference of 15.4% at the median and 29.2% at most, with the best order 7.6% above the mean at the median. The page's range and P10 describe only the 120 reference order values. In the new format each order already averages nominal probabilities; this is not the distribution of all individual plays.",
           "A single play does not average the 120 orders. Its JSON specifies performers, skillOrder and seed. Chart skill events map to that order; member attributes and paired supports remain with their performer record. The same data and inputs replay the same play."
         ]
       },
@@ -700,7 +719,7 @@ export const GUIDE = {
         "after": [
           "The song enters the points only through the rank, so the points a boost buys do not depend on the song; songs differ only in their rank chances and their length. Event dominance needs no point table, only v non-decreasing in the rank: when it holds, any deck needs no more power on a than on b for any rank, and a is no longer.",
           "The table can be recovered without the master data: bonus and rate of a live are known, so v = points × 10000 / ((10000 + bonus) × rate) with a truncation error below 1/rate; one result per rank determines v.",
-          "The chance is the share of the 120 skill orders with P · S_π ≥ R (S from the selected theoretical-best baseline); the power needed uses the expectation, its range the best and the worst order. By this model, with every skill at 140 %, in Gekisou Live at rank 1 in a room of 5, SS on Expert needs 0.27 to 2.05 million power, a factor 7.5. A least-squares fit through the origin of the SS thresholds against this model's score capacity leaves a median relative residual of about 32 %: the thresholds do not seem to be set by capacity, so event choices are best computed song by song rather than read straight off the efficiency ranking. For 20 of the 85 songs SS is easier on Hard than on Expert."
+          "The chance is the share of the 120 skill orders with P · S_π ≥ R (S from the selected theoretical-best reference). It excludes individual-play Luck variation, and a numerical enclosure does not determine a probability; the power needed uses the expectation, its range the best and the worst order. By this model, with every skill at 140 %, in Gekisou Live at rank 1 in a room of 5, SS on Expert needs 0.27 to 2.05 million power, a factor 7.5. A least-squares fit through the origin of the SS thresholds against this model's score capacity leaves a median relative residual of about 32 %: the thresholds do not seem to be set by capacity, so event choices are best computed song by song rather than read straight off the efficiency ranking. For 20 of the 85 songs SS is easier on Hard than on Expert."
         ]
       },
       {
@@ -724,18 +743,19 @@ export const GUIDE = {
           "What is modelled. Member cards carry Gekisou skills, and the support cards paired with them Gekisou support skills. By the decompiled code they are only set up with Gekisou on and only add to the score with Gekisou (battleLiveScore), never to the one without (soloScore), and Free Live has none of them. Every skill belongs to one Gekisou mission (combo, luck or Just) and only triggers in the ranges of that mission, independent of the performance position and the shuffle; a support skill can carry a band condition (condition 5000) on whether its paired member is in a given band. By type the effects are the Gekisou combo bonus, the luck gauge multiplier, luck points, a full gauge, the Just count bonus and cumulative Just, a score up during luck rushes, points per 10 combo or per Just, and combo protection, Great to Perfect, conversion to Just, a looser Just judgement and a few more; ournotes-deck computes them frame by frame in the whole-live simulation.",
           "Ranks and judgements. Fixed-rank statistical references use the range bonus formula in section 2; a single play runs its declared judgement stream. Conversion, per-Just scoring and cumulative Just can change later state, so an average accuracy multiplier does not calculate these effects.",
           "A theoretical-best baseline cannot show every skill’s benefit. Protection and conversion need the relevant breaks or grades, and wider windows need original result metadata. A skill that raises mission measures may improve a real placement, but a fixed-rank reference does not change its placement automatically. Single-play JSON can check a concrete input.",
-          "Seeds. Luck ranges draw from the live's random seed, and so do the luck Gekisou skills' effects, so with Gekisou skills the luck ranges may spread wider between seeds. The page takes the mean over the seeds given, which is not the game's own expectation; the game's seed law is unknown. The performance positions are shuffled every live, but Gekisou skills do not depend on the position; the shuffle only reorders a seed's probability draws and leaves the expectation alone.",
+          "Probabilities and replay. chart-stats/3 integrates the model's independent nominal lottery and skill probabilities. replaySeeds are comparisons of individual plays, not expectation samples. Legacy music-data/1 still reads the supplied seed means and standard errors. The game's seed law is unknown; single-play JSON always replays an explicit seed. Shuffling performance positions can change the draw order of one seeded play.",
           "Native coverage is now documented by case in the validation table. Ordinary-skill and no-card-Gekisou update chains have frame comparisons; this does not certify every card Gekisou skill or every combination. Unchecked effects and conditions remain unchecked.",
           "Aptitude measures one skill at a time. Member Gekisou skills use their highest level, support skills their highest limit-break level. Equal scoring parameters share a shape; band conditions have matched and unmatched variants. One performer carries a member skill alone; a support skill uses a synthetic empty Gekisou skill of its mission, not a real card. Missing data is pending, not zero. The ranking and chart baseline still carries no Gekisou skills.",
-          "Aptitude subtracts complete runs with and without one skill on the same seed. The theoretical-best rank-1 value uses the mean score increment. Ordinary skill and rank adjustments use exported weights and range increments, as references limited by rounding and linear assumptions. A concrete mix of skills and judgements uses the complete engine in section 6.",
+          "New aptitude subtracts complete nominal expectations with and without one skill. Legacy aptitude averages differences from matched seeds. The theoretical-best rank-1 value uses the exported score increment and retains the expected rank bonus. Ranks change only when validated range cross weights are available, replacing bonuses in changed ranges only. Ordinary skill, rank and accuracy adjustments remain references limited by flooring and linear assumptions. A concrete mix of skills and judgements uses the complete engine in section 6.",
           "Gains of several skills cannot be added: the Gekisou combo factor saturates, rush supports interact with luck-gauge skills, and judgement conversion can change other effects; single-skill increments do not reconstruct a whole formation. Aptitude is a single-skill response, not a formation result. Chart factors give judged notes, Just notes, notes that can only be Perfect in Just ranges, tail notes from End to Complete, starting combo and no-skill lotteries to help explain differences.",
-          "Each [mean, standard error] uses sample standard deviation divided by the square root of the seed count; SE is not model error. Random dependencies are checked before the four-seed probe, and four equal results alone do not prove determinism. Random variants double from 32 seeds up to a guard of 65536. Both theoretical-best and all-Perfect score increments must meet the larger of 1% of the absolute increment and 0.1% of the same-seed no-skill baseline. Meeting the baseline target need not mean 1% relative precision. A formal artifact requires both endpoints to pass; failure to converge within the guard rejects generation. Cross terms use at most the first 64 seeds; covariance is unavailable, so errors cannot be combined as independent.",
+          "Every chart-stats/3 [center, enclosure half-width] comes from deterministic probability calculations. Raw scores, gains, cross weights and lottery counts share that meaning. There is no sampling standard error, seed convergence flag or sampling budget. The page attaches an enclosure only to the original no-ordinary-skill gain, without rank or accuracy changes; transformed centers do not inherit it.",
+          "Only legacy sampled data uses [mean, standard error], with sample standard deviation divided by the square root of the seed count. Its generator checked random dependencies and four-seed probes, doubled random variants from 32 up to 65536, and required both best and Perfect endpoints to meet the larger of 1% of the gain or 0.1% of the baseline. Cross terms used at most 64 seeds. Legacy SE is not model error, and absent covariance prevents combining errors as independent. Those sampling rules do not apply to the new format.",
           "All-Perfect ordinary-skill cross weights are unavailable. Statistical adjustments without corresponding weights remain limited-precision references; arbitrary judgements and multiple skills use single-play calculation, rather than combined endpoint increments."
         ],
         "defs": [
           [
             "Probability activation (condition 4011)",
-            "The model compares a float32 draw from the skill random stream with the activation threshold. In the current master, condition 4011 is used by luck Gekisou member skill 11003 and support skill 11005. Two native whole-live checks with real cards and supports passed, covering activation, rejection and a successful 5% branch; see the table below. The full model calculates one live for a given seed; seed means and standard errors describe aptitude. Ordinary skill inputs are unconditional score up: p × value cannot substitute for probability effects."
+            "The single-play model compares a float32 draw from the skill random stream with the activation threshold. In the checked master, condition 4011 is used by Luck member skill 11003 and support skill 11005. Two native whole-live checks with real cards and supports cover activation, rejection and a successful 5% branch; see the table. The full model replays a given seed; new aptitude integrates independent nominal probabilities, while legacy aptitude uses seed means and standard errors. Ordinary skill inputs are unconditional score up: p × value cannot substitute for probability effects."
           ]
         ]
       },
