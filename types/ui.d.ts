@@ -4,7 +4,11 @@ export interface UIEntry { id: string; name: string; key?: string; kind: string;
 export interface UIPack { schema?: number; resourceBase?: string; document: { nodes?: Array<Record<string, any>>; [key: string]: any }; resources: { textures?: Record<string, string>; sprites?: Record<string, any>; fonts?: Record<string, string>; fontMetrics?: string; [key: string]: any } }
 export interface UIController { document: Record<string, any>; resources?: UIPack['resources'] }
 export interface UIReport { applied: number; numericApplied: number; objectApplied: number; missing: unknown[]; diagnostics: unknown[]; state?: string; events?: unknown[]; [key: string]: unknown }
-export interface UIOptions { src?: string; entry?: UIEntry | string; library?: UILibrary; assetBase?: string; viewport?: [number, number]; showHidden?: boolean; bounds?: boolean; bindings?: boolean }
+export interface UIProjection { fieldOfView: number; referenceViewport: [number, number]; canvasPlaneDistance: number; nearClipPlane?: number }
+export interface UIOptions { src?: string; entry?: UIEntry | string; library?: UILibrary; assetBase?: string; viewport?: [number, number]; showHidden?: boolean; bounds?: boolean; bindings?: boolean; projection?: UIProjection; framing?: 'root' | 'content' }
+export interface UIRenderResult { canvas: HTMLCanvasElement; width: number; height: number; bounds: {minX: number; minY: number; maxX: number; maxY: number}; metrics: Record<string, number>; regions: Record<string, Array<{x: number; y: number}>>; scale: number; padding: number }
+/** Serialized perspective Camera + Screen Space Camera Canvas, with source CanvasScaler reference resolution. */
+export function cameraProjection(camera: Record<string, unknown>, canvas: Record<string, unknown>, referenceViewport: [number, number]): UIProjection;
 export class UILibrary {
   static load(src: string, options?: { fetch?: typeof fetch; signal?: AbortSignal }): Promise<UILibrary>;
   constructor(index: { assets: UIEntry[]; embedded?: UIEntry[]; [key: string]: any }, baseURL: string, fetcher?: typeof fetch);
@@ -35,7 +39,7 @@ export class UIPlayer extends EventTarget {
   selectSequence(node: UINodeSelector): Promise<this>;
   setParameter(name: string, value: number | boolean): Promise<this>; edit(node: UINodeSelector, component: string | null, field: string, value: unknown): Promise<this>;
   applyFixture(fixture: { patches: Array<{node: UINodeSelector; component?: string | null; field: string; value: unknown}> }, baseURL?: string): Promise<this>;
-  seek(time: number): Promise<this>; reset(): Promise<this>; render(): Promise<any>; play(): void; pause(): void; destroy(): void;
+  seek(time: number): Promise<this>; reset(): Promise<this>; render(): Promise<UIRenderResult | {canvas: HTMLCanvasElement; sprites: number} | null>; play(): void; pause(): void; destroy(): void;
 }
 export class OurnotesUIElement extends HTMLElement {
   src: string; entry: string; readonly ready: Promise<UIPlayer>; readonly player: UIPlayer | null; readonly time: number;
