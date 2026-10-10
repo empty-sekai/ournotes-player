@@ -12,6 +12,7 @@ live UI, with the chart's music and sound effects, auto-played at Perfect. The d
 | `ournotes-player/element` | the same exports; importing it defines `<ournotes-player>` |
 | `ournotes-player/ui` (experimental) | `UILibrary`, `UISession`, `UIPlayer`, `OurnotesUIElement`, `defineOurnotesUI`; [prefab preview API and limits](ui-preview.md) |
 | `ournotes-player/ui/element` (experimental) | the same UI exports; importing it defines `<ournotes-ui>` |
+| `ournotes-player/replay/preset` | `parseJustJudgementTypes`, `applyAccuracyPreset`, `applySegmentPreset`: declared input plans that set the judgement grades of an `ournotes.replay/1` request in place |
 
 Chart API times are in milliseconds of chart time. The independent UI preview API uses seconds.
 
