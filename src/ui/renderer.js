@@ -2,7 +2,7 @@ import {component as comp} from './runtime.js';
 import {loadGameFont,hasGameGlyphs,gameTextWidth,drawGameText} from './game-font.js';
 import {rectBox,aspectBox,imageAspectBox,intersect,layoutProperty,linearGroupInput,linearGroupLayout} from './layout.js';
 import {plainText,visibleLines,wrappingEnabled,textHeight} from './text-layout.js';
-import {previewSpriteGeometryPlan,previewSpriteAspect} from './sprite-geometry.js';
+import {previewSpriteGeometryPlan,previewSpriteAspect,spriteCropPlan} from './sprite-geometry.js';
 import {identity4,multiply4,nodeMatrix4,outOfPlane,projectedQuad,flatQuad,quadBounds,drawProjected,validateProjection} from './projection.js';
 export const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const number=(v,fallback=0)=>Number.isFinite(v)?v:fallback;
@@ -93,18 +93,34 @@ function fillPath(ctx,w,h,im){
 
 export class Renderer {
   constructor(pack,options={}){
-    this.pack=pack;this.options=options;this.nodes=buildNodes(pack);this.sprites=new Map();this.preferredCache=new Map();this.images=new Map();this.fontFamily='sans-serif';this.gameFonts=new Map();
+    this.pack=pack;this.options=options;this.nodes=buildNodes(pack);this.sprites=new Map();this.spriteCrops=new Map();this.preferredCache=new Map();this.images=new Map();this.fontFamily='sans-serif';this.gameFonts=new Map();
     this.projection=options.projection?validateProjection(options.projection):null;this.regions=Object.create(null);
     this.metrics={drawn:0,hidden:0,transparent:0,unboundImages:0,particles:0};
     this.measure=makeCanvas(1,1).getContext('2d');
   }
   url(file){if(!file)throw Error('UI resource path missing');return new URL(file,this.options.assetBase||document.baseURI).href;}
+  spriteCrop(image,textureRef,r){
+    const plan=spriteCropPlan(image.width,image.height,r),{x,y,width,height}=plan,key=JSON.stringify([textureRef,x,y,width,height]);
+    if(!this.spriteCrops.has(key)){
+      const canvas=makeCanvas(width,height),ctx=canvas.getContext('2d'),{sx,sy,w,h,dx,dy}=plan.copy;
+      ctx.imageSmoothingEnabled=false;
+      // Integer source/destination rectangles copy texels without resampling.
+      ctx.drawImage(image,sx,sy,w,h,dx,dy,w,h);
+      // Preserve texture-edge clamping when the two-pixel halo leaves an atlas.
+      if(dx)ctx.drawImage(canvas,dx,dy,1,h,0,dy,dx,h);
+      if(dx+w<width)ctx.drawImage(canvas,dx+w-1,dy,1,h,dx+w,dy,width-dx-w,h);
+      if(dy)ctx.drawImage(canvas,0,dy,width,1,0,0,width,dy);
+      if(dy+h<height)ctx.drawImage(canvas,0,dy+h-1,width,1,0,dy+h,width,height-dy-h);
+      this.spriteCrops.set(key,canvas);
+    }
+    return {canvas:this.spriteCrops.get(key),...plan.source};
+  }
   async sprite(ref){
     if(this.sprites.has(ref))return this.sprites.get(ref);
     const s=this.pack.resources.sprites[ref];if(!s)throw Error(`缺失 Sprite: ${ref}`);
     const file=this.pack.resources.textures[s.textureRef];if(!file)throw Error(`缺失贴图: ${s.textureRef}`);
     const im=await loadImage(this.url(file)),c=makeCanvas(s.rect.width,s.rect.height),ctx=c.getContext('2d'),r=s.textureRect,o=s.textureRectOffset;
-    if(r.width>0&&r.height>0)ctx.drawImage(im,r.x,im.height-r.y-r.height,r.width,r.height,o.x,c.height-o.y-r.height,r.width,r.height);
+    if(r.width>0&&r.height>0){const source=this.spriteCrop(im,s.textureRef,r);ctx.drawImage(source.canvas,source.x,source.y,r.width,r.height,o.x,c.height-o.y-r.height,r.width,r.height);}
     const result={canvas:c,meta:s};this.sprites.set(ref,result);return result;
   }
   children(n){return n.children.map(i=>this.nodes[i]).filter(c=>c.active&&!comp(c,'LayoutElement')?.m_IgnoreLayout);}
@@ -210,7 +226,7 @@ export class Renderer {
     // Compose the original planar subtree first: frame/foreground/masks retain
     // their original painter order and transparent overflow remains in the quad.
     const flat=new Renderer(this.pack,{...this.options,projection:undefined,framing:'content',ignoreRootRotation:true});
-    flat.sprites=this.sprites;flat.images=this.images;flat.gameFonts=this.gameFonts;flat.fontFamily=this.fontFamily;
+    flat.sprites=this.sprites;flat.spriteCrops=this.spriteCrops;flat.images=this.images;flat.gameFonts=this.gameFonts;flat.fontFamily=this.fontFamily;
     const result=await flat.render(n.i,[box.w,box.h],true),b=result.bounds;
     const rect={x:b.minX-24,y:b.minY-24,w:result.canvas.width/result.scale,h:result.canvas.height/result.scale};
     const quad=projectedQuad(world,rect,this.projection);

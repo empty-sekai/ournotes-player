@@ -33,3 +33,13 @@ export function previewSpriteAspect(geometry,image){
   if(geometry)return previewSpriteGeometryPlan(geometry,image.width,image.height).aspect;
   return image.width/image.height;
 }
+
+// An atlas Sprite is sampled from an integer crop around its float textureRect, with a two-pixel halo, so the
+// sampling coordinates stay small and do not depend on the atlas size. `copy` is the part of the crop inside the
+// image (the renderer repeats its edge texels into the rest); `source` is the Sprite's top-left corner in the crop.
+export function spriteCropPlan(imageWidth,imageHeight,r){
+  const top=imageHeight-r.y-r.height,x=Math.floor(r.x)-2,y=Math.floor(top)-2,
+    width=Math.ceil(r.x+r.width)-x+2,height=Math.ceil(top+r.height)-y+2,
+    left=Math.max(0,x),upper=Math.max(0,y),right=Math.min(imageWidth,x+width),bottom=Math.min(imageHeight,y+height);
+  return {x,y,width,height,copy:{sx:left,sy:upper,w:right-left,h:bottom-upper,dx:left-x,dy:upper-y},source:{x:r.x-x,y:top-y}};
+}

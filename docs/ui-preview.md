@@ -98,6 +98,9 @@ A pack whose `resources.browserFontFamily` is a non-empty CSS font family draws 
 and loads neither the glyph metrics nor the TTFs. Text content, size, colour and layout are kept; the glyphs are
 the browser's.
 
+Atlas Sprites are sampled from an integer crop around their float `textureRect` (two pixels of halo, edge texels
+repeated outside the texture), so a Sprite with the same texels draws the same in an atlas of any size.
+
 ### Source-defined perspective and content framing
 
 For a perspective Screen Space - Camera prefab, pass actual serialized Camera/Canvas fields and the source
