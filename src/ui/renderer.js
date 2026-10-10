@@ -20,6 +20,8 @@ export function loadImage(url){
 const fonts=new Map();
 export async function loadFonts(pack,resolve){
   const gameFonts=new Map();let fontFamily='sans-serif';
+  // A pack that names a CSS font family draws its text with it; no font or glyph metrics file is loaded.
+  if(typeof pack.resources?.browserFontFamily==='string'&&pack.resources.browserFontFamily.trim())return {gameFonts,fontFamily:pack.resources.browserFontFamily};
   const names=new Set((pack.document.nodes||[]).map(n=>comp(n,'TextMeshProUGUI')?.m_fontAsset?.name).filter(n=>n?.includes('VibeMO')));
   await Promise.all([...names].map(async name=>gameFonts.set(name,await loadGameFont(loadImage,resolve(pack.resources.fontMetricsByAsset?.[name]||pack.resources.fontMetrics||'fonts/vibemo.json'),resolve))));
   for(const [name,file] of Object.entries(pack.resources?.fonts||{})){

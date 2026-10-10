@@ -94,6 +94,10 @@ the requested viewport. Fixed-size layout children remain fixed inside flexible 
 do not add to visible vertical alignment. VibeMO ASCII faces use separate exported glyph metrics; available FZ
 TTFs provide the fallback text face. Other font faces fall back to the browser font.
 
+A pack whose `resources.browserFontFamily` is a non-empty CSS font family draws all of its text with that family
+and loads neither the glyph metrics nor the TTFs. Text content, size, colour and layout are kept; the glyphs are
+the browser's.
+
 ### Source-defined perspective and content framing
 
 For a perspective Screen Space - Camera prefab, pass actual serialized Camera/Canvas fields and the source

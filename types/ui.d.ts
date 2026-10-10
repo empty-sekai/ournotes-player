@@ -1,7 +1,7 @@
 /** Serialized prefab preview. Canvas 2D output does not claim Unity pixel parity. */
 export type UINodeSelector = number | string;
 export interface UIEntry { id: string; name: string; key?: string; kind: string; file?: string; status?: string; [key: string]: unknown }
-export interface UIPack { schema?: number; resourceBase?: string; document: { nodes?: Array<Record<string, any>>; [key: string]: any }; resources: { textures?: Record<string, string>; sprites?: Record<string, any>; fonts?: Record<string, string>; fontMetrics?: string; [key: string]: any } }
+export interface UIPack { schema?: number; resourceBase?: string; document: { nodes?: Array<Record<string, any>>; [key: string]: any }; resources: { textures?: Record<string, string>; sprites?: Record<string, any>; fonts?: Record<string, string>; fontMetrics?: string; browserFontFamily?: string; [key: string]: any } }
 export interface UIController { document: Record<string, any>; resources?: UIPack['resources'] }
 export interface UIReport { applied: number; numericApplied: number; objectApplied: number; missing: unknown[]; diagnostics: unknown[]; state?: string; events?: unknown[]; [key: string]: unknown }
 export interface UIProjection { fieldOfView: number; referenceViewport: [number, number]; canvasPlaneDistance: number; nearClipPlane?: number }

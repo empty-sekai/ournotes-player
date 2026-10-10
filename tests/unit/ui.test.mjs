@@ -7,6 +7,7 @@ import {applyClip,sampleClip,sampleObjectCurves,referenceNode,resolveNodeIndex,m
 import {sequencePlan,SequenceRuntime} from '../../src/ui/tween.js';
 import {rectBox,affine,linearGroupLayout,layoutProperty} from '../../src/ui/layout.js';
 import {visibleLines,textHeight,wrappingEnabled} from '../../src/ui/text-layout.js';
+import {loadFonts} from '../../src/ui/renderer.js';
 
 const node=(path,id,components=[])=>({path,name:path.split('/').at(-1),nodeId:id,active:true,components,localScale:{x:1,y:1,z:1},localPosition:{x:0,y:0,z:0}});
 const pack=()=>({document:{nodes:[node('Root','root',[{type:'CanvasGroup',m_Alpha:.3}])]},resources:{}});
@@ -124,4 +125,12 @@ test('signed rects, flexible fixed-size cells, layout priority and trailing line
   assert.equal(layoutProperty([{priority:1,preferred:-1},{priority:0,preferred:30}],'preferred'),30);
   assert.deepEqual(visibleLines(['A','','B','']),['A','','B']);assert.equal(textHeight(['A',''],20),20);assert.equal(wrappingEnabled({m_TextWrappingMode:0}),false);
   const merged=pack();mergeResources(merged,{fontMetricsByAsset:{A:'https://example.invalid/a.json'}});assert.equal(merged.resources.fontMetricsByAsset.A,'https://example.invalid/a.json');
+});
+test('a pack naming a browser font family loads no font resource',async()=>{
+  const nodes=[{components:[{class:'TextMeshProUGUI',m_fontAsset:{name:'VibeMO SDF'}}]}],resolved=[];
+  const resources={browserFontFamily:'"Noto Sans JP", sans-serif',fonts:{FZLTH:'fonts/a.ttf'},fontMetrics:'fonts/vibemo.json'};
+  const loaded=await loadFonts({document:{nodes},resources},file=>{resolved.push(file);return file;});
+  assert.equal(loaded.fontFamily,'"Noto Sans JP", sans-serif');
+  assert.equal(loaded.gameFonts.size,0);
+  assert.deepEqual(resolved,[]);
 });
