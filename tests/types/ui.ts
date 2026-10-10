@@ -1,7 +1,7 @@
 import {UILibrary,UISession,UIPlayer,OurnotesUIElement,defineOurnotesUI,cameraProjection,type UIPack,type UIReport} from 'ournotes-player/ui';
 import 'ournotes-player/ui/element';
 
-const source: UIPack={document:{nodes:[]},resources:{}};
+const source: UIPack={document:{nodes:[]},resources:{browserFontFamily:'sans-serif'}};
 const session=new UISession(source);
 session.edit(0,null,'active',false).seek(.2).reset();
 const library=new UILibrary({assets:[]},'https://example.invalid/');
