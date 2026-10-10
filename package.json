@@ -59,6 +59,10 @@
       "types": "./types/ui.d.ts",
       "default": "./src/ui/define.js"
     },
+    "./replay/preset": {
+      "types": "./types/replay-preset.d.ts",
+      "default": "./examples/songs/replay-preset.js"
+    },
     "./dist/*": "./dist/*",
     "./schema/*": "./schema/*",
     "./package.json": "./package.json"
