@@ -302,6 +302,7 @@ Every `ENGINE:` note in `src/`, by file. `npm test` checks that this list matche
 - DataUtility.GetMinSize is native; taken as border.x + border.z (Unity's definition for bordered sprites).
 - CanvasRenderer applies the inherited CanvasGroup alpha natively; here a float multiply of Color32 alpha / 255.
 - unity_GUIZTestMode is set by Unity's native canvas render path (values as above).
+- a CanvasRenderer has no sprite colour or flip; unity_SpriteColor is white and unity_SpriteProps unflipped.
 
 **`src/live/background.js`**
 
