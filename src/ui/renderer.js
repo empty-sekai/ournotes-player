@@ -1,7 +1,9 @@
 import {component as comp} from './runtime.js';
 import {loadGameFont,hasGameGlyphs,gameTextWidth,drawGameText} from './game-font.js';
-import {rectBox,aspectBox,imageAspectBox,affine,intersect,layoutProperty,linearGroupInput,linearGroupLayout} from './layout.js';
+import {rectBox,aspectBox,imageAspectBox,intersect,layoutProperty,linearGroupInput,linearGroupLayout} from './layout.js';
 import {plainText,visibleLines,wrappingEnabled,textHeight} from './text-layout.js';
+import {previewSpriteGeometryPlan,previewSpriteAspect} from './sprite-geometry.js';
+import {identity4,multiply4,nodeMatrix4,outOfPlane,projectedQuad,flatQuad,quadBounds,drawProjected,validateProjection} from './projection.js';
 export const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const number=(v,fallback=0)=>Number.isFinite(v)?v:fallback;
 const white={r:1,g:1,b:1,a:1},zeroBorder={x:0,y:0,z:0,w:0};
@@ -90,6 +92,7 @@ function fillPath(ctx,w,h,im){
 export class Renderer {
   constructor(pack,options={}){
     this.pack=pack;this.options=options;this.nodes=buildNodes(pack);this.sprites=new Map();this.preferredCache=new Map();this.images=new Map();this.fontFamily='sans-serif';this.gameFonts=new Map();
+    this.projection=options.projection?validateProjection(options.projection):null;this.regions=Object.create(null);
     this.metrics={drawn:0,hidden:0,transparent:0,unboundImages:0,particles:0};
     this.measure=makeCanvas(1,1).getContext('2d');
   }
@@ -113,7 +116,7 @@ export class Renderer {
       add([0,0],[Math.max(...lines.map(s=>hasGameGlyphs(s,text.m_fontAsset,gameFont)?gameTextWidth(s,fs,gameFont):this.measure.measureText(s).width),0)+Math.max(0,margin.x)+Math.max(0,margin.z),textHeight(lines,fs*1.16)+Math.max(0,margin.y)+Math.max(0,margin.w)],[-1,-1]);
     }
     if(image&&image.m_Enabled!==0){
-      const sprite=this.pack.resources?.sprites?.[image.m_Sprite?.spriteRef],border=sprite?.border||zeroBorder,ppu=(sprite?.pixelsPerUnit||100)/100*(image.m_PixelsPerUnitMultiplier||1),sliced=[1,2].includes(image.m_Type);
+      const sprite=image._previewSource&&image._previewSpriteGeometry||this.pack.resources?.sprites?.[image.m_Sprite?.spriteRef],border=sprite?.border||zeroBorder,ppu=(sprite?.pixelsPerUnit||100)/100*(image.m_PixelsPerUnitMultiplier||1),sliced=[1,2].includes(image.m_Type);
       add([0,0],sprite?[(sliced?border.x+border.z:sprite.rect.width)/ppu,(sliced?border.y+border.w:sprite.rect.height)/ppu]:[0,0],[-1,-1]);
     }
     const g=comp(n,'HorizontalLayoutGroup')||comp(n,'VerticalLayoutGroup')||comp(n,'RectFitVerticalLayoutGroup');
@@ -133,7 +136,7 @@ export class Renderer {
     const fit=comp(n,'ContentSizeFitter');if(fit&&fit.m_Enabled!==0){const input=this.layoutInput(n);if(fit.m_HorizontalFit)w=(fit.m_HorizontalFit===1?input.min:input.preferred)[0];if(fit.m_VerticalFit)h=(fit.m_VerticalFit===1?input.min:input.preferred)[1];}
     const ar=comp(n,'AspectRatioFitter');let aspect=ar?.m_AspectRatio||1;
     const bound=n.children.map(i=>comp(this.nodes[i],'Image')).find(im=>im?._previewSource);
-    if(bound&&this.images.has(bound._previewSource)){const im=this.images.get(bound._previewSource);aspect=im.width/im.height;}
+    if(bound&&this.images.has(bound._previewSource)){const im=this.images.get(bound._previewSource);aspect=previewSpriteAspect(bound._previewSpriteGeometry,im);}
     if(ar?.m_Enabled!==0){if(ar?.m_AspectMode===1)h=w/aspect;if(ar?.m_AspectMode===2)w=h*aspect;}
     if(ar&&ar.m_Enabled!==0&&[3,4].includes(ar.m_AspectMode))return aspectBox(pw,ph,aspect,ar.m_AspectMode,pivot);
     return rectBox(r,pw,ph,number(w),number(h));
@@ -157,7 +160,14 @@ export class Renderer {
   async imageLayer(n,im,w,h){
     if(w<=0||h<=0)return null;
     let sp;
-    if(im._previewSource)sp={canvas:this.images.get(im._previewSource)||await loadImage(im._previewSource),meta:{border:zeroBorder,pixelsPerUnit:100}};
+    if(im._previewSource){
+      const source=this.images.get(im._previewSource)||await loadImage(im._previewSource);
+      if(im._previewSpriteGeometry){
+        const plan=previewSpriteGeometryPlan(im._previewSpriteGeometry,source.width,source.height),canvas=makeCanvas(plan.canvas.width,plan.canvas.height),ctx=canvas.getContext('2d'),s=plan.source,d=plan.destination;
+        ctx.drawImage(source,s.x,s.y,s.width,s.height,d.x,d.y,d.width,d.height);
+        sp={canvas,meta:im._previewSpriteGeometry};
+      }else sp={canvas:source,meta:{border:zeroBorder,pixelsPerUnit:100}};
+    }
     else if(im.m_Sprite?.spriteRef)sp=await this.sprite(im.m_Sprite.spriteRef);
     const scale=Math.min(1,4096/w,4096/h,Math.sqrt(8388608/(w*h))),layer=makeCanvas(w*scale,h*scale),ctx=layer.getContext('2d');
     ctx.scale(scale,scale);ctx.save();const flip=comp(n,'UIFlipImage');
@@ -188,13 +198,34 @@ export class Renderer {
     const shadow=comp(n,'Shadow'),outline=comp(n,'Outline');if(shadow){ctx.shadowColor=color(shadow.m_EffectColor);ctx.shadowOffsetX=shadow.m_EffectDistance?.x||0;ctx.shadowOffsetY=-(shadow.m_EffectDistance?.y||0);}
     lines.forEach((line,i)=>{if(native){drawGameText(ctx,line,tx,ty+i*lineHeight,fs,t.m_fontColor||t.m_Color||white,gameFont);return;}if(outline){ctx.strokeStyle=color(outline.m_EffectColor);ctx.lineWidth=Math.max(Math.abs(outline.m_EffectDistance?.x||1),Math.abs(outline.m_EffectDistance?.y||1))*2;ctx.strokeText(line,tx,ty+i*lineHeight);}ctx.fillText(line,tx,ty+i*lineHeight);});ctx.restore();if(plain)this.metrics.drawn++;
   }
-  async drawNode(n,ctx,pw,ph,forced,isRoot=false){
+  async projectedSubtree(n,ctx,box,world){
+    const check=node=>{
+      if(this.options.hidden?.has(node.i)||!node.active&&!this.options.showHidden)return;
+      if(outOfPlane(node))throw Error('UI projection: nested nonplanar subtree unsupported: '+node.path);
+      for(const i of node.children)check(this.nodes[i]);
+    };
+    for(const i of n.children)check(this.nodes[i]);
+    // Compose the original planar subtree first: frame/foreground/masks retain
+    // their original painter order and transparent overflow remains in the quad.
+    const flat=new Renderer(this.pack,{...this.options,projection:undefined,framing:'content',ignoreRootRotation:true});
+    flat.sprites=this.sprites;flat.images=this.images;flat.gameFonts=this.gameFonts;flat.fontFamily=this.fontFamily;
+    const result=await flat.render(n.i,[box.w,box.h],true),b=result.bounds;
+    const rect={x:b.minX-24,y:b.minY-24,w:result.canvas.width/result.scale,h:result.canvas.height/result.scale};
+    const quad=projectedQuad(world,rect,this.projection);
+    ctx.save();try{ctx.setTransform(this.baseTransform);drawProjected(ctx,result.canvas,quad);}finally{ctx.restore();}
+    for(const [key,value] of Object.entries(flat.metrics))this.metrics[key]+=value;
+  }
+  async drawNode(n,ctx,pw,ph,forced,isRoot=false,parentWorld=identity4(),insideMask=false){
     if(this.options.hidden?.has(n.i))return;
     if(!isRoot&&!n.active&&!this.options.showHidden){this.metrics.hidden++;return;}
     const b=isRoot?{x:0,y:0,w:pw,h:ph,pivot:n.rect?.m_Pivot||{x:.5,y:.5}}:this.layout(n,pw,ph,forced),{w,h}=b,pivot=b.pivot||{x:.5,y:.5};
+    const nativeCanvas=comp(n,'Canvas'),world=multiply4(parentWorld,nodeMatrix4(b,n,isRoot||nativeCanvas&&nativeCanvas.m_RenderMode!==2));
+    if(this.projection&&!isRoot&&outOfPlane(n)){
+      if(insideMask)throw Error('UI projection: projected subtree inside a mask unsupported: '+n.path);
+      await this.projectedSubtree(n,ctx,b,world);return;
+    }
     ctx.save();try{
-      ctx.translate(b.x+w*pivot.x,b.y+h*(1-pivot.y));const q=n.localRotation||{z:0,w:1};ctx.rotate(n.euler?-n.euler.z*Math.PI/180:-2*Math.atan2(q.z,q.w));
-      const nativeCanvas=comp(n,'Canvas');
+      ctx.translate(b.x+w*pivot.x,b.y+h*(1-pivot.y));const q=n.localRotation||{z:0,w:1};ctx.rotate(isRoot&&this.options.ignoreRootRotation?0:n.euler?-n.euler.z*Math.PI/180:-2*Math.atan2(q.z,q.w));
       const s=isRoot||(nativeCanvas&&nativeCanvas.m_RenderMode!==2)?{x:1,y:1}:(n.localScale||{x:1,y:1});ctx.scale(number(s.x,1),number(s.y,1));ctx.translate(-w*pivot.x,-h*(1-pivot.y));
       const cg=comp(n,'CanvasGroup');if(cg&&!this.options.showHidden)ctx.globalAlpha*=clamp(number(cg.m_Alpha,1),0,1);
       if(ctx.globalAlpha<.001){this.metrics.transparent++;return;}
@@ -210,37 +241,38 @@ export class Renderer {
       if(hasMask&&layer&&w>0&&h>0){
         // Sprite-alpha masks need an isolated subtree, including when its graphic is hidden.
         const maskScale=Math.min(1,4096/w,4096/h),sub=makeCanvas(w*maskScale,h*maskScale),sx=sub.getContext('2d');sx.scale(maskScale,maskScale);
-        for(const i of n.children)await this.drawNode(this.nodes[i],sx,w,h,layouts.get(i));
+        for(const i of n.children)await this.drawNode(this.nodes[i],sx,w,h,layouts.get(i),false,world,true);
         sx.globalCompositeOperation='destination-in';sx.drawImage(layer,0,0,w,h);ctx.drawImage(sub,0,0,w,h);
       }else{
         if(hasMask||comp(n,'RectMask2D')||comp(n,'SoftMask')){ctx.beginPath();ctx.rect(0,0,w,h);ctx.clip();}
-        for(const i of n.children)await this.drawNode(this.nodes[i],ctx,w,h,layouts.get(i));
+        for(const i of n.children)await this.drawNode(this.nodes[i],ctx,w,h,layouts.get(i),false,world,insideMask||!!(hasMask||comp(n,'RectMask2D')||comp(n,'SoftMask')));
       }
     }catch(error){if(!error.nodePath)error.nodePath=n.path;throw error;}finally{ctx.restore();}
   }
   visibleBounds(root,w,h){
-    let bounds={minX:0,minY:0,maxX:w,maxY:h};
+    const rootBounds={minX:0,minY:0,maxX:w,maxY:h};let bounds=this.options.framing==='content'?null:rootBounds;
     const visit=(n,pw,ph,matrix,forced,clip,alpha,isRoot=false)=>{
       if(this.options.hidden?.has(n.i)||!isRoot&&!n.active&&!this.options.showHidden)return;
       const box=isRoot?{x:0,y:0,w:pw,h:ph,pivot:n.rect?.m_Pivot||{x:.5,y:.5}}:this.layout(n,pw,ph,forced),canvas=comp(n,'Canvas'),scale=isRoot||canvas&&canvas.m_RenderMode!==2?{x:1,y:1}:n.localScale||{x:1,y:1},q=n.localRotation||{z:0,w:1};
-      const local=affine.box(box,n.euler?-n.euler.z*Math.PI/180:-2*Math.atan2(q.z,q.w),scale),m=affine.mul(matrix,local),group=comp(n,'CanvasGroup');
+      const local=this.projection?nodeMatrix4(box,n,isRoot||canvas&&canvas.m_RenderMode!==2):nodeMatrix4(box,{localScale:scale,euler:{x:0,y:0,z:n.euler?.z??2*Math.atan2(q.z,q.w)*180/Math.PI}},isRoot),m=multiply4(matrix,local),group=comp(n,'CanvasGroup');
       if(group&&!this.options.showHidden)alpha*=clamp(number(group.m_Alpha,1),0,1);if(alpha<.001)return;
       const im=comp(n,'Image'),raw=comp(n,'RawImage'),text=comp(n,'TextMeshProUGUI'),mask=comp(n,'Mask'),masking=mask&&mask.m_Enabled!==0;
       const graphic=this.options.bounds||im&&im.m_Enabled!==0&&(!masking||mask.m_ShowMaskGraphic)&&number(im.m_Color?.a,1)>0||raw&&raw.m_Enabled!==0&&raw.m_Texture||text&&text.m_Enabled!==0&&text.m_text;
-      const world=affine.bounds(m,box.w,box.h);
-      if(graphic&&box.w>0&&box.h>0){const extent=intersect(world,clip);if(extent)bounds={minX:Math.min(bounds.minX,extent.minX),minY:Math.min(bounds.minY,extent.minY),maxX:Math.max(bounds.maxX,extent.maxX),maxY:Math.max(bounds.maxY,extent.maxY)};}
+      const quad=this.projection?projectedQuad(m,{x:0,y:0,w:box.w,h:box.h},this.projection):flatQuad(m,{x:0,y:0,w:box.w,h:box.h}),world=quadBounds(quad);
+      this.regions[n.nodeId||n.path]=quad.map(({x,y})=>({x,y}));
+      if(graphic&&box.w>0&&box.h>0){const extent=intersect(world,clip);if(extent)bounds=bounds?{minX:Math.min(bounds.minX,extent.minX),minY:Math.min(bounds.minY,extent.minY),maxX:Math.max(bounds.maxX,extent.maxX),maxY:Math.max(bounds.maxY,extent.maxY)}:extent;}
       if(masking||comp(n,'RectMask2D')||comp(n,'SoftMask')){clip=intersect(world,clip);if(!clip)return;}
       const layouts=this.childLayout(n,box.w,box.h);for(const i of n.children)visit(this.nodes[i],box.w,box.h,m,layouts.get(i),clip,alpha);
     };
-    visit(root,w,h,[1,0,0,1,0,0],null,null,1,true);
-    return comp(root,'Canvas')?{minX:0,minY:0,maxX:w,maxY:h}:bounds;
+    visit(root,w,h,identity4(),null,null,1,true);
+    return comp(root,'Canvas')&&this.options.framing!=='content'?rootBounds:bounds||rootBounds;
   }
-  async render(rootIndex=0){
-    Object.assign(this,await loadFonts(this.pack,file=>this.url(file)));await Promise.all(this.nodes.flatMap(n=>n.components.filter(c=>c._previewSource).map(async c=>this.images.set(c._previewSource,await loadImage(this.url(c._previewSource))))));
+  async render(rootIndex=0,rootSize=null,resourcesReady=false){
+    if(!resourcesReady){Object.assign(this,await loadFonts(this.pack,file=>this.url(file)));await Promise.all(this.nodes.flatMap(n=>n.components.filter(c=>c._previewSource).map(async c=>this.images.set(c._previewSource,await loadImage(this.url(c._previewSource))))));}
     const root=this.nodes[rootIndex];if(!root)throw Error('预制体没有根节点');
-    const vp=this.options.viewport||[1920,1080],natural=this.layout(root,...vp),w=natural.w>0?natural.w:vp[0],h=natural.h>0?natural.h:vp[1];
+    const vp=this.options.viewport||[1920,1080],natural=this.layout(root,...vp),w=rootSize?.[0]??(natural.w>0?natural.w:vp[0]),h=rootSize?.[1]??(natural.h>0?natural.h:vp[1]);
     const bounds=this.visibleBounds(root,w,h),width=Math.ceil(bounds.maxX-bounds.minX)+48,height=Math.ceil(bounds.maxY-bounds.minY)+48,scale=Math.min(1,4096/width,4096/height),canvas=makeCanvas(width*scale,height*scale),ctx=canvas.getContext('2d');ctx.scale(scale,scale);ctx.translate(24-bounds.minX,24-bounds.minY);
-    await this.drawNode(root,ctx,w,h,null,true);return {canvas,width:w,height:h,bounds,metrics:this.metrics};
+    this.baseTransform=this.projection?ctx.getTransform():null;await this.drawNode(root,ctx,w,h,null,true);return {canvas,width:w,height:h,bounds,metrics:this.metrics,regions:this.regions,scale,padding:24};
   }
   async renderAsset(){
     const doc=this.pack.document,refs=doc.sprites?(Array.isArray(doc.sprites)?doc.sprites:Object.values(doc.sprites)):doc.spriteRef?[doc]:[];
