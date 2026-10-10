@@ -533,7 +533,7 @@ export class ChatCanvasGL {
     const Mi = [1 / s, 0, 0, 0, 0, 1 / s, 0, 0, 0, 0, -1 / s, 0, W / 2, H / 2, -distance / s, 1];
     return { unity_MatrixVP: P, glstate_matrix_projection: P, unity_ObjectToWorld: M, unity_WorldToObject: Mi,
              _WorldSpaceCameraPos: [0, 0, 0], _ScreenParams: [width, height, 1 + 1 / width, 1 + 1 / height],
-             _UIMaskSoftnessX: 0, _UIMaskSoftnessY: 0, unity_GUIZTestMode: 4, worldScale: s };
+             _UIMaskSoftnessX: 0, _UIMaskSoftnessY: 0, unity_GUIZTestMode: 4, worldScale: s, ...UIDraw.spriteGlobals() };
   }
 
   // the items onto `target` (the camera colour GLTarget, bound again afterwards)

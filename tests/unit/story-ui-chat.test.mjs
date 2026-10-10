@@ -1,9 +1,10 @@
 // The chat phone's uGUI pieces on synthetic inputs: stencil states of masks and masked graphics, chat sprites (trimmed
 // sliced inner uv), the Soft Mask parameters, the ScrollRect positions, node copies, the canvas draw list and the
-// Screen Space - Camera globals.
+// Screen Space - Camera globals, the sprite constants in the globals of a canvas.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { UILayout } from "../../src/engine/ugui.js";
+import { UnityProgram } from "../../src/engine/glsl.js";
+import { UIDraw, UILayout } from "../../src/engine/ugui.js";
 import {
   ChatCanvasGL, ChatCanvasUI, ChatScrollRect, STENCIL_NONE, buildChatNodes, chatSprite, cloneChatNode, maskStencil,
   maskedStencil, softMaskParams,
@@ -162,4 +163,16 @@ test("Screen Space - Camera globals: the canvas at the plane distance fills the 
   assert.ok(close(clip(0, 0), [-1, -1]), `${clip(0, 0)}`);
   assert.ok(close(clip(1920, 1080), [1, 1]), `${clip(1920, 1080)}`);
   assert.ok(close(clip(960, 540), [0, 0]));
+});
+
+test("canvas globals: the constants a 2D Shader Graph sprite material reads, below the material's own values", () => {
+  const sprite = { _RendererColor: [1, 1, 1, 1], unity_SpriteColor: [1, 1, 1, 1], unity_SpriteProps: [1, 1, 0, 0],
+                   _GlobalMipBias: [0, 1] };
+  const ortho = UIDraw.globals(1920, 1080, 1920, 1080, 4);
+  const camera = ChatCanvasGL.globals(1920, 1080, 1920, 1080, { fov: 60, near: 0.3, far: 1000, distance: 1 });
+  for (const g of [ortho, camera]) for (const [name, v] of Object.entries(sprite)) assert.deepEqual(g[name], v, name);
+  // UIDraw.draw's sheets: per-draw, material floats, material colours, shader defaults, globals
+  const own = { _RendererColor: [1, 0, 0, 1] };
+  for (const name of Object.keys(sprite)) assert.deepEqual(UnityProgram.lookup([{}, {}, {}, {}, ortho], name, "p"), sprite[name]);
+  assert.deepEqual(UnityProgram.lookup([{}, {}, own, {}, ortho], "_RendererColor", "p"), [1, 0, 0, 1]);
 });

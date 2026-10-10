@@ -480,7 +480,17 @@ export const UIDraw = {
     const I = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
     return { unity_MatrixVP: P, glstate_matrix_projection: P, unity_ObjectToWorld: I, unity_WorldToObject: I,
              _WorldSpaceCameraPos: [W / 2, H / 2, -10], _ScreenParams: [pxW, pxH, 1 + 1 / pxW, 1 + 1 / pxH],
-             _UIMaskSoftnessX: 0, _UIMaskSoftnessY: 0, unity_GUIZTestMode: zTest };
+             _UIMaskSoftnessX: 0, _UIMaskSoftnessY: 0, unity_GUIZTestMode: zTest, ...UIDraw.spriteGlobals() };
+  },
+
+  // What a URP 2D Shader Graph material (Sprite Unlit target) on a graphic reads besides the canvas values:
+  // _RendererColor, white (UniversalRenderPipeline.SetupPerFrameShaderConstants sets the global every frame);
+  // _GlobalMipBias = (mip bias, 2 ^ mip bias), no bias; unity_SpriteColor / unity_SpriteProps, the colour and the flip
+  // signs (flipX ? -1 : 1, flipY ? -1 : 1) of a SpriteRenderer draw. A graphic's colour is in its vertices.
+  // ENGINE: a CanvasRenderer has no sprite colour or flip; unity_SpriteColor is white and unity_SpriteProps unflipped.
+  spriteGlobals() {
+    return { _RendererColor: [1, 1, 1, 1], unity_SpriteColor: [1, 1, 1, 1], unity_SpriteProps: [1, 1, 0, 0],
+             _GlobalMipBias: [0, 1] };
   },
 
   // one indexed triangle list: mat = {shader, keywords, floats, colors, defaults}, sheet = per-draw properties,
