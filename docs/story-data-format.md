@@ -528,6 +528,7 @@ A font asset is a TextMeshPro font asset reduced to the characters the episode s
 | `runtimeCharacters`, `runtimeGlyphs` | Game data: the characters a dynamic asset generates at runtime and how (else `[]` and `null`). |
 | `sourceFont` | Game data: the asset's source font file (`name`, `bytes`, `sha256`), or `null`. |
 | `source` | Open data: the font file the glyphs were generated from: `family`, `style`, `version`, `license` (the font's license name or URL as the file states it), `file` (file name), `faceIndex`, `bytes`, `sha256`, and `generator` (how the glyphs were rasterized). |
+| `browser` | Optional. A font asset whose glyphs the browser draws: `{ family, weight?, style?, pageWidth?, pageHeight?, underlayOffset?, gameFont? }`. The player makes each character's glyph when a text first uses it, with the font asset's point size, `atlasPadding` and `atlasRenderMode`, and keeps `characters` and `glyphs` as the data lists them (start with `{}`). Text layout is TextMeshPro's, from the glyph metrics; see below. |
 | `subset` | Which characters the asset holds. |
 
 Every font asset a binding names in `localized.fontAsset` holds U+005F `_` when its font has it: TextMeshPro's
@@ -535,6 +536,18 @@ underline and `<mark>` highlight draw with the `_` glyph of the text's own font 
 asset's first page. Open data put it on page 0; game data keep the game asset's glyph and record in
 `coverage.underline` (`font`, `character`, `inAsset`) whether the full game asset has it, so that a missing `_` is
 told apart from a reduced glyph set.
+
+### Browser fonts
+
+A font asset with `browser` has no atlas file. The player draws each glyph of `family` (a CSS font-family list the page can render: an installed font, a `@font-face`, or a `FontFace` added to `document.fonts` before the story starts) on Canvas 2D and builds its SDF the way the open-font data are made:
+
+- the glyph box (bearings, size, advance with 1/64 px precision) at `faceInfo.m_PointSize`; the cell is the box with each edge rounded to the nearest pixel (ties outwards), grown by a margin of `ceil(_GradientScale) + ceil(underlayOffset × _GradientScale) + 1` texels, where `_GradientScale` is `atlasPadding + 1`;
+- the glyph is drawn 8 × larger for the render modes SDF8, SDF16 and SDF32 (8230, 16422, 32806) and once for the others; a pixel is inside when its alpha reaches one half;
+- each texel holds `alpha = floor(255 × clamp(0.5 + d / (2 × (atlasPadding + 1)), 0, 1) + 0.5)`, `d` the exact Euclidean distance from an inside pixel to the nearest outside pixel (negative for an outside pixel: minus the distance to the nearest inside one), the mean over the central 2 × 2 fine pixels divided by 8 when drawn larger; the other channels are 0.
+
+The cells are packed in rows on one page of `pageWidth` × `pageHeight` texels (2048 × 2048 by default), U+005F first. The page is a texture the player owns (`<font asset name>#browser`); a text that needs more characters than the page holds raises an error that names the page size. `gameFont` names a font asset of the game (`A-OTF-ShinGoPr6N-Regular SDF`, `VibeMOPro-Medium SDF`, `FZLTH_GB18030L2_R SDF`, `Pretendard-SemiBold SDF`) whose line height, ascent and descent replace the asset's own, as for open fonts. `faceInfo` is read as it stands (the player does not measure the font), and a fallback of a browser font asset is a font asset of the data.
+
+The glyph raster of a browser differs from a font file's outline raster in anti-aliasing and hinting, so the field's values at an edge can differ by a fraction of a texel from the open-font data of the same font; the layout is the same function of the glyph metrics.
 
 ### Fallback font assets
 

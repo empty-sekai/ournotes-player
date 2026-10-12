@@ -541,7 +541,8 @@ export class TMPText {
   }
 
   static _character(f, u) {
-    const c = f.characters[String(u)];
+    let c = f.characters[String(u)];
+    if (!c && f.provider && f.provider.ensure(u)) c = f.characters[String(u)];       // a browser font draws it on demand
     if (!c) return null;
     const g = f.glyphs[String(c.glyph)];
     if (!g) throw new UIError(`${f.name}: glyph ${c.glyph} of U+${u.toString(16).toUpperCase()} missing`);

@@ -368,6 +368,7 @@ export class StoryUI {
       if (this.tex[name]) throw new UIError(`texture name ${name} used twice`);
       this.tex[name] = await GLTex.load(gl, this.dir, desc, assets);
     }
+    for (const g of this._fonts.browserFonts().values()) this.tex[g.page] = g.texture(gl);   // pages of browser fonts
     this.materials = {};
     this._addMaterials(new Map(Object.entries(this.doc.materials)), this.doc.materialKeywords);
     this._addMaterials(new Map(Object.entries(this.fonts.materials)), this.fonts.materialKeywords);

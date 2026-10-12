@@ -252,6 +252,21 @@
         "runtimeGlyphs": { "type": ["object", "null"] },
         "sourceFont": { "type": ["object", "null"] },
         "source": { "$ref": "#/$defs/source" },
+        "browser": {
+          "description": "The glyphs are drawn by the browser: characters and glyphs are made when a text first uses a character (the point size, atlasPadding and atlasRenderMode of the font asset give the SDF), on one page of pageWidth x pageHeight texels (2048 x 2048 by default), and the lists above start empty.",
+          "type": "object",
+          "required": ["family"],
+          "additionalProperties": false,
+          "properties": {
+            "family": { "type": "string", "minLength": 1 },
+            "weight": { "type": "string", "minLength": 1 },
+            "style": { "type": "string", "minLength": 1 },
+            "pageWidth": { "type": "integer", "minimum": 1 },
+            "pageHeight": { "type": "integer", "minimum": 1 },
+            "underlayOffset": { "type": "number", "minimum": 0 },
+            "gameFont": { "type": "string", "minLength": 1 }
+          }
+        },
         "subset": { "type": "string" }
       }
     },

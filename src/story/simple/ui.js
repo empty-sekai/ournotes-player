@@ -207,6 +207,7 @@ export class SimpleUIDoc {
       if (this.tex[name]) throw new UIError(`texture name ${name} used twice`);
       this.tex[name] = await GLTex.load(gl, this.dir, desc, assets);
     }
+    if (this._fonts) for (const g of this._fonts.browserFonts().values()) this.tex[g.page] = g.texture(gl);   // browser fonts' pages
     this.materials = {};
     const add = (lib, mats, keywords) => {
       for (const [name, m] of Object.entries(mats || {})) {

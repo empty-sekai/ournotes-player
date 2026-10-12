@@ -1,4 +1,5 @@
 import { F } from "../engine/core.js";
+import { BrowserGlyphFont, canvasRasterizer } from "./browser-font.js";
 
 // The font asset records a story UI lays its texts out with (the text host's fontAsset, engine/uitext.js).
 //
@@ -32,10 +33,18 @@ export const GAME_FONT_LINES = Object.freeze({
 export class StoryFontAssets {
   // fonts = ui/fonts.json (or ui/simple/fonts.json); doc = the ui.json record document laid out with them;
   // language = ui/languages.json (may be null)
-  constructor(fonts, doc, language) {
+  // options.rasterizer(spec) -> the glyph rasterizer of a browser font (browser-font.js; Canvas 2D by default)
+  constructor(fonts, doc, language, options = {}) {
     this.fonts = fonts;
+    this.rasterizer = options.rasterizer || canvasRasterizer;
+    this.browser = new Map();                         // font asset name -> its BrowserGlyphFont
     this.cache = new Map();
     this.lines = new Map();                           // font asset name -> the game's line metrics
+    // a browser font stands in for a game font asset (browser.gameFont) with that font's line metrics
+    for (const [name, f] of Object.entries((fonts && fonts.fonts) || {})) {
+      const m = f.browser && GAME_FONT_LINES[f.browser.gameFont];
+      if (m) this.lines.set(name, m);
+    }
     if (!fonts || fonts.source !== "open") return;
     const roles = (doc && doc.textStyle && doc.textStyle.roles) || {};
     const add = (asset, m) => { if (typeof asset === "string" && m && !this.lines.has(asset)) this.lines.set(asset, m); };
@@ -61,10 +70,25 @@ export class StoryFontAssets {
     if (!this.cache.has(name)) {
       const f = this.fonts.fonts[name];
       if (!f) return null;
-      this.cache.set(name, { name, ...f, faceInfo: this.faceInfo(name, f.faceInfo), textureSize: this.fonts.textures,
-                             lineBreaking: this.fonts.lineBreaking || null });
+      const rec = { name, ...f, faceInfo: this.faceInfo(name, f.faceInfo), textureSize: this.fonts.textures,
+                    lineBreaking: this.fonts.lineBreaking || null };
+      if (f.browser) {
+        // glyphs the browser draws: characters and glyphs grow on lookup, on the one page of the asset
+        const g = new BrowserGlyphFont({ name, pointSize: f.faceInfo.m_PointSize, padding: f.atlasPadding,
+                                         renderMode: f.atlasRenderMode, ...f.browser },
+                                       this.rasterizer({ pointSize: f.faceInfo.m_PointSize, ...f.browser }));
+        this.browser.set(name, g);
+        Object.assign(rec, { provider: g, characters: g.characters, glyphs: g.glyphs, textureSize: { ...g.textureSize } });
+      }
+      this.cache.set(name, rec);
     }
     return this.cache.get(name);
+  }
+
+  // the browser fonts of the data (every font asset with `browser`), made: name -> BrowserGlyphFont
+  browserFonts() {
+    for (const [name, f] of Object.entries(this.fonts.fonts || {})) if (f.browser) this.get(name);
+    return this.browser;
   }
 
   // the face info of the font asset `name`: with the line metrics of its game font, else its own
