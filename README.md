@@ -122,6 +122,7 @@ button.onclick = () => player.play();   // 浏览器要求在用户操作中开�
   - 播放器自己的项目：播放 / 暂停、按台词跳转的进度条、视频的进度条。
 - **语言**：剧情文本有数据中提供的语言（日语、英语、繁体中文、简体中文、韩语），可在播放中切换，切换后从当前台词重新开始。控制栏的语言默认跟随剧情语言，也可以用 `ui-lang` 指定。
 - **胶片颗粒**：默认不绘制；`film-grain` 属性按游戏的强度绘制（[#1](https://github.com/empty-sekai/ournotes-player/issues/1)）。
+- **自写剧情（实验功能）**：命令行工具 `scripts/story-author.mjs` 用站点的背景、音乐、对话框和 Live2D 模型把 JSON 剧本做成纯对话剧情。它检查剧本（每个问题带 JSON 指针和相近的名字），用剧情播放器把每句台词画成 PNG，并把剧情写进站点。输出都是 JSON，适合程序与 agent 使用；台词由浏览器字体绘制、按 TextMeshPro 排版（见 [docs/story-author.md](docs/story-author.md)）。
 
 用到播放器尚未重现的部分的剧情，会在开始前被拒绝播放，错误信息会指明该部分，不会播放到一半。唯一的例外是静帧上的 UIParticle 图形：它只在绘制时才被发现，剧情会在该帧停止（见 [docs/story.md](docs/story.md#episodes-the-player-refuses)）。
 
@@ -162,6 +163,7 @@ nnnotes web out/site --all --all-live2d --all-stories --player <ournotes-player 
 | 嵌入与托管、多个播放器、移动端 | [embedding.md](docs/embedding.md) |
 | Live 谱面：接口 / 数据格式 / 还原程度 | [api.md](docs/api.md) / [data-format.md](docs/data-format.md) / [fidelity.md](docs/fidelity.md) |
 | 剧情：接口与还原程度 / 功能模块 / 简易剧情播放器 / 数据格式 | [story.md](docs/story.md) / [story-features.md](docs/story-features.md) / [story-simple.md](docs/story-simple.md) / [story-data-format.md](docs/story-data-format.md) |
+| 自写剧情（实验功能，命令行） | [story-author.md](docs/story-author.md) |
 | 没有 MotionSync 控制器的模型的口型（CRI Lips 分析） | [crilips.md](docs/crilips.md) |
 | Live2D 模型：接口与行为 / 数据格式 / 还原程度 | [live2d.md](docs/live2d.md) / [data-format.md](docs/data-format.md#live2d-models) / [fidelity.md](docs/fidelity.md#live2d-models) |
 | 性能 | [performance.md](docs/performance.md) |
@@ -180,6 +182,7 @@ npm test                  # 单元测试（node --test，仅使用合成输入�
 npm run build             # 构建 dist/ 下的浏览器包
 npm run typecheck         # 检查 types/ 下的类型声明
 npm run validate-data -- <站点目录> [谱面 id ...]              # 按数据格式校验一个站点
+node scripts/story-author.mjs help                             # 自写剧情工具（实验功能）的命令
 OURNOTES_DATA=<站点目录> npm run test:data                     # 可选：用真实谱面数据在 Node 中运行播放器
 ```
 

@@ -154,6 +154,11 @@ also covers:
   control bar follows the story's language unless `ui-lang` sets it.
 - **Film grain.** It is off by default; the `film-grain` attribute draws it at the game's intensity
   ([#1](https://github.com/empty-sekai/ournotes-player/issues/1)).
+- **Story scripts (experimental).** The command-line tool `scripts/story-author.mjs` makes dialogue stories from JSON
+  scripts with a site's stages, music, talk window and Live2D models. It checks a script (each problem with its JSON
+  pointer and the nearest existing name), draws every line with the story player into PNG pictures, and builds the
+  story into the site. Its output is JSON, for programs and agents; the lines are drawn with browser fonts and laid
+  out by TextMeshPro's rules ([docs/story-author.md](docs/story-author.md)).
 
 An episode that uses a part the player does not reproduce is refused before it starts, with an error that names that
 part; it never plays halfway. The one exception is a UIParticle graphic on a still. It is found only while drawing,
@@ -207,6 +212,7 @@ nnnotes web out/site --all --all-live2d --all-stories --player <ournotes-player 
 | Embedding and hosting, several players, mobile | [embedding.md](docs/embedding.md) |
 | Live charts: API / data format / fidelity | [api.md](docs/api.md) / [data-format.md](docs/data-format.md) / [fidelity.md](docs/fidelity.md) |
 | Stories: API and fidelity / feature modules / simple story player / data format | [story.md](docs/story.md) / [story-features.md](docs/story-features.md) / [story-simple.md](docs/story-simple.md) / [story-data-format.md](docs/story-data-format.md) |
+| Story scripts (experimental, command line) | [story-author.md](docs/story-author.md) |
 | The mouths of models without a MotionSync controller (CRI Lips analysis) | [crilips.md](docs/crilips.md) |
 | Live2D models: API and behaviour / data format / fidelity | [live2d.md](docs/live2d.md) / [data-format.md](docs/data-format.md#live2d-models) / [fidelity.md](docs/fidelity.md#live2d-models) |
 | Performance | [performance.md](docs/performance.md) |
@@ -227,6 +233,7 @@ npm test                  # unit tests (node --test, synthetic inputs only)
 npm run build             # browser bundles in dist/
 npm run typecheck         # checks the type declarations in types/
 npm run validate-data -- <site dir> [chart id ...]              # validates a site against the data format
+node scripts/story-author.mjs help                              # the commands of the story script tool (experimental)
 OURNOTES_DATA=<site dir> npm run test:data                      # opt-in: runs the player in Node on real chart data
 ```
 
