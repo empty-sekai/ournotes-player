@@ -1322,7 +1322,11 @@ export class TMPText {
       // uvs: glyph rect grown by padding + style padding (SaveGlyphVertexInfo), moved into the page by the packed
       // integer offset
       const gr = c.g.rect, pk = c.g.packed;
-      if (!pk) throw new UIError(`${c.font.name}: glyph for U+${c.u.toString(16)} has no atlas page`);
+      if (!pk) {
+        // a glyph without texels (the zero glyph of a synthesized control character) keeps its place and draws nothing
+        if (!gr.m_Width && !gr.m_Height) { c.quad = null; c.xScale = 0; continue; }
+        throw new UIError(`${c.font.name}: glyph for U+${c.u.toString(16)} has no atlas page`);
+      }
       const page = c.font.textureSize[pk.texture];
       if (!page) throw new UIError(`${c.font.name}: atlas page ${pk.texture} missing`);
       const tw = page.width, th = page.height, P2 = F(c.P + c.SP);

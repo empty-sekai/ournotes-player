@@ -156,3 +156,17 @@ test("TMPText lays out a browser font on demand with the glyphs' own metrics, an
   assert.equal(meshes[0].texture, "Test SDF#browser");                    // glyphs and the underline: one page
   assert.ok(assets.browserFonts().get("Test SDF").characters[0x43]);      // made when first looked up
 });
+
+test("a synthesized control character of a browser font keeps its place and draws nothing", () => {
+  const assets = new StoryFontAssets(fontsDoc(), null, null, { rasterizer: boxRaster });
+  const host = { fontAsset: (n) => assets.get(n), material: () => material };
+  const t = new TMPText(host, { path: "Test/Text", rect: { x: 0, y: -200, w: 1000, h: 200 } }, record());
+  t.setText("A⁠B");
+  t.generate();
+  const [a, j, b] = t.chars;
+  assert.equal(j.u, 0x2060);
+  assert.equal(j.quad, null);
+  close(b.xAdvance - a.xAdvance, 21.6);                                   // the word joiner adds no advance
+  assert.deepEqual(t.meshes()[0].chars.map((c) => c.u), [0x41, 0x42]);    // two quads
+  assert.equal(assets.browserFonts().get("Test SDF").characters[0x2060], undefined);
+});
