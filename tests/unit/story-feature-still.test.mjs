@@ -90,6 +90,7 @@ test("DOTween Sequence: delays become offsets, callbacks at their time, restart 
   assert.equal(mgr.kill("a"), 1);
   assert.equal(p1.active, false);
   assert.equal(mgr.play(tx), 0);                                          // nested tweens are never reached
+  assert.throws(() => new DTSequence(mgr).insert(0, new DTSequence(mgr)), /nested Sequences not implemented/);
   mgr.dispose();
 });
 

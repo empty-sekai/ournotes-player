@@ -358,9 +358,11 @@ export class DTSequence extends DTween {
     return true;
   }
 
-  // Sequence.Insert -> DoInsert: the tween's delay becomes an offset, loops -1 become int.MaxValue, autoKill off
+  // Sequence.Insert -> DoInsert: the tween's delay becomes an offset, loops -1 become int.MaxValue, autoKill off; a
+  // nested Sequence is not implemented
   insert(at, t) {
     if (!this._validate(t)) return this;
+    if (t.tweenType === DT_TYPE.Sequence) unsupported("nested Sequences");
     this.mgr._remove(t);
     at = F(at + t.delay);
     this.lastTweenInsertTime = at;
@@ -425,7 +427,7 @@ export class DTSequence extends DTween {
           if (fired > 0) from = to;
           else if (isInverse && !this.isBackwards) from = F(this.duration - from);
           to = isInverse ? 0 : this.duration;
-          if (this.cycle(from, to, mode, useInverse, isInverse, true)) return true;
+          if (this.cycle(from, to, mode, useInverse, isInverse)) return true;
           if (this.loopType === DT_LOOP.Yoyo) isInverse = !isInverse;
         }
         if (cycles !== this.completedLoops || cyclePos !== this.position) return !this.active;
@@ -437,12 +439,13 @@ export class DTSequence extends DTween {
     if (newCompletedSteps === 1 && this.isComplete) return false;
     if (newCompletedSteps > 0 && !this.isComplete) {
       from = useInverse ? this.duration : 0;
-      if (this.loopType === DT_LOOP.Restart && to > 0) this.cycle(this.duration, 0, DT_MODE.Goto, false, false, false);
+      if (this.loopType === DT_LOOP.Restart && to > 0) this.cycle(this.duration, 0, DT_MODE.Goto, false, false);
     } else from = useInverse ? F(this.duration - prevPos) : prevPos;
     return this.cycle(from, useInverse ? F(this.duration - newPos) : newPos, mode, useInverse, isInverse);
   }
 
-  // Sequence.ApplyInternalCycle: true when the Sequence must be killed
+  // Sequence.ApplyInternalCycle: true when the Sequence must be killed. Its multiCycleStep argument only places nested
+  // Sequences, which insert refuses.
   cycle(fromPos, toPos, mode, useInverse, prevPosIsInverse) {
     const wasPlaying = this.isPlaying;
     const o = this.objs;
