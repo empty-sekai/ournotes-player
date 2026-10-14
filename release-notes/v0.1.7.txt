@@ -1,0 +1,11 @@
+ournotes-player 0.1.7 draws story text with browser fonts, adds an experimental command-line story author, and fixes Sprite drawing in UI previews, sprite shader graphs on story canvases and asset loading.
+
+- A story font asset can carry `browser`: the player draws each character of a CSS font family on Canvas 2D, builds its signed distance field and lays the text out with TextMeshPro's rules, so every character of the family shows. See [browser fonts](https://github.com/empty-sekai/ournotes-player/blob/main/docs/story-data-format.md#browser-fonts).
+- `scripts/story-author.mjs` (experimental) makes dialogue stories from JSON scripts with a site's stages, music, talk window and Live2D models. It checks a script, draws each line into a PNG in a headless browser and builds the story into the site; every command prints JSON, for programs and agents. See the [story author guide](https://github.com/empty-sekai/ournotes-player/blob/main/docs/story-author.md).
+- `ournotes-player/replay/preset` exports the replay input presets of the chart data page, with type declarations.
+- A UI pack can name a browser font family for its text. Atlas Sprites are sampled from integer local crops, and Sprite geometry and native formation perspective are kept.
+- uGUI draws on story canvases give a URP 2D Shader Graph sprite material the engine values it reads.
+- The chart data page supports nominal chart expectations.
+- Failed and aborted asset loads are cancelled, and a model's MotionSync native resources are released with it.
+
+Validation: Node.js 22, 24 and 26 CI, type checks, reproducible builds and package checks pass; 665 unit tests pass and two are skipped.
