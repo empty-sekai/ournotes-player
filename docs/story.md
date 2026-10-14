@@ -33,7 +33,7 @@ mouth from the CRI Lips analysis in the story's own data ([crilips.md](crilips.m
 
 | Import | Contents |
 |---|---|
-| `ournotes-player/story` | `StoryPlayer`, `StorySession`, `AssetStore`, `loadStoryStore`, `fetchStoryManifest`, `defineOurnotesStory`, `OurnotesStoryElement`, `registerCommand`, `registeredCommands`, `STORY_FRAME_RATE` (30), `STORY_MANIFEST_FORMAT` / `STORY_MANIFEST_FORMATS` (the current story manifest format and the ones the player reads), the game's enums (`ADV_COMMAND`, `ADV_PLAYBACK_SPEED`, `ADV_PLAYBACK_MODE`, `ADV_CANVAS_LAYER`) |
+| `ournotes-player/story` | `StoryPlayer`, `StorySession`, `SimpleStorySession` (the session of an Overlay episode), `AssetStore`, `loadStoryStore`, `fetchStoryManifest`, `defineOurnotesStory`, `OurnotesStoryElement`, `parseStorySpeed`; the command registry (`registerCommand`, `registeredCommands`, `unregisteredCommands`, `StoryPlayerCore`, `StoryCommandError`) and the story UI interface (`checkStoryUI`, `StoryUILayer`, `createStoryUILayers`); `STORY_FRAME_RATE` (30), `STORY_MANIFEST_FORMAT` / `STORY_MANIFEST_FORMATS` (the current story manifest format and the ones the player reads), `STORY_LANGUAGES` (language code → text field), `storyLines` (the rows that show a line), `advViewport` (the 13:6 ADV viewport in a screen), the control labels (`STORY_STRINGS`, `storyStrings`), the game's enums (`ADV_COMMAND`, `ADV_PLAYBACK_SPEED`, `ADV_PLAYBACK_SPEEDS`, `ADV_PLAYBACK_MODE`, `ADV_CANVAS_LAYER`) |
 | `ournotes-player/story/element` | the same exports; importing it defines `<ournotes-story>` |
 
 Browser bundles in `dist/`: `ournotes-player.story.js` (ESM, the API), `ournotes-player.story.element.js` (ESM, defines

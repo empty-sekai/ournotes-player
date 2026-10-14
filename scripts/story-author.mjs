@@ -14,7 +14,8 @@
 //     new     <manifest> [--lang <l>]                   a starter script on that base story (the script itself)
 //     check   <script> [--fix <file>]                   the script's errors and warnings, each with its JSON pointer
 //                                                       and, where one is known, its fix (JSON Patch operations)
-//     render  <script> --out <dir> [--from <line>] [--to <line>] [--width <px>] [--settle <frames>] [--fix <file>]
+//     render  <script> --out <dir> [--from <line>] [--to <line>] [--width <px>] [--settle <frames>]
+//             [--columns <n>] [--fix <file>]
 //                                                       plays the script in the story player and saves a picture of
 //                                                       each line once its text is shown (line-<n>.png) and contact
 //                                                       sheets of them (sheet.png); a line that overflows the talk

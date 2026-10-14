@@ -43,8 +43,10 @@ Look at the pictures after each render: the contact sheet shows every line with 
 
 ## Commands
 
-All commands take `--site <dir>`. Exit status: 0 done, 1 the script has errors or the job failed (the JSON has
-`"ok": false` and the errors, or `error`), 2 a usage error (message on stderr).
+All commands take `--site <dir>`. The commands that draw pictures take `--chrome`, `--gpu` and `--core` (see
+[Requirements](#requirements)) and give up a picture job that has not finished after `--timeout <s>` seconds (default
+600). Exit status: 0 done, 1 the script has errors or the job failed (the JSON has `"ok": false` and the errors, or
+`error`), 2 a usage error (message on stderr).
 
 ### bases
 
