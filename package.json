@@ -112,6 +112,7 @@
     "test:data": "node --test tests/data/*.test.mjs",
     "typecheck": "tsc -p tests/types",
     "lint": "eslint .",
+    "contract:check": "node scripts/check-contracts.mjs",
     "validate-data": "node scripts/validate-data.mjs",
     "read-set": "node scripts/read-set.mjs"
   },

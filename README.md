@@ -182,6 +182,7 @@ npm test                  # 单元测试（node --test，仅使用合成输入�
 npm run build             # 构建 dist/ 下的浏览器包
 npm run typecheck         # 检查 types/ 下的类型声明
 npm run lint              # ESLint 检查（eslint.config.js）
+npm run contract:check    # 核对 package.json、入口导出、类型声明、schema 与文档是否一致
 npm run validate-data -- <站点目录> [谱面 id ...]              # 按数据格式校验一个站点
 node scripts/story-author.mjs help                             # 自写剧情工具（实验功能）的命令
 OURNOTES_DATA=<站点目录> npm run test:data                     # 可选：用真实谱面数据在 Node 中运行播放器

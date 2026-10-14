@@ -22,10 +22,13 @@ npm run typecheck      # type-checks tests/types/ against types/
 npm run lint           # ESLint's recommended rules (eslint.config.js)
 npm run build          # dist/: ESM, minified ESM and IIFE bundles with source maps
 node scripts/build.mjs --check   # builds twice and fails if the outputs differ
+npm run contract:check # package.json, entry points, types, schemas and docs agree (after a build)
 ```
 
 The source is plain JavaScript ES modules (`src/`), with type declarations in `types/`. Keep both in step when the
-public API changes, and document it in [docs/api.md](docs/api.md).
+public API changes, and document it in the entry points table of [docs/api.md](docs/api.md) (or of the entry's own
+document); `npm run contract:check` compares the three, and checks the documents' links, the format ids and the
+schemas.
 
 ### Tests
 
