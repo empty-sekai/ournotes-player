@@ -52,7 +52,6 @@ const S = {
   storyFonts: schema("story-fonts"), storyLanguage: schema("story-language"),
 };
 
-const TEXT_FILE = /\.(json|glsl)$/;
 const STORY_HOST_FORMAT = "ournotes.story-host/1";
 const STORY_MANIFEST_SITED = "ournotes.story-manifest/2";
 const extOf = (p) => (p.match(/\.([A-Za-z0-9]+)$/) || [])[1]?.toLowerCase() ?? "";

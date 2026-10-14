@@ -157,7 +157,7 @@ export class StoryRenderer {
     for (const [k, [tw, th, o]] of Object.entries(specs)) {
       Object.defineProperty(rt, k, { enumerable: true, configurable: true,
                                      get: () => { const t = new GLTarget(gl, tw, th, o); own(k, t); return t; },
-                                     set: (v) => own(k, v) });
+                                     set: (v) => { own(k, v); } });
     }
     void rt.color, void rt.post;             // every frame draws into these two
     this.post.resizeBloom(w, h);

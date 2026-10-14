@@ -1,4 +1,3 @@
-import { CriLipsData } from "./data.js";
 import { CriLipsPipeline } from "./pipeline.js";
 
 // The CRI Lips analyzer object the story hands to Live2DLipSyncController.setLipsAnalyzer for a model

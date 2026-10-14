@@ -31,7 +31,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { Browser, findBrowser } from "./lib/story-author/chrome.js";
 import {
-  FONT_PRESETS, SCRIPT_FORMAT, checkScript, compileScript, fontFamily, motionStem, motionStems,
+  FONT_PRESETS, SCRIPT_FORMAT, checkScript, compileScript, fontFamily, motionStems,
   parseScript, scriptTexts,
 } from "./lib/story-author/script.js";
 import { CUBISM_CORE_URL, startServer } from "./lib/story-author/server.js";

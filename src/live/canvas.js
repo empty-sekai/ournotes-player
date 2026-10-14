@@ -82,7 +82,7 @@ export class LiveRenderCanvas {
     const atlas = await GLTex.load(gl, this.r.base, sp.texture);
     this.shadowSprite = new UISprite(sp.sprite, { ...sp, pixelsPerUnit: sp.pixelsToUnits }, atlas);
     this.buf = { vao: gl.createVertexArray(), vbo: gl.createBuffer(), ibo: gl.createBuffer() };
-    for (const [node, e] of this.graphics) e.mat = this._material(e.g.m_Material);
+    for (const e of this.graphics.values()) e.mat = this._material(e.g.m_Material);
     // AspectRatioFitter.aspectRatio = (float)tex.width / (float)tex.height of the composite (FullInitialize)
     this.aspect = F(F(this.bg.target.width) / F(this.bg.target.height));
     this.copy = LiveCopyProgram.create(gl);

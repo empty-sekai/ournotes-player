@@ -104,7 +104,7 @@ export class AssetStore {
           if (j.stored !== undefined && raw.byteLength === j.stored) {
             const encoding = assetEncoding(asset);
             if (!encoding) throw new Error(`${j.path}: ${asset} has a stored size but no .gz / .br name`);
-            try { buf = u8(await decode(raw, encoding)); } catch (e) { throw new Error(`${j.path}: ${asset}: ${e.message}`); }
+            try { buf = u8(await decode(raw, encoding)); } catch (e) { throw new Error(`${j.path}: ${asset}: ${e.message}`, { cause: e }); }
             requestSignal.throwIfAborted();
             if (buf.byteLength !== j.size) throw new Error(`${j.path}: ${buf.byteLength} bytes decoded, manifest ${j.size}`);
           } else if (raw.byteLength !== j.size) {

@@ -37,11 +37,6 @@ const FAST_FORWARD_MAX_FRAME_DROP = 3, SEEK_RESPEED_FREEZE_ALPHA = F(0.7), SEEK_
 // Mathf.Approximately
 export const approximately = (a, b) => Math.abs(b - a) < Math.max(1e-6 * Math.max(Math.abs(a), Math.abs(b)), 1.1210387714598537e-44);
 
-const waitUntil = async (loop, pred, stop) => {
-  while (!pred()) { await loop.yield("Update"); if (stop && stop()) return false; }
-  return true;
-};
-
 // Fwk.Video.VideoInfo with the CRI Mana player state
 export class VideoInfo {
   constructor(uid, masterId, rec, source) {
@@ -254,7 +249,7 @@ export class StoryVideo {
     this._hook = (l) => this._update(l.deltaTime);
     ctx.loop.on("update", this._hook);
     // Preload: prepare up to two, then the first becomes the current video
-    while (this._enqueue()) {}
+    while (this._enqueue()) { /* prepares one */ }
     if (this.tasks.length) this._setCurrent(this.tasks.shift());
   }
 

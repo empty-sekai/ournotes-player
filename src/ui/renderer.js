@@ -149,7 +149,7 @@ export class Renderer {
     if(forced)return forced;
     const nativeCanvas=comp(n,'Canvas');
     if(nativeCanvas&&nativeCanvas.m_RenderMode!==2)return {x:0,y:0,w:pw,h:ph,pivot:{x:0,y:1}};
-    const r=n.rect||{},min=r.m_AnchorMin||{x:.5,y:.5},max=r.m_AnchorMax||min,pos=r.m_AnchoredPosition||{x:0,y:0},sz=r.m_SizeDelta||{x:0,y:0},pivot=r.m_Pivot||{x:.5,y:.5};
+    const r=n.rect||{},min=r.m_AnchorMin||{x:.5,y:.5},max=r.m_AnchorMax||min,sz=r.m_SizeDelta||{x:0,y:0},pivot=r.m_Pivot||{x:.5,y:.5};
     let w=pw*(max.x-min.x)+sz.x,h=ph*(max.y-min.y)+sz.y;
     const fit=comp(n,'ContentSizeFitter');if(fit&&fit.m_Enabled!==0){const input=this.layoutInput(n);if(fit.m_HorizontalFit)w=(fit.m_HorizontalFit===1?input.min:input.preferred)[0];if(fit.m_VerticalFit)h=(fit.m_VerticalFit===1?input.min:input.preferred)[1];}
     const ar=comp(n,'AspectRatioFitter');let aspect=ar?.m_AspectRatio||1;

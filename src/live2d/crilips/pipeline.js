@@ -1,4 +1,3 @@
-import { F } from "../../engine/core.js";
 import { CriBiquadLpf } from "./biquad.js";
 import { CriResampler } from "./resample.js";
 import { CriLipsCore } from "./lipscore.js";

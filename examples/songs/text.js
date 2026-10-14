@@ -12,10 +12,6 @@ export const UI = {
     jackets: "封面", jacketsHint: "显示或隐藏封面", theme: "切换浅色 / 深色", swap: "交换横纵轴",
     band: "乐队", difficulty: "难度",
     heads: { rank: "谱面排行", charts: "谱面图表" },
-    lead: {
-      rank: (songs, charts) => `${songs} 首歌、${charts} 张谱面的效率、活动评级、速度、等级与时长。得分数值按所选游玩场景计算：默认撃奏ライブ、三个区间都是第 1 名（最佳情况），也可切到不开激走的自由 Live，见说明。点任意一行看谱面详情；作词作曲、音频和谱面预览见 moenotes。`,
-      charts: (songs, charts) => `${songs} 首歌、${charts} 张谱面的分布。散点图的两轴可任选，点任意一点看谱面详情。`,
-    },
     empty: "没有符合条件的谱面", emptyHint: "当前的乐队、难度、搜索词或“只看前沿”把所有谱面都排除了。", clear: "清除筛选",
     diff: { easy: "Easy", normal: "Normal", hard: "Hard", expert: "Expert" },
     rankBy: {
@@ -132,10 +128,6 @@ export const UI = {
     jackets: "Jackets", jacketsHint: "Show or hide the jackets", theme: "Light / dark", swap: "Swap the axes",
     band: "Band", difficulty: "Difficulty",
     heads: { rank: "Chart rankings", charts: "Chart figures" },
-    lead: {
-      rank: (songs, charts) => `Efficiency, event ranks, speed, level and length of ${songs} songs and ${charts} charts. Score figures follow the play scenario chosen: by default Gekisou Live at rank 1 in all three ranges (the best case), or Free Live without Gekisou; see the guide. Open any row for the chart's details; credits, audio and chart previews are on moenotes.`,
-      charts: (songs, charts) => `How ${songs} songs and ${charts} charts spread. Pick any two figures for the scatter; open any point for the chart's details.`,
-    },
     empty: "No chart matches", emptyHint: "The band, difficulties, search or “frontier only” leave out every chart.", clear: "Clear filters",
     diff: { easy: "Easy", normal: "Normal", hard: "Hard", expert: "Expert" },
     rankBy: {
@@ -354,7 +346,6 @@ export const REPLAY_UI = {
 export const GUIDE = {
   "zh": {
     "title": "定义、推导与成立条件",
-    "lead": "排行与适性展示理论最佳打法的统计参考；谱面详情还可逐音符计算给定输入的一局。新 chart-stats/3 使用标称概率期望与计算包围区间，旧 music-data/1 的采样统计仍可读取。两者使用同一套 ournotes-deck Rust 模型，原生逐帧核对的案例见下表。",
     "sections": [
       {
         "title": "得分模型",
@@ -639,7 +630,6 @@ export const GUIDE = {
   },
   "en": {
     "title": "Definitions, derivations and conditions",
-    "lead": "Rankings and aptitude show statistical references for theoretical best play. Chart details can also calculate one play from per-note inputs. New chart-stats/3 data uses nominal expectations and numerical enclosures; legacy music-data/1 samples remain readable. Both use the same ournotes-deck Rust model; the native frame checks are listed below.",
     "sections": [
       {
         "title": "Score model",

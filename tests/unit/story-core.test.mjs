@@ -254,8 +254,7 @@ test("playback speed divides the auto-advance timing", async () => {
 test("manual advance: a line waits for a tap; a tap while typing reveals it and needs a second tap", async () => {
   const s = makeStory([talk(0, 1), talk(1, 1)], { auto: false });
   const taps = { 30: 1, 40: 1, 45: 1, 200: 1, 260: 1 };
-  let n = 0;
-  await run(s, { each: (k) => { n = k; if (taps[k]) s.core.tap(); } });
+  await run(s, { each: (k) => { if (taps[k]) s.core.tap(); } });
   const f = (k) => Number(s.trace.find((t) => t.includes(` #${k} `)).split(" ")[0]);
   // line 0 shows at frame 1; the tap at 30 (typing over) advances it; line 1's first tap (40) comes while typing
   assert.ok(f(1) >= 31 && f(1) <= 32, `line 1 at ${f(1)}`);

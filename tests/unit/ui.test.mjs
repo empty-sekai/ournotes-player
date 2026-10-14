@@ -4,7 +4,7 @@ import {test} from 'node:test';
 import {UILibrary,UISession} from '../../src/ui/index.js';
 import {resourceURLs} from '../../src/ui/library.js';
 import {applyClip,sampleClip,sampleObjectCurves,referenceNode,resolveNodeIndex,mergeResources,assignField} from '../../src/ui/runtime.js';
-import {sequencePlan,SequenceRuntime} from '../../src/ui/tween.js';
+import {sequencePlan} from '../../src/ui/tween.js';
 import {rectBox,affine,linearGroupLayout,layoutProperty} from '../../src/ui/layout.js';
 import {visibleLines,textHeight,wrappingEnabled} from '../../src/ui/text-layout.js';
 import {loadFonts} from '../../src/ui/renderer.js';

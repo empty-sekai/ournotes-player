@@ -283,8 +283,7 @@ const main = async () => {
   // the route heading: the view's title and what it answers
   const renderHead = () => {
     const t = u();
-    const [title, lead] = S.view === "guide" ? [g().title, g().lead]
-      : [t.heads[S.view], t.lead[S.view](songs.songs.length, rows.length)];
+    const title = S.view === "guide" ? g().title : t.heads[S.view];
     put(head, h("div", { class: "page-head" }, h("div", { class: "page-head-title" }, icon("star", "ic star"), h("h1", {}, title), betaBadge("page-beta-note"),
       h("span", { class: "track", "aria-hidden": "true" })), S.view === "guide" && g().reminder ? h("aside", {id:"page-beta-note",class:"guide-reminder",role:"note"}, h("strong",{},g().reminder.title),g().reminder.priority ? h("p",{},h("strong",{},g().reminder.priority)) : null, h("p",{},modelText(g().reminder.text))) : h("span", {id:"page-beta-note",class:"sr-only"},t.betaNote)));
   };

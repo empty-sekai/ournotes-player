@@ -2,7 +2,6 @@
 // inputs only: the rasterizer draws filled boxes.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { F } from "../../src/engine/core.js";
 import { TMPText } from "../../src/engine/uitext.js";
 import { BrowserGlyphFont, oversampleOf, pixelBox, sdfTexels, signedDistance } from "../../src/story/browser-font.js";
 import { StoryFontAssets } from "../../src/story/ui-fonts.js";
