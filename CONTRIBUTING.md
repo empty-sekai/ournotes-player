@@ -12,12 +12,14 @@ data is outside this repository.
 
 ## Development
 
-Node.js 22 or later. There are no runtime dependencies; the development dependencies are esbuild and TypeScript.
+Node.js 22 or later. There are no runtime dependencies; the development dependencies are esbuild, TypeScript and
+ESLint.
 
 ```sh
 npm ci
 npm test               # unit tests: node --test tests/unit/*.test.mjs
 npm run typecheck      # type-checks tests/types/ against types/
+npm run lint           # ESLint's recommended rules (eslint.config.js)
 npm run build          # dist/: ESM, minified ESM and IIFE bundles with source maps
 node scripts/build.mjs --check   # builds twice and fails if the outputs differ
 ```

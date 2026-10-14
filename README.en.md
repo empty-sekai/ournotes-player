@@ -232,6 +232,7 @@ npm ci
 npm test                  # unit tests (node --test, synthetic inputs only)
 npm run build             # browser bundles in dist/
 npm run typecheck         # checks the type declarations in types/
+npm run lint              # ESLint (eslint.config.js)
 npm run validate-data -- <site dir> [chart id ...]              # validates a site against the data format
 node scripts/story-author.mjs help                              # the commands of the story script tool (experimental)
 OURNOTES_DATA=<site dir> npm run test:data                      # opt-in: runs the player in Node on real chart data

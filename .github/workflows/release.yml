@@ -31,6 +31,7 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm test
       - run: npm run typecheck
+      - run: npm run lint
       - run: node scripts/build.mjs --check
 
       - name: Check the tag against package.json
