@@ -116,3 +116,20 @@ test("FxSpriteRenderer: a program with unity_SpriteColor / unity_SpriteProps tak
   assert.deepEqual(b.color0, [128 / 255, 64 / 255, 1, 128 / 255].map(F));
   assert.equal(a.n, 4); assert.equal(b.n, 4);
 });
+
+test("StoryRenderer: the per-object light count follows the layer of each drawn item", () => {
+  const loop = new PlayerLoop(30);
+  const camera = new AdvCamera(loop, cameraNode());
+  const r = new StoryRenderer(headlessGL(), null, { camera, session: { stage: null } }, { unityLighting: false }, loop);
+  // two point lights at the origin that light the character layers Camera1..Camera5 (6..10)
+  r.addLights = [0, 1].map(() => ({ pos: [0, 0, 0, 1], range: 5, layers: 0b11111000000 }));
+  const t = new Transform("Item");
+  const lightCount = (frame, layer) => frame.perObject(t, layer).unity_LightData[1];
+  const frame = { globals: {}, perObject: (tr, layer) => r._perObject(tr, layer) };
+  const seen = [];
+  const item = (layer, ownLayer) => ({ sortingOrder: 0, dist: 0, layer, draw: (f) => seen.push(lightCount(f, ownLayer)) });
+  // a character on Camera1 (6) and one off the five slots (Default, 0), effects on AdvBack (12) and AdvFront (13), and
+  // a draw that names its own layer
+  r._drawList([item(6), item(0), item(12), item(13), item(12, 8)], frame);
+  assert.deepEqual(seen, [2, 0, 0, 0, 2]);
+});

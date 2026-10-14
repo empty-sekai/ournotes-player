@@ -314,9 +314,13 @@ export class StoryRenderer {
     return items.sort((a, b) => (a.sortingOrder - b.sortingOrder) || (b.dist - a.dist));
   }
 
-  // `prev`: the item drawn just before (Live2DDrawing leaves out the state its previous draw set)
+  // `prev`: the item drawn just before (Live2DDrawing leaves out the state its previous draw set). A draw's perObject
+  // without a layer takes the item's.
   _drawList(items, frame) {
-    Live2DDrawing.drawItems(StoryRenderer.sortItems(items), (it, prev) => ({ ...frame, layer: it.layer ?? 12, prev }));
+    Live2DDrawing.drawItems(StoryRenderer.sortItems(items), (it, prev) => {
+      const layer = it.layer ?? 12;
+      return { ...frame, layer, perObject: (t, l) => frame.perObject(t, l ?? layer), prev };
+    });
   }
 
   _bindMesh(prog, bufs) {
@@ -451,19 +455,20 @@ export class StoryRenderer {
     const gl = this.gl, w = vp.w, h = vp.h;
     for (const c of this.characters) c.gl.renderMasks();          // CubismMaskCommandBuffer (before cameras)
     const globals = { ...this._cameraGlobals(w, h), ...this._lightSheet() };
+    // perObject takes the Transform and the layer the renderer is on; the per-object light count is culled by the
+    // light's culling mask against that layer. _drawList gives each item its own layer, effect draws pass theirs.
     const frame = { globals, perObject: (t, layer) => this._perObject(t, layer) };
-    const liveFrame = { globals, perObject: (t) => this._perObject(t, 6) };
     const fr = this.scene.fieldRenderer;
     // main camera
     this.rt.color.bind();
     gl.disable(gl.SCISSOR_TEST); gl.colorMask(true, true, true, true);
     const cc = this.scene.camera.clearColor;
     gl.clearColor(cc[0], cc[1], cc[2], cc[3]); gl.clear(gl.COLOR_BUFFER_BIT);
-    if (fr.needsOffscreen()) this._offscreen(liveFrame);
+    if (fr.needsOffscreen()) this._offscreen(frame);
     else {
       this.rt.color.bind();
       this._drawList([...this._backgroundItems(), ...this._characterItems(),
-                      ...StoryRenderer.mainCameraItems(this._extraItems(liveFrame))], liveFrame);
+                      ...StoryRenderer.mainCameraItems(this._extraItems(frame))], frame);
     }
     const stack = this.scene.volume.stack;
     this.post.buildLut(stack);
@@ -476,7 +481,7 @@ export class StoryRenderer {
     if (fr.capture.pending) {
       const res = fr.capture.pending; fr.capture.pending = null;
       this.rt.capture.bind(); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
-      this._drawList([...this._backgroundItems(), ...this._extraItems(liveFrame).filter((it) => it.layer === 12)], liveFrame);
+      this._drawList([...this._backgroundItems(), ...this._extraItems(frame).filter((it) => it.layer === 12)], frame);
       this.loop.yield("Update").then(() => res(this.rt.capture));
     }
     // UI overlay camera onto the same target
