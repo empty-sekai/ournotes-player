@@ -1,11 +1,14 @@
 // The story author's page code: runs in the headless browser (chrome.js) on the author's server (server.js) and
 // posts the pictures it draws to /out/<name>.png. run(job) does one job and returns its report:
 //   story    plays a composed story manifest with StorySession, stepping 1/30 s at a time, and takes a picture of
-//            each line once its text is fully shown (then taps to the next line); contact sheets of the pictures
+//            each line once its text is fully shown (then taps to the next line); contact sheets of the pictures.
+//            Each frame says how long the line took to show and how long the player would have held it in auto mode
+//            (autoSeconds), and a line whose text overflows its talk window comes with the wrap the fix is built from
 //   model    a model (ModelSession) with each expression, and in each motion, on contact sheets
 //   stages   the background pictures of a base story's stages on a contact sheet
 // Progress goes to console.log (the author prints it on stderr).
 import { AssetStore } from "../../../src/data/assets.js";
+import { TMP_WRAP } from "../../../src/engine/uitext.js";
 import { ModelSession } from "../../../src/live2d/session.js";
 import { loadStoryStore } from "../../../src/story/assets.js";
 import { NEXT_STEP } from "../../../src/story/player-core.js";
@@ -92,6 +95,39 @@ const talkLayout = (s) => {
            overflow: width > widthLimit + 0.01 || height > heightLimit + 0.01 };
 };
 
+// Where word wrapping breaks the talk text, for the fix of a line that does not fit: the talk text laid out again with
+// TextMeshPro's word wrapping (its rules, the font's CJK line breaking rules included: the breaks the game's text
+// engine takes), then with its own wrapping mode again. -> {lines: the text of each line (the characters laid out,
+// the line feed that ends it included), asc, desc: the ascender and descender of each line} of a text that fits the
+// window's width once broken, else null (a single word stays wider than the window).
+const wrapLayout = (s) => {
+  const talk = s.ui && s.ui.talk, node = talk && talk.p.talkText;
+  if (!node || !node.text) return null;
+  const t = node.text, r = node.rect, mg = t.margin, limit = Math.max(0, r.w - mg.x - mg.z), mode = t.wrapping;
+  try {
+    t.setWrapping(TMP_WRAP.Normal);
+    t.generate();
+    const info = t.lines.filter(Boolean);
+    if (!info.length || info.some((l) => (l.maxAdvance || 0) > limit + 0.01)) return null;
+    const lines = info.map((l, i) => t.chars.slice(l.first, i + 1 < info.length ? info[i + 1].first : t.chars.length)
+      .filter(Boolean).map((c) => String.fromCodePoint(c.u)).join(""));
+    return { lines, asc: info.map((l) => l.ascender), desc: info.map((l) => l.descender) };
+  } catch (e) {
+    console.log(`no wrap layout: ${e.message}`);
+    return null;
+  } finally {
+    t.setWrapping(mode);
+    t.generate();
+  }
+};
+
+// The seconds the player holds a typed line of `length` characters in auto mode, without voices
+// (AdvTextCommandHelper.WaitAutoPlayText): _waitTalkTextUnitTime per character, at least _minTalkDisplayTime, at the
+// playback speed rate `speed`.
+const autoHold = (P, length, speed) => Math.max(P._waitTalkTextUnitTime * length, P._minTalkDisplayTime) / speed;
+
+const round2 = (v) => Math.round(v * 100) / 100;
+
 // job: {manifest, lang, family, sample, width, height, quality, from, to, settle, maxSeconds, columns, cellWidth,
 // lines: [{line, title, detail}] (the labels of the contact sheet)}
 const story = async (job) => {
@@ -107,20 +143,29 @@ const story = async (job) => {
                                                     sound: false, voice: false, seed: 1, quality: job.quality,
                                                     width: job.width, height: job.height });
   console.log(`loaded in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+  // the characters the typewriter of the current line types (the talk view's setTalk -> {totalLength})
+  let length = 0;
+  const setTalk = s.ui.setTalk.bind(s.ui);
+  s.ui.setTalk = (text) => { const t = setTalk(text); length = t.totalLength; return t; };
+  const P = s.ctx.settings.player;
   const frames = [], thumbs = [];
   const cellW = job.cellWidth, cellH = Math.round(cellW * job.height / job.width);
   const limit = Math.round(job.maxSeconds * 30);
-  let shown = job.from - 1, idle = 0;
+  let shown = job.from - 1, idle = 0, current = -1, started = 0;
   try {
     while (!s.ended && shown < job.to) {
       await s.step({ draw: false });
       const line = s.line;
+      if (line !== current) { current = line; started = s.time; }
       if (line > shown && !s.ui.isTyping && s.core.nextStep === NEXT_STEP.AllowNext) {
+        const timing = { characters: length, typing: round2(s.time - started),
+                         autoHold: round2(autoHold(P, length, s.core.speedRate())) };
         for (let i = 0; i < job.settle; i++) await s.step({ draw: false });
         s.render();
         const file = `line-${String(line).padStart(3, "0")}.png`;
         await post(file, await pngOf(canvas));
-        frames.push({ line, file, time: Math.round(s.time * 100) / 100, talk: talkLayout(s) });
+        const talk = talkLayout(s), wrap = talk && talk.overflow ? wrapLayout(s) : null;
+        frames.push({ line, file, time: round2(s.time), talk, timing, ...(wrap ? { wrap } : {}) });
         thumbs.push({ line, image: await createImageBitmap(canvas, { resizeWidth: cellW, resizeHeight: cellH, resizeQuality: "high" }) });
         console.log(`line ${line}`);
         shown = line;

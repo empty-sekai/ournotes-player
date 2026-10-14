@@ -8,8 +8,9 @@ import path from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import {
-  SCRIPT_FORMAT, checkScript, compileScript, cueLabel, fontFamily, modelActions, musicChoices, nearest, parseScript,
-  plainText, resolveMotion, stageBackground, stageChoices, withBrowserFonts,
+  SCRIPT_FORMAT, applyFixes, checkScript, compileScript, cueLabel, fontFamily, freeSlot, layoutFix, lineGroups,
+  modelActions, musicChoices, nearest, parseScript, plainText, resolveMotion, stageBackground, stageChoices, wrapText,
+  withBrowserFonts,
 } from "../../scripts/lib/story-author/script.js";
 import { Site } from "../../scripts/lib/story-author/site.js";
 import { fileFetch, nodeDecode } from "../../scripts/lib/headless.mjs";
@@ -227,6 +228,118 @@ test("a second scene fades out, clears the stage and fades in; a positions beat 
   assert.equal(c.scenes, 2);
 });
 
+test("a script's problem names the fix that writes it in", () => {
+  const { errors } = parseScript({
+    format: SCRIPT_FORMAT, base: "b", cast: { a: { model: "m_a", name: "Ann" } },
+    beats: [{ scene: "garden", positions: { a: "middle" } }, { id: "x", say: "a", txt: "hi" }, { id: "x", narrate: "no" },
+            { narrate: "x", postions: {} }],
+  });
+  const by = Object.fromEntries(errors.map((e) => [e.path, e]));
+  assert.deepEqual(by["/beats/1/txt"].fix, [{ op: "move", from: "/beats/1/txt", path: "/beats/1/text" }]);  // rename
+  assert.equal(by["/beats/0/positions/a"].suggestion, undefined);    // "middle" is no near name for a position
+  const camera = parseScript({ format: SCRIPT_FORMAT, base: "b", cast: {},
+    beats: [{ scene: "garden", camera: "midle" }] }).errors.find((e) => e.code === "unknownCamera");
+  assert.deepEqual(camera.fix, [{ op: "replace", path: "/beats/0/camera", value: "middle" }]);
+  assert.deepEqual(by["/beats/2/id"].fix, [{ op: "replace", path: "/beats/2/id", value: "x_2" }]);         // free id
+  assert.equal(by["/beats/3/postions"].suggestion, undefined);       // no near name in this beat's keys
+  assert.equal(by["/beats/3/postions"].fix, undefined);              // and so no fix
+  assert.deepEqual(by["/beats/3/postions"].expected, ["id", "narrate"]);
+  assert.equal(parseScript({ format: SCRIPT_FORMAT, zzz: 1 }).errors[0].fix, undefined);
+  // a key whose near name is taken is left alone: renaming onto it would lose a value
+  const taken = parseScript({ format: SCRIPT_FORMAT, base: "b", cast: {},
+    beats: [{ scene: "garden", positions: { a: "left" }, psotions: {} }] }).errors.find((e) => e.code === "unknownKey");
+  assert.equal(taken.suggestion, "positions");
+  assert.equal(taken.fix, undefined);
+  assert.equal(freeSlot(5, new Set([5])), "left");                   // the nearest free position, ties to the left
+  assert.equal(freeSlot(5, new Set([5, 3])), "right");
+  assert.equal(freeSlot(3, new Set([1, 3, 5, 7, 9])), null);
+});
+
+test("where the game wraps a line, and how its lines are cut into the window and spread over beats", () => {
+  assert.deepEqual(wrapText("He said hello there.", ["He said hello ", "there."]), ["He said hello", "there."]);
+  // the word joiner the talk window has after a "\", and a line feed of the text
+  assert.deepEqual(wrapText("x\\\ny z", [`x\\${WJ}\n`, "y z"]), ["x\\", "y z"]);
+  assert.deepEqual(wrapText("one two", ["one ", "two", ""]), ["one", "two", ""]);
+  assert.equal(wrapText("one two", ["one ", "three"]), null);        // not this text
+  assert.equal(wrapText("one two", []), null);
+  assert.equal(wrapText("ab", ["a"]), null);
+
+  // four lines of 60 px, 30 px apart: two lines stack 90 px, three 120, four 150
+  const asc = [40, 10, -20, -50], desc = [-20, -50, -80, -110];
+  assert.deepEqual(lineGroups(asc, desc, 150), [[0, 4]]);
+  assert.deepEqual(lineGroups(asc, desc, 120), [[0, 2], [2, 4]]);    // three fit, but two and two are as few groups
+  assert.deepEqual(lineGroups(asc, desc, 60), [[0, 1], [1, 2], [2, 3], [3, 4]]);
+  assert.equal(lineGroups(asc, desc, 50), null);                     // a line alone is taller than the window
+  assert.equal(lineGroups([], [], 30), null);
+  // lines of 10, 10, 40 and 10 px: the even groups do not fit, so each group takes as many lines as fit
+  assert.deepEqual(lineGroups([0, -10, -20, -60], [-10, -20, -60, -70], 45), [[0, 2], [2, 3], [3, 4]]);
+
+  const a3 = asc.slice(0, 3), d3 = desc.slice(0, 3), beat = { say: "a", text: "one two three four" };
+  const wrap = { lines: ["one two ", "three ", "four"], asc: a3, desc: d3 };
+  // the window holds one line: the text stays on the beat and gets its own for each further line
+  const fix = layoutFix({ beat, index: 2, wrap, heightLimit: 60 });
+  assert.deepEqual(fix.texts, ["one two", "three", "four"]);
+  assert.deepEqual(fix.fix, [{ op: "replace", path: "/beats/2/text", value: "one two" },
+                             { op: "add", path: "/beats/3", value: { say: "a", text: "three" } },
+                             { op: "add", path: "/beats/4", value: { say: "a", text: "four" } }]);
+  // a narration's beats are narrations too; the window holding two lines, the second beat takes the rest
+  const said = layoutFix({ beat: { narrate: "one two three four" }, index: 0, wrap, heightLimit: 90 });
+  assert.deepEqual(said.fix, [{ op: "replace", path: "/beats/0/narrate", value: "one two\nthree" },
+                              { op: "add", path: "/beats/1", value: { narrate: "four" } }]);
+  // the window holds all three: the line breaks where the game wraps it
+  assert.deepEqual(layoutFix({ beat, index: 0, wrap, heightLimit: 120 }).fix,
+                   [{ op: "replace", path: "/beats/0/text", value: "one two\nthree\nfour" }]);
+  assert.equal(layoutFix({ beat, index: 0, wrap: null, heightLimit: 120 }), null);
+  assert.equal(layoutFix({ beat: { say: "a", text: "one\ntwo\nthree" }, index: 0,             // it fits as written
+                           wrap: { lines: ["one\n", "two\n", "three"], asc: a3, desc: d3 }, heightLimit: 120 }), null);
+  assert.equal(layoutFix({ beat, index: 0, wrap, heightLimit: 50 }), null);                     // a line is too tall
+});
+
+test("the fixes of a script's problems are applied, later beats first", () => {
+  // a script with a mistyped stage, a mistyped beat key, a mistyped motion, a repeated beat id and a line that does
+  // not fit the window
+  const doc = script([
+    { scene: "gardne", positions: { a: "center", b: "center" } },
+    { say: "a", text: "One two three" },
+    { id: "x", say: "a", txt: "Hi", motion: "mtn_smil01" },
+    { id: "x", narrate: "The end." },
+  ]);
+  const c = checked(doc);
+  assert.deepEqual(codes(c.errors), [["/beats/2/txt", "unknownKey"], ["/beats/2/text", "missing"],
+                                     ["/beats/3/id", "duplicateId"], ["/beats/0/scene", "unknownStage"],
+                                     ["/beats/0/positions/b", "positionTaken"], ["/beats/2/motion", "unknownMotion"]]);
+  // the wrap of the first line's text and the room the window has
+  const wrap = { lines: ["One two ", "three"], asc: [40, 10], desc: [-20, -50] };
+  const layout = layoutFix({ beat: doc.beats[1], index: 1, wrap, heightLimit: 60 });
+  const { script: fixed, applied, failed } = applyFixes(doc, [...c.errors, { path: "/beats/1", code: "textTooTall", fix: layout.fix }]);
+  assert.deepEqual(failed, []);
+  // what the fixed script checks as
+  assert.deepEqual(checked(fixed).errors, []);
+  assert.deepEqual(fixed.beats, [
+    { scene: "garden", positions: { a: "center", b: "left" } },
+    { say: "a", text: "One two" },
+    { say: "a", text: "three" },
+    { id: "x", say: "a", text: "Hi", motion: "mtn_smile01" },       // a renamed key keeps its place
+    { id: "x_2", narrate: "The end." },
+  ]);
+  // later beats first, so that the beats the line's fix adds do not move the ones after it; a problem without a
+  // fix (the missing text) is not among them
+  assert.deepEqual(applied.map((a) => [a.path, a.code]), [["/beats/3/id", "duplicateId"], ["/beats/2/txt", "unknownKey"],
+                                                          ["/beats/2/motion", "unknownMotion"], ["/beats/1", "textTooTall"],
+                                                          ["/beats/0/scene", "unknownStage"],
+                                                          ["/beats/0/positions/b", "positionTaken"]]);
+  assert.deepEqual(doc.beats[2], { id: "x", say: "a", txt: "Hi", motion: "mtn_smil01" });  // the document is kept
+
+  // a fix that cannot be applied is reported and left out; the others still go in
+  const why = applyFixes({ beats: [{ say: "a", text: "x" }] }, [
+    { path: "/beats/1/text", code: "textTooTall", fix: [{ op: "replace", path: "/beats/1/text", value: "y" }] },
+    { path: "/beats/0", code: "other", fix: [{ op: "remove", path: "/beats/0" }] },
+  ]);
+  assert.deepEqual(why.applied, []);
+  assert.deepEqual(why.failed.map((f) => [f.code, f.message]), [["textTooTall", "/beats/1/text does not exist"],
+                                                               ["other", 'operation "remove" is not supported']]);
+});
+
 test("the compiled rows are commands the story player runs", () => {
   const ep = compiled(script([
     { scene: "garden", music: "sound_bgm_adv_quiet_morning", location: "L", positions: { a: "left" } },
@@ -379,5 +492,21 @@ test("the commands without a browser: new, check, build; the built story loads",
     r = run(["build", file, "--site", dir, "--name", "Bad Name"]);
     assert.equal(r.status, 2);
     assert.equal(run(["check", file, "--site", dir, "--nope"]).status, 2);
+
+    // check --fix: the script with its fixes applied, checked again
+    fs.writeFileSync(file, JSON.stringify({ ...doc, beats: [{ scene: "gardn", positions: { c1: "left", b: "left" } },
+                                                            { say: "b", txt: "Hello" }] }));
+    const fixedFile = path.join(dir, "fixed", "s.json");
+    r = run(["check", file, "--site", dir, "--fix", fixedFile]);
+    assert.equal(r.status, 1);
+    assert.deepEqual(codes(r.out.errors), [["/beats/1/txt", "unknownKey"], ["/beats/1/text", "missing"],
+                                           ["/beats/0/scene", "unknownStage"], ["/beats/0/positions/b", "positionTaken"]]);
+    assert.deepEqual(r.out.fixed, { file: fixedFile, applied: [{ path: "/beats/1/txt", code: "unknownKey" },
+      { path: "/beats/0/scene", code: "unknownStage" }, { path: "/beats/0/positions/b", code: "positionTaken" }],
+      failed: [], ok: true, errors: 0, warnings: 0 });
+    assert.deepEqual(JSON.parse(fs.readFileSync(fixedFile, "utf8")).beats,
+                     [{ scene: "garden", positions: { c1: "left", b: "far-left" } }, { say: "b", text: "Hello" }]);
+    assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).beats[0].scene, "gardn");          // the script is kept
+    assert.equal(run(["check", fixedFile, "--site", dir]).status, 0);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

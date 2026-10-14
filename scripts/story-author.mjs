@@ -12,11 +12,13 @@
 //     model   <id> [--out <dir>]                        a model's motions and expressions; --out: <id>-expressions.png
 //                                                       and <id>-motions.png, the model showing each
 //     new     <manifest> [--lang <l>]                   a starter script on that base story (the script itself)
-//     check   <script>                                  the script's errors and warnings, each with its JSON pointer
-//     render  <script> --out <dir> [--from <line>] [--to <line>] [--width <px>] [--settle <frames>]
+//     check   <script> [--fix <file>]                   the script's errors and warnings, each with its JSON pointer
+//                                                       and, where one is known, its fix (JSON Patch operations)
+//     render  <script> --out <dir> [--from <line>] [--to <line>] [--width <px>] [--settle <frames>] [--fix <file>]
 //                                                       plays the script in the story player and saves a picture of
 //                                                       each line once its text is shown (line-<n>.png) and contact
-//                                                       sheets of them (sheet.png)
+//                                                       sheets of them (sheet.png); a line that overflows the talk
+//                                                       window comes with a fix that breaks or splits it
 //     build   <script> --name <name>                    writes the story into the site: custom-stories/<name>.json
 //                                                       and its assets under assets/
 //     serve   [--port <n>]                              serves the package and the site on 127.0.0.1 to watch the
@@ -26,12 +28,13 @@
 //   --gpu              draw with the GPU (default: SwiftShader, the same pictures on every machine)
 //   --core <url|file>  Live2D Cubism Core (default: Live2D's distribution)
 //   --timeout <s>      give up a picture job after this long (default 600)
+//   --fix <file>       check, render: write the script with every fix applied to <file> (it may be the script)
 // Exit status: 0 done, 1 the script has errors or the job failed (the JSON says why: {"ok": false, ...}), 2 usage.
 import fs from "node:fs";
 import path from "node:path";
 import { Browser, findBrowser } from "./lib/story-author/chrome.js";
 import {
-  FONT_PRESETS, SCRIPT_FORMAT, checkScript, compileScript, fontFamily, motionStems,
+  FONT_PRESETS, SCRIPT_FORMAT, applyFixes, checkScript, compileScript, fontFamily, layoutFix, motionStems,
   parseScript, scriptTexts,
 } from "./lib/story-author/script.js";
 import { CUBISM_CORE_URL, startServer } from "./lib/story-author/server.js";
@@ -40,7 +43,7 @@ import { Site, SiteError } from "./lib/story-author/site.js";
 class UsageError extends Error {}
 
 const VALUE_OPTIONS = new Set(["site", "lang", "out", "from", "to", "width", "settle", "name", "search", "limit", "chrome",
-                               "core", "timeout", "port", "columns"]);
+                               "core", "timeout", "port", "columns", "fix"]);
 const FLAG_OPTIONS = new Set(["gpu", "help"]);
 
 const parseArgs = (argv) => {
@@ -127,12 +130,13 @@ const readScript = (file) => {
   }
 };
 
-// a script checked against its site: {ok, script, language, errors, warnings, base, models, actions}
+// a script checked against its site: {ok, doc, script, language, errors, warnings, base, models, actions} (doc: the
+// document as read)
 const loadScript = async (site, file) => {
   const doc = readScript(file);
   if (doc.parseError) return { ok: false, errors: [doc.parseError], warnings: [] };
   const { script, errors } = parseScript(doc);
-  if (!script) return { ok: false, errors, warnings: [] };
+  if (!script) return { ok: false, doc, errors, warnings: [] };
   let base = null;
   if (script.base) {
     try {
@@ -143,14 +147,27 @@ const loadScript = async (site, file) => {
       errors.push({ path: "/base", code: "unknownBase", message: e.message });
     }
   }
-  if (!base) return { ok: false, script, errors, warnings: [] };
+  if (!base) return { ok: false, doc, script, errors, warnings: [] };
   const models = site.models().map((m) => m.id), keys = Object.fromEntries(site.models().map((m) => [m.id, m.key]));
   const actions = {};
   for (const c of script.cast) if (models.includes(c.model) && !actions[c.model]) actions[c.model] = (await site.model(c.model)).actions;
   const checked = checkScript(script, { base, models, actions });
   const all = [...errors, ...checked.errors];
-  return { ok: all.length === 0, script, language: checked.language, errors: all, warnings: checked.warnings, base,
+  return { ok: all.length === 0, doc, script, language: checked.language, errors: all, warnings: checked.warnings, base,
            models: keys, actions };
+};
+
+// --fix <file>: the script document with the fixes of `problems` applied, written to <file> and checked again ->
+// {file, applied, failed, ok, errors, warnings}: the fixes applied and the ones that failed, and how the written
+// script checks (its error and warning counts)
+const writeFixed = async (site, opts, doc, problems) => {
+  if (!doc) throw new UsageError("--fix: the script is not JSON, so it cannot be fixed");
+  const { script, applied, failed } = applyFixes(doc, problems);
+  const file = path.resolve(opts.fix);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${pretty(script)}\n`);
+  const c = await loadScript(site, file);
+  return { file, applied, failed, ok: c.ok, errors: c.errors.length, warnings: c.warnings.length };
 };
 
 const compileChecked = (c) => compileScript(c.script, { base: c.base, models: c.models, actions: c.actions }, c.language);
@@ -248,12 +265,13 @@ const commands = {
   },
 
   async check({ args, opts }) {
-    const c = await loadScript(openSite(opts), args[0]);
+    const site = openSite(opts), c = await loadScript(site, args[0]);
     const res = { ok: c.ok, language: c.language, errors: c.errors, warnings: c.warnings };
     if (c.ok) {
       const k = compileChecked(c);
       Object.assign(res, { lines: k.lines.length, scenes: k.scenes, font: familyOf(c) });
     }
+    if (opts.fix) res.fixed = await writeFixed(site, opts, c.doc, [...c.errors, ...c.warnings]);
     return res;
   },
 
@@ -282,16 +300,27 @@ const commands = {
     const warnings = [...c.warnings];
     const frames = r.frames.map((f) => {
       const l = byLine.get(f.line), t = f.talk;
+      // a line that overflows has one fix (its text broken where the game wraps it, and spread over beats after it
+      // where the window holds fewer lines), on its first warning
+      let fix = f.wrap ? layoutFix({ beat: c.doc.beats[l.beat], index: l.beat, wrap: f.wrap, heightLimit: t.heightLimit }) : null;
+      const how = fix ? (fix.texts.length > 1 ? `; the fix spreads it over ${fix.texts.length} lines of the script`
+                                               : "; the fix breaks it where the game wraps it") : "";
+      const warn = (w) => {
+        if (fix) { Object.assign(w, { suggestion: fix.texts, fix: fix.fix }); fix = null; }
+        warnings.push(w);
+      };
       if (t && t.width > t.widthLimit + 0.01)
-        warnings.push({ path: l.path, code: "textTooWide", message: `line ${f.line} runs past the talk window ` +
-                        `(${t.width} > ${t.widthLimit}): break it with "\\n" or shorten it` });
+        warn({ path: l.path, code: "textTooWide", message: `line ${f.line} runs past the talk window ` +
+               `(${t.width} > ${t.widthLimit}): break it with "\\n" or shorten it${how}` });
       if (t && t.height > t.heightLimit + 0.01)
-        warnings.push({ path: l.path, code: "textTooTall", message: `line ${f.line} has ${t.lines} lines, taller than the ` +
-                        `talk window (${t.height} > ${t.heightLimit}): split it into two lines of the script` });
+        warn({ path: l.path, code: "textTooTall", message: `line ${f.line} has ${t.lines} lines, taller than the ` +
+               `talk window (${t.height} > ${t.heightLimit}): split it into two lines of the script${how}` });
       return { line: f.line, path: l.path, ...(l.id ? { id: l.id } : {}), speaker: l.speaker, text: l.text,
-               image: path.join(out, f.file), talk: f.talk };
+               image: path.join(out, f.file), talk: f.talk, timing: f.timing };
     });
-    return { ok: true, out, sheets: r.sheets.map((f) => path.join(out, f)), frames, warnings, seconds: r.seconds };
+    const res = { ok: true, out, sheets: r.sheets.map((f) => path.join(out, f)), frames, warnings, seconds: r.seconds };
+    if (opts.fix) res.fixed = await writeFixed(site, opts, c.doc, warnings);
+    return res;
   },
 
   async build({ args, opts }) {

@@ -10,8 +10,10 @@
 //   {"narrate": <text>}                                                 a line without a speaker
 // parseScript checks the document's shape; checkScript checks its names against the site (stages, music, models,
 // motions, expressions) and the staging (positions, speakers on stage). Every problem names the JSON pointer of the
-// value, and an unknown name comes with the names that exist and the nearest one. compileScript turns a script without
-// errors into the episode's command rows (episode.json) and the story index (story.json).
+// value, an unknown name comes with the names that exist and the nearest one, and a problem with a known fix carries it
+// as JSON Patch operations (applyFixes applies them; layoutFix makes the fix of a line that overflows the talk
+// window). compileScript turns a script without errors into the episode's command rows (episode.json) and the story
+// index (story.json).
 
 import { ADV_COMMAND } from "../../../src/story/interfaces.js";
 import { STORY_LANGUAGES } from "../../../src/story/params.js";
@@ -22,6 +24,12 @@ export const SCRIPT_FORMAT = "ournotes.story-script/1";
 export const POSITIONS = Object.freeze({ "far-left": 1, left: 3, center: 5, right: 7, "far-right": 9 });
 // the side a slot's motions face: the game's motions come in _L, _C and _R variants
 const SIDE = { 1: "L", 3: "L", 5: "C", 7: "R", 9: "R" };
+
+// The name of the position nearest `slot` that `occupied` (a set of position values) does not hold, or null when every
+// position is taken. -> "far-left" | "left" | "center" | "right" | "far-right"
+export const freeSlot = (slot, occupied) =>
+  Object.keys(POSITIONS).sort((a, b) => Math.abs(POSITIONS[a] - slot) - Math.abs(POSITIONS[b] - slot) || POSITIONS[a] - POSITIONS[b])
+    .find((k) => !occupied.has(POSITIONS[k])) || null;
 // focus data: the camera distance
 export const CAMERAS = Object.freeze({ near: 1, middle: 2, far: 3 });
 export const FONT_PRESETS = Object.freeze(["sans", "serif", "rounded"]);
@@ -92,14 +100,20 @@ export const nearest = (name, names) => {
 
 const EXPECTED_MAX = 40;
 export const byName = (a, b) => String(a).localeCompare(String(b), "en", { numeric: true });
-// an error about a name that is not one of `names` (`where`: what holds them, if not the script): the names (up to
-// EXPECTED_MAX) and the nearest one
-const unknown = (path, code, what, name, names, where = "") => {
+
+// the JSON Patch operation that renames the object key at `path` to `key`
+const renameOp = (path, key) => ({ op: "move", from: path, path: `${path.slice(0, path.lastIndexOf("/"))}/${tok(key)}` });
+
+// An error about a name that is not one of `names` (`where`: what holds them, if not the script): the names (up to
+// EXPECTED_MAX) and the nearest one, with the fix that writes it in: `fix` "replace" (the name is the value at
+// `path`), "rename" (the name is the key at `path`) or null (no fix).
+const unknown = (path, code, what, name, names, where = "", fix = "replace") => {
   const list = [...names], near = nearest(name, list);
   return { path, code, message: `${what} ${JSON.stringify(name)} does not exist${where ? ` in ${where}` : ""}` +
            (list.length ? (near ? `; did you mean ${JSON.stringify(near)}?` : "") : ` (${where || "it"} has none)`),
            ...(list.length <= EXPECTED_MAX ? { expected: list } : { expectedCount: list.length }),
-           ...(near ? { suggestion: near } : {}) };
+           ...(near ? { suggestion: near } : {}),
+           ...(near && fix ? { fix: [fix === "rename" ? renameOp(path, near) : { op: "replace", path, value: near }] } : {}) };
 };
 
 // ------------------------------------------------------------------------------------------------ text
@@ -116,6 +130,130 @@ export const plainText = (s) => str(s).replace(/\r\n?/g, "\n").replace(/</g, LT_
 // "sound_bgm_adv_the_tender_light" -> "The Tender Light"
 export const cueLabel = (cue) => str(cue).replace(/^sound_bgm_(adv_)?/i, "").split("_").filter(Boolean)
   .map((w) => w[0].toUpperCase() + w.slice(1)).join(" ");
+
+// ------------------------------------------------------------------------------------------------ layout fixes
+
+// The word joiner plainText writes after a "\": it is in the text the talk window lays out, not in the script's.
+const JOINER = String.fromCharCode(0x2060);
+
+// The lines a text wraps into, as the script writes them: `shown` are the lines of plainText(text) the talk window
+// lays out with word wrapping (page.js), each with the line feed that ends it, if any. Apart from the word joiners,
+// plainText writes one character for each character of the text, so the two line up character for character. ->
+// the lines without the line feeds and the spaces at their ends, or null when `shown` is not the text.
+export const wrapText = (text, shown) => {
+  const src = [...str(text).replace(/\r\n?/g, "\n")];
+  const lines = (shown || []).map((l) => [...l].filter((c) => c !== JOINER));
+  const flat = lines.flat();
+  if (!lines.length || flat.length !== src.length || flat.join("") !== [...plainText(src.join(""))].filter((c) => c !== JOINER).join(""))
+    return null;
+  const out = [];
+  let at = 0, wrapped = false;
+  for (const l of lines) {
+    let line = src.slice(at, at + l.length).join("");
+    at += l.length;
+    if (wrapped) line = line.replace(/^[ \t]+/, "");                   // the space a wrapped line starts after
+    wrapped = !line.endsWith("\n");
+    out.push(line.replace(/[ \t]*\n?$/, ""));
+  }
+  return out;
+};
+
+// The lines (with the ascender and descender of each: their top and bottom in the text) cut into runs that each fit
+// `heightLimit`, as even as the longest run that fits allows: [[from, to), ...], or null when a line alone does not
+// fit.
+export const lineGroups = (asc, desc, heightLimit) => {
+  const fits = (a, b) => asc[a] - desc[b - 1] <= heightLimit + 0.01;
+  const n = asc.length;
+  let most = 0;
+  while (most < n && fits(0, most + 1)) most++;
+  if (!most) return null;
+  const count = Math.ceil(n / most), size = Math.ceil(n / count), even = [];
+  for (let a = 0; a < n; a += size) even.push([a, Math.min(n, a + size)]);
+  if (even.every(([a, b]) => fits(a, b))) return even;
+  const greedy = [];
+  for (let a = 0; a < n;) {
+    let b = a + 1;
+    if (!fits(a, b)) return null;
+    while (b < n && fits(a, b + 1)) b++;
+    greedy.push([a, b]);
+    a = b;
+  }
+  return greedy;
+};
+
+// The fix of a line whose text does not fit the talk window: its text broken where TextMeshPro wraps it and, where
+// the window holds fewer lines, spread over beats of the same speaker after it. `beat`: the beat as the script writes
+// it (say or narrate) at `index`; `wrap`: {lines, asc, desc} of its text laid out with word wrapping (page.js: null
+// when a line stays wider than the window); `heightLimit`: the room the window has. -> {texts, fix}, or null when the
+// text as written already fits or breaking it does not help (a single line taller than the window).
+export const layoutFix = ({ beat, index, wrap, heightLimit }) => {
+  const key = "say" in beat ? "text" : "narrate", text = beat[key];
+  if (!wrap) return null;
+  const lines = wrapText(text, wrap.lines), groups = lines && lineGroups(wrap.asc, wrap.desc, heightLimit);
+  if (!groups) return null;
+  const texts = groups.map(([a, b]) => lines.slice(a, b).join("\n"));
+  const fix = [];
+  if (texts[0] !== text) fix.push({ op: "replace", path: `/beats/${index}/${key}`, value: texts[0] });
+  texts.slice(1).forEach((t, i) => fix.push({ op: "add", path: `/beats/${index + 1 + i}`,
+                                               value: key === "text" ? { say: beat.say, text: t } : { narrate: t } }));
+  return fix.length ? { texts, fix } : null;
+};
+
+// ------------------------------------------------------------------------------------------------ applying fixes
+
+// The JSON Patch operations of the fixes (RFC 6902): replace, add, and move of an object key to another key of the
+// same object (a rename, which keeps the key's place). -> null, or why `op` cannot be applied to `doc`.
+const applyOp = (doc, op) => {
+  const tokens = (p) => str(p).split("/").slice(1).map((t) => t.replace(/~1/g, "/").replace(/~0/g, "~"));
+  const parentOf = (ts) => {
+    let o = doc;
+    for (const t of ts.slice(0, -1)) o = o && typeof o === "object" ? o[t] : undefined;
+    return o && typeof o === "object" ? o : null;
+  };
+  const ts = tokens(op.path), key = ts[ts.length - 1], parent = parentOf(ts);
+  if (!parent) return `${op.path} does not exist`;
+  const index = Array.isArray(parent) && /^\d+$/.test(key) ? Number(key) : -1;
+  if (op.op === "replace") {
+    if (Array.isArray(parent) ? index < 0 || index >= parent.length : !(key in parent)) return `${op.path} does not exist`;
+    parent[Array.isArray(parent) ? index : key] = op.value;
+    return null;
+  }
+  if (op.op === "add") {
+    if (!Array.isArray(parent)) { parent[key] = op.value; return null; }
+    if (index < 0 || index > parent.length) return `${op.path} is not a place in the array`;
+    parent.splice(index, 0, op.value);
+    return null;
+  }
+  if (op.op === "move") {
+    const from = tokens(op.from);
+    if (Array.isArray(parent) || parentOf(from) !== parent) return "a move other than renaming a key is not supported";
+    const old = from[from.length - 1];
+    if (!(old in parent)) return `${op.from} does not exist`;
+    if (key !== old && key in parent) return `${op.path} exists already`;
+    const entries = Object.entries(parent).map(([k, v]) => [k === old ? key : k, v]);
+    for (const k of Object.keys(parent)) delete parent[k];
+    for (const [k, v] of entries) parent[k] = v;
+    return null;
+  }
+  return `operation ${JSON.stringify(op.op)} is not supported`;
+};
+
+// the beat a JSON pointer is in (-1: none)
+const beatOf = (path) => Number((/^\/beats\/(\d+)/.exec(str(path)) || [])[1] ?? -1);
+
+// The script document with the fixes of `problems` applied, later beats first (the fix of a line that does not fit
+// adds beats after it, which moves the beats after those). -> {script, applied: [{path, code}], failed: [{path, code,
+// message}]}
+export const applyFixes = (doc, problems) => {
+  const script = JSON.parse(JSON.stringify(doc)), applied = [], failed = [];
+  const fixes = (problems || []).filter((p) => Array.isArray(p.fix) && p.fix.length).sort((a, b) => beatOf(b.path) - beatOf(a.path));
+  for (const p of fixes) {
+    let why = null;
+    for (const op of p.fix) if ((why = applyOp(script, op))) break;
+    (why ? failed : applied).push({ path: p.path, code: p.code, ...(why ? { message: why } : {}) });
+  }
+  return { script, applied, failed };
+};
 
 // ------------------------------------------------------------------------------------------------ the base story
 
@@ -241,9 +379,9 @@ export const parseScript = (doc) => {
   const keys = (o, allowed, path) => {
     for (const k of Object.keys(o)) {
       if (allowed.includes(k)) continue;
-      const near = nearest(k, allowed);
-      err(`${path}/${tok(k)}`, "unknownKey", `unknown key ${JSON.stringify(k)}` + (near ? `; did you mean ${JSON.stringify(near)}?` : ""),
-          { expected: allowed, ...(near ? { suggestion: near } : {}) });
+      const near = nearest(k, allowed), kp = `${path}/${tok(k)}`;
+      err(kp, "unknownKey", `unknown key ${JSON.stringify(k)}` + (near ? `; did you mean ${JSON.stringify(near)}?` : ""),
+          { expected: allowed, ...(near ? { suggestion: near } : {}), ...(near && !(near in o) ? { fix: [renameOp(kp, near)] } : {}) });
     }
   };
   const text = (o, k, path, { required = false, empty = false } = {}) => {
@@ -305,12 +443,21 @@ export const parseScript = (doc) => {
         motion = text(p, "motion", `${pp}/motion`);
         expression = text(p, "expression", `${pp}/expression`);
       } else { err(pp, "type", "a position is a name or {at, motion, expression}", { expected: Object.keys(POSITIONS) }); continue; }
-      if (at !== undefined) out.push({ cast: id, slot: at, motion: motion || "", expression: expression || "", path: pp });
+      if (at !== undefined) out.push({ cast: id, slot: at, motion: motion || "", expression: expression || "", path: pp,
+                                       atPath: typeof p === "string" ? pp : `${pp}/at` });
     }
     return out;
   };
 
   const ids = new Set();
+  // every beat id of the document, for the fix of a duplicate one (an id no beat has)
+  const allIds = new Set(Array.isArray(doc.beats) ? doc.beats.filter((b) => isObj(b) && typeof b.id === "string").map((b) => b.id) : []);
+  const freeId = (id) => {
+    let n = 2;
+    while (allIds.has(`${id}_${n}`)) n++;
+    allIds.add(`${id}_${n}`);
+    return `${id}_${n}`;
+  };
   if (!("beats" in doc)) err("/beats", "missing", "beats is required (an array)");
   else if (!Array.isArray(doc.beats)) err("/beats", "type", "beats must be an array");
   else if (!doc.beats.length) err("/beats", "empty", "beats is empty");
@@ -323,8 +470,11 @@ export const parseScript = (doc) => {
     const beat = { kind, index, path, id: undefined };
     if ("id" in b) {
       const id = text(b, "id", `${path}/id`);
-      if (id && ids.has(id)) err(`${path}/id`, "duplicateId", `beat id ${JSON.stringify(id)} is used by an earlier beat`);
-      else if (id) { ids.add(id); beat.id = id; }
+      if (id && ids.has(id)) {
+        const next = freeId(id);
+        err(`${path}/id`, "duplicateId", `beat id ${JSON.stringify(id)} is used by an earlier beat`,
+            { suggestion: next, fix: [{ op: "replace", path: `${path}/id`, value: next }] });
+      } else if (id) { ids.add(id); beat.id = id; }
     }
     if (kind === "scene" || kind === "positions") {
       if (kind === "scene") {
@@ -388,12 +538,23 @@ export const checkScript = (script, site) => {
     }
     if (b.positions) {
       const slots = new Map();
+      // the slots of the beat and the ones given to fixes of characters on a taken slot
+      const occupied = new Set(b.positions.map((p) => p.slot));
       for (const p of b.positions) {
-        if (!cast.has(p.cast)) { errors.push(unknown(p.path, "unknownCast", "cast member", p.cast, cast.keys())); continue; }
+        if (!cast.has(p.cast)) {
+          const near = nearest(p.cast, cast.keys());
+          errors.push(unknown(p.path, "unknownCast", "cast member", p.cast, cast.keys(), "",
+                              near && !b.positions.some((q) => q.cast === near) ? "rename" : null));
+          continue;
+        }
         used.add(p.cast);
-        if (slots.has(p.slot))
-          errors.push({ path: p.path, code: "positionTaken", message: `${p.cast} and ${slots.get(p.slot)} stand at the same position` });
-        slots.set(p.slot, p.cast);
+        if (slots.has(p.slot)) {
+          const free = freeSlot(p.slot, occupied);
+          if (free) occupied.add(POSITIONS[free]);
+          errors.push({ path: p.path, code: "positionTaken", message: `${p.cast} and ${slots.get(p.slot)} stand at the same position` +
+                        (free ? `; ${JSON.stringify(free)} is free` : ""),
+                        ...(free ? { suggestion: free, fix: [{ op: "replace", path: p.atPath, value: free }] } : {}) });
+        } else slots.set(p.slot, p.cast);
         checkAction(p.cast, p.motion, p.expression, p.path);
       }
       on = new Set(b.positions.map((p) => p.cast));

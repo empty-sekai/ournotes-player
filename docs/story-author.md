@@ -33,6 +33,7 @@ node scripts/story-author.mjs new stories/10002.json $S > story.json   # 4. a st
 node scripts/story-author.mjs check story.json $S                  # 5. errors and warnings with JSON pointers
 node scripts/story-author.mjs render story.json $S --out shots     # 6. one picture per line, and a contact sheet
 #    look at shots/sheet.png (and shots/line-*.png), fix, repeat 5-6
+#    (--fix <file> on check and render writes the script with the fixes the tool knows applied)
 node scripts/story-author.mjs build story.json $S --name my-story  # 7. into the site
 node scripts/story-author.mjs serve $S                             # 8. URLs to watch it in examples/story
 ```
@@ -98,15 +99,16 @@ stage, three lines). Redirect it to a file and edit it.
 
 ### check
 
-`check <script>`: the script's errors and warnings. A script without errors also reports its number of lines and
-scenes and the CSS font family its text is drawn with.
+`check <script> [--fix <file>]`: the script's errors and warnings. A script without errors also reports its number of
+lines and scenes and the CSS font family its text is drawn with.
 
 ```json
 {
   "ok": false, "language": "zh-Hans",
   "errors": [{ "path": "/beats/2/motion", "code": "unknownMotion",
                "message": "motion \"mtn_nodd01\" does not exist in adv_live2d_…; did you mean \"mtn_nod01\"?",
-               "expected": ["mtn_angry01", "…"], "suggestion": "mtn_nod01" }],
+               "expected": ["mtn_angry01", "…"], "suggestion": "mtn_nod01",
+               "fix": [{ "op": "replace", "path": "/beats/2/motion", "value": "mtn_nod01" }] }],
   "warnings": [{ "path": "/beats/0/say", "code": "speakerOffStage", "message": "tomori speaks from off stage" }]
 }
 ```
@@ -115,23 +117,51 @@ Every problem has `path`, a JSON pointer to the value in the script, `code` and 
 comes with `expected` (the names that do, or `expectedCount` when there are more than 40) and, when one is close,
 `suggestion`.
 
+### Fixes
+
+A problem whose fix is known has `fix`: [JSON Patch](https://www.rfc-editor.org/rfc/rfc6902) operations on the script
+document (`replace`, `add`, and `move` within one object to rename a key, which keeps the key's place). The fixes:
+
+| Code | Fix |
+|---|---|
+| `unknownKey` | The key renamed to the nearest key of the format, when the object does not have that key already. |
+| `unknownLanguage`, `unknownFont`, `unknownPosition`, `unknownCamera`, `unknownModel`, `unknownStage`, `unknownMusic`, `unknownMotion`, `unknownExpression` | The nearest name (`suggestion`) written in. |
+| `unknownCast` | The nearest cast id written in; in `positions`, the key renamed, when the beat does not place that cast member already. |
+| `duplicateId` | The id with the first free `_<n>` after it (`promise_2`). |
+| `positionTaken` | The free position nearest the taken one (`suggestion`), the left one of two as near. |
+| `textTooWide`, `textTooTall` | `render`: the text broken where the game's text engine wraps it in the talk window, and, where the window holds fewer lines, spread over beats after it (the same speaker, or narration), as evenly as fits. `suggestion` holds the texts. A line with both warnings has the fix on the first. |
+
+`--fix <file>` on `check` and `render` writes the script with every fix applied to `<file>` (it may be the script
+itself; the fixes of later beats go in first, so the beats a fix adds do not move the others) and checks it again:
+
+```json
+"fixed": { "file": "story.fixed.json", "applied": [{ "path": "/beats/2/motion", "code": "unknownMotion" }],
+           "failed": [], "ok": true, "errors": 0, "warnings": 1 }
+```
+
+`applied` and `failed` (with `message`) list the problems whose fixes went in or could not; `ok`, `errors` and
+`warnings` are how the written script checks (`render` does not render it again). A problem without `fix` needs the
+author: it has no near name, or its fix is a choice of story (who stands where, who speaks).
+
 ### render
 
-`render <script> --out <dir> [--from <line>] [--to <line>] [--width <px>] [--settle <frames>] [--columns <n>]`: plays
-the script in the story player (manual advance, no sound) and saves a picture of each line from `--from` to `--to`
-(line numbers from 0; default every line) once its text is fully shown and `--settle` more frames have passed
-(default 8, at 30 frames per second): `line-<n>.png` at `--width` × width × 6 / 13 pixels (default 1300 × 600), and
-`sheet.png` (`sheet-<n>.png` for more than 12 lines) with every line, its speaker and its text. Earlier pictures of a
-render in `--out` are replaced. A start line after 0 is reached the way the game's shortcut reaches it: the rows before
-it run without being shown.
+`render <script> --out <dir> [--from <line>] [--to <line>] [--width <px>] [--settle <frames>] [--columns <n>]
+[--fix <file>]`: plays the script in the story player (manual advance, no sound) and saves a picture of each line from
+`--from` to `--to` (line numbers from 0; default every line) once its text is fully shown and `--settle` more frames
+have passed (default 8, at 30 frames per second): `line-<n>.png` at `--width` × width × 6 / 13 pixels (default 1300 ×
+600), and `sheet.png` (`sheet-<n>.png` for more than 12 lines) with every line, its speaker and its text. Earlier
+pictures of a render in `--out` are replaced. A start line after 0 is reached the way the game's shortcut reaches it:
+the rows before it run without being shown.
 
 ```json
 {
   "ok": true, "out": "shots", "sheets": ["shots/sheet.png"],
   "frames": [{ "line": 0, "path": "/beats/1", "speaker": "soyo", "text": "…", "image": "shots/line-000.png",
                "talk": { "lines": 1, "fontSize": 36, "width": 431.2, "widthLimit": 1200, "height": 41.6,
-                         "heightLimit": 200, "overflow": false } }],
-  "warnings": [{ "path": "/beats/7", "code": "textTooWide", "message": "line 4 runs past the talk window …" }],
+                         "heightLimit": 200, "overflow": false },
+               "timing": { "characters": 11, "typing": 1.1, "autoHold": 1.6 } }],
+  "warnings": [{ "path": "/beats/7", "code": "textTooWide", "message": "line 4 runs past the talk window …",
+                 "suggestion": ["……", "……"], "fix": [{ "op": "replace", "path": "/beats/7/text", "value": "……" }] }],
   "seconds": 7.7
 }
 ```
@@ -139,7 +169,13 @@ it run without being shown.
 `talk` is the layout of the line's text in the talk window, in the window's units: the number of text lines, the
 point size, the widest line and the height of the text against the room the window has. The talk window does not
 wrap text: a line wider than the window runs past its edge (warning `textTooWide`; break it with `\n`), and more text
-lines than fit run below it (`textTooTall`; split it into two lines of the script).
+lines than fit run below it (`textTooTall`; split it into two lines of the script). Both come with a fix (see
+[Fixes](#fixes)) when breaking the text at the game's word wrap makes it fit.
+
+`timing` is the line's pacing in seconds of story time: `characters`, the characters the typewriter types; `typing`,
+from the line's start until its text is fully shown (the game's ADV frame rate, 30 frames per second); `autoHold`, how
+long auto mode then keeps the line before the next one (`_waitTalkTextUnitTime` per character, at least
+`_minTalkDisplayTime`, from the base story's player settings). A line takes `typing` + `autoHold` in auto mode.
 
 ### build
 
@@ -232,6 +268,8 @@ breaks the line. Keep each text line within the talk window's width; `render` re
 | warning `speakerOffStage` | A character speaks without standing on stage. |
 | warning `unusedCast` | A cast member never appears or speaks. |
 | warning `textTooWide`, `textTooTall` | `render`: a line does not fit the talk window. |
+
+Codes with a known fix are listed under [Fixes](#fixes).
 
 ## What the story is made of
 
