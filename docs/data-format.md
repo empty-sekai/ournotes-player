@@ -526,7 +526,7 @@ paths of a manifest against `models/..`, the site root, as for charts.
 
 | Key | Meaning |
 |---|---|
-| `schema`, `product` | `"nnnotes.product/1"` and `"live2d.model"`; the viewer and the story player refuse others. |
+| `schema`, `product` | `"nnnotes.product/1"` and `"live2d.model"`; the story player refuses others, and the viewer reads others only as a [model manifest of format 2](#model-manifests-of-format-2). |
 | `subject` | The model's key, `Character/Live2D/<group>/<name>/model/<name>`; `<name>` is the manifest's `<id>`. |
 | `files` | The product's own files: `model.json` alone. A [file entry](#file-entries), whole or encoded. |
 | `objects` | The objects the model uses: object id → its `class`, `name` and `files` by role, each a file entry, whole or encoded. |
@@ -628,6 +628,28 @@ only the GLES3 programs (platform `gles3`, type `GLES3`, subshader 0, pass 0) th
   at quality 4 (Best: per-vertex additional lights) and draws with the second there, with the first at the other
   qualities. No player enables `_ADDITIONAL_LIGHTS`, so the programs with it are not read.
 - "Live2D Cubism/Mask": its program without keywords, when some drawable is masked (a material with `CUBISM_MASK_ON`).
+
+### Model manifests of format 2
+
+The model viewer also reads a model manifest of format 2, `{ "format": 2, "id": "…", "key": "…", "model": { … },
+"files": { … } }` (no `schema`), whose `files` (file entries as in a [chart manifest](#file-entries)) hold one model
+with its objects inline:
+
+| Logical file | Content |
+|---|---|
+| `model.json` | `{ "format": 1, name, key, moc3, prefab, textures, canvas, shaders, resources }`: the paths of the moc3, the prefab and the shader index, and in `resources` the mask materials `cubismMask` and `cubismMaskCulling` inline (`{ material, shader: { shader: <shader name> }, keywords, floats, colors, … }`). |
+| `<name>.moc3` | The moc3. |
+| `<name>.prefab.json` | `{ key, nodes, canvas }`: the model's node list; a component is `{ type, class, …its fields }` (`class`: a MonoBehaviour's script class). Inline in it: the CubismMoc (`{ asset: "CubismMoc", name }`), the clips of `_motionList` (`{ clip: <name>, bindings: [{ path, typeID, class, attribute }], … }` and the clip's data as in an AnimationClip's `json`), the fade motion list, the expression list and their entries (`{ asset: <class>, name, …their fields }`), the drawables' materials and their main textures (a [texture descriptor](#texture-descriptors), its path relative to the prefab's directory). |
+| `textures/…` | The atlas pages. |
+| `shaders/shaders.json`, `shaders/…` | The shaders in the layout of a [shader directory](#shaders), the mask shader only when some drawable is masked. |
+
+The viewer reads it as a model manifest of `live2d.model`: each inline object becomes an object `<name>:<n>` (`<name>`
+the model's name) that the fields name by reference, equal materials one object, an atlas page a Texture2D whose
+fields are the descriptor's (`m_Width`, `m_Height`, `m_MipCount`, `m_ColorSpace`, `m_TextureSettings`), a shader of the
+directory a Shader whose programs are its variants' files, and a shader the directory lacks a Shader without programs.
+The `model.json` of format 3 names them, with `bindings` from the clips' bindings and `motionSync` from the root's
+components; `info` is `{ schema: "nnnotes.product/1", product: "live2d.model", subject: <key> }`. The story player
+reads model manifests of `live2d.model` only.
 
 ## Conventions
 

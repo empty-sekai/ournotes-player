@@ -3,6 +3,8 @@
 // are in the store's object table.
 
 export const MODEL_JSON_FORMAT = 3;
+// the product of a model manifest (a product manifest, nnnotes.product/1)
+export const MODEL_PRODUCT = "live2d.model";
 
 // The model.json at `dir`/model.json of `assets` (dir "" for the store's root), its objects checked:
 //   prefab      the model's root GameObject (its prefab.json)
