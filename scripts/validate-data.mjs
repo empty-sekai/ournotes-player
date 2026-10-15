@@ -1,14 +1,18 @@
 #!/usr/bin/env node
-// Validates a chart site against docs/data-format.md and the schemas in schema/.
+// Validates a directory of products and chart sites against docs/data-format.md and the schemas in schema/.
 //
-//   node scripts/validate-data.mjs <site dir> [chart id | model id ...]
+//   node scripts/validate-data.mjs <site dir> [live id | chart id | model id | story id ...]
 //
-// Checks, per chart: the manifest (schema, agreement with charts.json), every asset (present, byte size, SHA-256 of
-// the decoded bytes matching its name; an encoded asset's stored length, its decoded size), the rebuilt text of split
-// JSON files, live.json, the score, audio/live-audio.json (schema, sound
-// id references, waveform files and their FLAC / MP4 headers), livescene/scene.json and livenotes/notes.json (the
-// structures the player reads, animation references, node order), both shader directories (index, parsed shader data,
-// GLSL ES 3.00 stage blocks) and the texture descriptors (PNG present where required, size as described).
+// Lives (lives/<id>.json of a product layout): the manifest (schema, the product live, a subject of the manifest's
+// name), every asset of its files and its objects' files (present, byte size, SHA-256 of the decoded bytes matching its
+// name; an encoded asset's stored length, its decoded size), live.json (schema) and each product its `parts` names,
+// checked once (manifest, assets, its document: schema, the classes of the objects it names, its bindings and shader
+// tables; its objects: JSON files, Texture2D images, Shader forms and the GLES3 programs of the shaders its Materials
+// use, Mesh arrays, drawable Sprites), then the live as a whole through LiveData: the scores, the jacket, the band, the
+// quality rows, the sounds and their waveform files (FLAC / MP4 headers).
+// Charts (charts.json, charts/<id>.json, charts/<region>/<id>.json of a chart site): the manifest (schema, agreement
+// with charts.json), every asset, the rebuilt text of split JSON files, then the chart read as a live (legacy.js) and
+// checked as a live's products are.
 // Live2D models (models.json, models/<id>.json, product manifests of live2d.model): the manifest (schema, subject,
 // agreement with models.json), every asset of its files and of its objects' files, model.json (the classes of the
 // objects it names, its motionSync against the prefab, the names of every motion's bindings), the moc (a CubismMoc,
@@ -33,13 +37,18 @@
 // glyph pages, text material shaders). An Overlay story built with open fonts: its host (host/host.json and, per
 // language, ui/simple/ui.json with ui/simple/fonts.json). A story id is the manifest path below stories/ without .json
 // (`10462`, `tw/10462`).
-// Prints the failures and a summary; exits 1 when a chart, a model or a story fails. No dependencies.
+// Prints the failures and a summary; exits 1 when a live, a chart, a model or a story fails. No dependencies.
 
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
+import { AssetStore, TEXT_ASSET, TEXT_FILE } from "../src/data/assets.js";
+import { LiveData } from "../src/live/data.js";
+import { legacyLive } from "../src/live/legacy.js";
+import { LiveOptionContext } from "../src/live/settings.js";
+import { LIVE_PARTS, LIVE_PRODUCT, liveManifest, productDir } from "../src/live/store.js";
 import { animRecordProblems } from "../src/story/features/clips.js";
 import { ADV_COMMAND } from "../src/story/interfaces.js";
 import { compile } from "./lib/json-schema.mjs";
@@ -47,8 +56,9 @@ import { compile } from "./lib/json-schema.mjs";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const schema = (name) => compile(JSON.parse(fs.readFileSync(path.join(here, "..", "schema", `${name}.schema.json`), "utf8")));
 const S = {
-  charts: schema("charts"), manifest: schema("manifest"), live: schema("live"), audio: schema("live-audio"),
-  score: schema("score"), models: schema("models"), product: schema("product"), modelJson: schema("model-json"),
+  charts: schema("charts"), manifest: schema("manifest"), live: schema("live"), score: schema("score"),
+  scene: schema("live-scene"), notes: schema("live-notes"), noteskin: schema("live-noteskin"),
+  noteeffect: schema("live-noteeffect"), sounds: schema("live-sounds"), music: schema("live-music"), models: schema("models"), product: schema("product"), modelJson: schema("model-json"),
   stories: schema("stories"), storyManifest: schema("story-manifest"), story: schema("story"), episode: schema("episode"),
   storyFonts: schema("story-fonts"), storyLanguage: schema("story-language"),
 };
@@ -108,6 +118,7 @@ class Site {
     this.bufCache = new Map();        // asset -> Buffer (small binaries only)
     this.derived = new Map();         // "<kind>|<signature>" -> cached per-file result
     this.models = new Map();          // model manifest path -> {model, errs, missing} (the models stories use)
+    this.parts = new Map();           // "<product> <manifest path>" -> {man, errs, shown} (the parts of lives)
     this.modelIds = null;             // the ids of models.json (null without it)
   }
 
@@ -147,11 +158,32 @@ class Site {
     return enc ? decodeSync(raw, enc) : raw;
   }
 
+  // the bytes of a file entry: its asset's, or a split JSON file's rebuilt text
+  content(f) {
+    if (!f.parts) return this.bytes(f.asset);
+    return Buffer.from(`{${f.parts.map(([k, a]) => `${JSON.stringify(k)}:${this.bytes(a).toString("utf8")}`).join(",")}}`);
+  }
+
   // cached result of fn() per kind and content signature
   once(kind, sig, fn) {
     const k = `${kind}|${sig}`;
     if (!this.derived.has(k)) this.derived.set(k, fn());
     return this.derived.get(k);
+  }
+
+  // the product manifest at `manifest` that a live names as its part of `product`, validated once as that product:
+  // {man, errs, shown (its errors have been printed)}
+  part(manifest, product) {
+    const k = `${product} ${manifest}`;
+    if (!this.parts.has(k)) {
+      let man = null, errs;
+      try {
+        man = JSON.parse(fs.readFileSync(this.file(manifest), "utf8"));
+        errs = new Part(this, manifest, man, manifest).run(product);
+      } catch (e) { errs = [e.code === "ENOENT" ? "missing" : e.message]; }
+      this.parts.set(k, { man, errs, shown: false });
+    }
+    return this.parts.get(k);
   }
 
   // the model of a model manifest a story lists, validated once (without its models.json entry)
@@ -169,6 +201,8 @@ class Site {
 }
 
 // ------------------------------------------------------------------------------------------------ one chart
+// A chart manifest of the site layout (charts/<id>.json): its files are read as a live through legacy.js, then
+// checked as a live's products are (LiveChecks).
 class Chart {
   constructor(site, id, man, where = null) {
     this.site = site; this.id = id; this.man = man; this.errs = [];
@@ -181,17 +215,10 @@ class Chart {
 
   has(p) { return has(this.files, p); }
 
-  sig(p) {
-    const f = this.files[p];
-    return f.parts ? f.parts.map((x) => `${x[0]}=${x[1]}`).join(",") : f.asset;
-  }
+  sig(p) { return sigOf(this.files[p]); }
 
   // the logical file's text (split JSON files rebuilt from their parts)
-  text(p) {
-    const f = this.files[p];
-    if (!f.parts) return this.site.bytes(f.asset).toString("utf8");
-    return `{${f.parts.map(([k, a]) => `${JSON.stringify(k)}:${this.site.bytes(a).toString("utf8")}`).join(",")}}`;
-  }
+  text(p) { return this.site.content(this.files[p]).toString("utf8"); }
 
   // per-file check with cross-chart caching: fn(parsedJson) -> result; parse errors are reported
   json(kind, p, fn) {
@@ -214,21 +241,17 @@ class Chart {
     this.checkAssets();
     if (this.errs.length) return this.errs;       // content checks need every asset in place
 
-    const live = this.json("live", "live.json", (v) => ({ errs: S.live(v), v: S.live(v).length ? null : v })).v;
-    if (!live) return this.errs;
-    for (const k of ["scene", "notes", "noteAssets", "liveAudio"]) if (!this.has(live[k])) this.err("live.json", `${k}: ${live[k]} not in the manifest`);
-    if (this.errs.length) return this.errs;
-
-    const score = this.checkScore(live.notes);
-    this.checkAudio(live.liveAudio);
-    const notes = this.checkNoteAssets(live.noteAssets, score);
-    const scene = this.checkScene(live.scene);
-    this.checkShaders("livescene/shaders");
-    this.checkShaders("livenotes/shaders");
-    this.checkTextures("livescene", scene && scene.textures, scene && scene.required);
-    this.checkTextures("livenotes", notes && notes.textures, []);
+    const { files: _files, ...info } = m;
+    const files = new SiteStore(this.site, this.files, {}, info);
+    let store;
+    try { store = legacyLive(files); } catch (e) { this.err("live.json", `not readable as a live (${e.message})`); return this.errs; }
+    const C = new LiveChecks(this.site, store, (w, msg) => this.err(w, msg));
+    for (const [product, subjects] of Object.entries(store.info.products))
+      if (product !== LIVE_PRODUCT) for (const dir of Object.values(subjects)) C.part(product, dir);
+    C.objects();
+    C.live();
     // every other JSON file of the chart must parse (the player may not read it, but it is fetched)
-    for (const p of Object.keys(this.files)) if (p.endsWith(".json") && !this.checked.has(p)) this.json("parse", p, () => ({ errs: [] }));
+    for (const p of Object.keys(this.files)) if (p.endsWith(".json") && !files.loaded(p)) this.json("parse", p, () => ({ errs: [] }));
     return this.errs;
   }
 
@@ -273,176 +296,340 @@ class Chart {
       }
     }
   }
+}
 
-  checkScore(p) {
-    const r = this.json("score", p, (s) => {
-      const errs = S.score(s);
-      if (errs.length) return { errs };
-      const ids = new Map(), lines = new Map();
-      for (const n of s.notes) { if (ids.has(n.id)) errs.push(`note id ${n.id} twice`); ids.set(n.id, n); }
-      for (const l of s.lines) { if (lines.has(l.lineId)) errs.push(`line id ${l.lineId} twice`); lines.set(l.lineId, l); }
-      for (const n of s.notes) {
-        for (const id of n.lineIds) if (!lines.has(id)) errs.push(`note ${n.id}: line ${id} not in lines`);
-        if (n.pairNoteId && !ids.has(n.pairNoteId)) errs.push(`note ${n.id}: pair note ${n.pairNoteId} not in notes`);
-      }
-      for (const l of s.lines) for (const id of l.noteIds) if (!ids.has(id)) errs.push(`line ${l.lineId}: note ${id} not in notes`);
-      return { errs: errs.slice(0, 20), laneCount: s.laneCount };
-    });
-    return r && !r.errs.length ? r : null;
+// ------------------------------------------------------------------------------------------------ live stores
+// The files of a manifest (or of the merged manifests of a live) as an AssetStore that reads each file from the site
+// when it is first asked for: `files` path -> file entry, `objects` id -> {class, name, files: role -> file entry}.
+class SiteStore extends AssetStore {
+  constructor(site, files, objects, info = null) {
+    super({ info });
+    this.site = site;
+    this.entries = new Map(Object.entries(files));
+    this.objectEntries = new Map();
+    for (const [id, o] of Object.entries(objects)) {
+      this.objectEntries.set(id, new Map(Object.entries(o.files)));
+      this._objects.set(id, { class: o.class, name: o.name ?? null, files: new Map(Object.entries(o.files)) });
+    }
   }
 
-  checkAudio(p) {
-    const r = this.json("audio", p, (a) => {
-      const errs = S.audio(a);
+  // the file entry of a file / of an object's file (null: none)
+  entry(p) { return this.entries.get(p) ?? null; }
+  objectEntry(id, role) { const m = this.objectEntries.get(id); return (m && m.get(role)) ?? null; }
+  // the ids of the objects
+  ids() { return [...this.objectEntries.keys()]; }
+  // whether a file was read
+  loaded(p) { return this._text.has(p) || this._bin.has(p); }
+
+  _load(p) {
+    const f = this.entries.get(p);
+    if (!f || this.loaded(p)) return;
+    const b = this.site.content(f);
+    if (TEXT_FILE.test(p)) this._text.set(p, b.toString("utf8"));
+    else this._bin.set(p, new Uint8Array(b.buffer, b.byteOffset, b.byteLength));
+  }
+
+  has(p) { return this.entries.has(p); }
+  text(p) { this._load(p); return super.text(p); }
+  bytes(p) { this._load(p); return super.bytes(p); }
+
+  _file(id, role) {
+    const f = super._file(id, role);
+    if (typeof f === "string" || f instanceof Uint8Array) return f;
+    const b = this.site.content(f);
+    const c = f.parts || TEXT_ASSET.test(f.asset) ? b.toString("utf8") : new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
+    this._objects.get(id).files.set(role, c);
+    return c;
+  }
+}
+
+// The site file a store's file is read from: a SiteStore's entry, or for a chart read through legacy.js (an
+// OverlayStore over a SiteStore) the chart's file it is; null for a file made in memory. Checks of a file with an
+// entry are cached per asset.
+const entryOf = (store, p) => (store instanceof SiteStore ? store.entry(p)
+  : store.inner instanceof SiteStore && store.source(p) !== null ? store.inner.entry(store.source(p)) : null);
+const objectEntryOf = (store, id, role) => (store instanceof SiteStore ? store.objectEntry(id, role)
+  : role === "image" && store.inner instanceof SiteStore && store.images.has(id) ? store.inner.entry(store.images.get(id)) : null);
+// the ids of a store's objects (a SiteStore's, or those legacy.js made)
+const objectIds = (store) => (store instanceof SiteStore ? store.ids() : [...store._objects.keys()]);
+// a file entry's content signature
+const sigOf = (f) => (f.parts ? f.parts.map((x) => `${x[0]}=${x[1]}`).join(",") : f.asset);
+
+// a score file: {errs, laneCount}
+const scoreCheck = (s) => {
+  const errs = S.score(s);
+  if (errs.length) return { errs };
+  const ids = new Map(), lines = new Map();
+  for (const n of s.notes) { if (ids.has(n.id)) errs.push(`note id ${n.id} twice`); ids.set(n.id, n); }
+  for (const l of s.lines) { if (lines.has(l.lineId)) errs.push(`line id ${l.lineId} twice`); lines.set(l.lineId, l); }
+  for (const n of s.notes) {
+    for (const id of n.lineIds) if (!lines.has(id)) errs.push(`note ${n.id}: line ${id} not in lines`);
+    if (n.pairNoteId && !ids.has(n.pairNoteId)) errs.push(`note ${n.id}: pair note ${n.pairNoteId} not in notes`);
+  }
+  for (const l of s.lines) for (const id of l.noteIds) if (!ids.has(id)) errs.push(`line ${l.lineId}: note ${id} not in notes`);
+  return { errs: errs.slice(0, 20), laneCount: s.laneCount };
+};
+
+// a waveform file against its layer: the problem found, or null
+const waveCheck = (b, L) => {
+  if (extOf(L.file) === "m4a") return isMp4(b) ? null : "not an MP4 file";
+  try {
+    const i = flacInfo(b);
+    if (i.sampleRate !== L.sampleRate) return `FLAC sample rate ${i.sampleRate}, described ${L.sampleRate}`;
+    if (L.channels !== undefined && i.channels !== L.channels) return `FLAC channels ${i.channels}, described ${L.channels}`;
+    if (i.samples !== L.samples) return `FLAC total samples ${i.samples}, described ${L.samples}`;
+    return null;
+  } catch (err) { return err.message; }
+};
+
+// the document of each product a live plays with, and its schema
+const PART_DOCS = {
+  "live.scene": ["scene.json", "scene"], "live.notes": ["notes.json", "notes"], "live.noteskin": ["noteskin.json", "noteskin"],
+  "live.noteeffect": ["noteeffect.json", "noteeffect"], "live.sounds": ["sounds.json", "sounds"], "live.music": ["music.json", "music"],
+};
+const LANE_SPRITES = ["lane_base", "lane_tap_area", "out_side_line"];
+
+// The checks of a live's documents and of the objects they use, in a store of the live: a SiteStore of product
+// manifests, or a chart of the site layout read through legacy.js. err(where, message) reports a problem.
+class LiveChecks {
+  constructor(site, store, err) { this.site = site; this.S = store; this.err = err; }
+
+  // fn(content) of a file of the store (path `p`), cached per asset when it is a site file
+  ofFile(kind, p, fn) {
+    const f = entryOf(this.S, p);
+    if (f) return this.site.once(kind, sigOf(f), () => fn(this.site.content(f)));
+    return fn(Buffer.from(this.S.bytes(p)));
+  }
+
+  // fn(content) of an object's file, cached per asset when it is a site file
+  ofObject(kind, id, role, fn) {
+    const f = objectEntryOf(this.S, id, role);
+    if (f) return this.site.once(kind, sigOf(f), () => fn(this.site.content(f)));
+    return fn(Buffer.from(this.S.objectBytes(id, role)));
+  }
+
+  // the parsed JSON file `p` of the store, checked by `check` (a schema): the value, or null
+  doc(p, check) {
+    if (!this.S.has(p)) { this.err(p, "missing"); return null; }
+    let v;
+    try { v = this.S.json(p); } catch (e) { this.err(p, `not valid JSON (${e.message})`); return null; }
+    const errs = check(v);
+    for (const e of errs.slice(0, 20)) this.err(p, e);
+    return errs.length ? null : v;
+  }
+
+  // the object `id` is in the store, of class `cls`
+  object(id, cls, where) {
+    if (typeof id !== "string" || !this.S.hasObject(id)) { this.err(where, `object ${id} not in the store`); return false; }
+    const c = this.S.object(id).class;
+    if (c !== cls) { this.err(where, `${id}: a ${c}, not a ${cls}`); return false; }
+    return true;
+  }
+
+  // a MonoBehaviour of script class `script`
+  mono(id, script, where) {
+    if (!this.object(id, "MonoBehaviour", where)) return false;
+    const s = this.ofObject("script", id, "json", (b) => { try { return { script: scriptOf(JSON.parse(b)) }; } catch (e) { return { errs: [e.message] }; } });
+    if (s.script !== script) { this.err(where, `${id}: a ${s.script ?? "MonoBehaviour"}, not a ${script}`); return false; }
+    return true;
+  }
+
+  // a Sprite the player can draw: its render data (its own, or its atlas's) names a Texture2D with an image
+  sprite(id, where) {
+    if (!this.object(id, "Sprite", where)) return;
+    let s;
+    try { s = this.S.sprite(id); } catch (e) { this.err(where, e.message); return; }
+    if (!this.S.roles(s.texture.id).includes("image")) this.err(where, `sprite ${s.name}: its texture ${s.texture.id} has no image`);
+  }
+
+  // a GameObject's prefab document: {errs, animators: the node paths with an Animator}
+  prefab(id, where) {
+    if (!this.object(id, "GameObject", where)) return null;
+    const r = this.ofObject("prefab", id, "json", (b) => {
+      const errs = [];
+      let pf;
+      try { pf = JSON.parse(b); } catch (e) { return { errs: [`not valid JSON (${e.message})`] }; }
+      nodeList(pf, "prefab", errs);
       if (errs.length) return { errs };
-      const snd = (id) => has(a.sounds, String(id));
+      return { errs, animators: pf.nodes.filter((n) => n.components.some((c) => c.type === "Animator")).map((n) => n.path) };
+    });
+    for (const e of r.errs) this.err(`${where} ${id}`, e);
+    return r.errs.length ? null : r;
+  }
+
+  // the bindings and shaders tables of a document
+  tables(where, doc) {
+    for (const [pf, animators] of Object.entries(doc.bindings)) {
+      const p = this.prefab(pf, `${where} bindings`);
+      for (const [path, clips] of Object.entries(animators)) {
+        if (p && !p.animators.includes(path)) this.err(where, `bindings.${pf}: ${path} is no node of the prefab with an Animator`);
+        for (const [clip, names] of Object.entries(clips)) {
+          if (!this.object(clip, "AnimationClip", `${where} bindings.${pf}`)) continue;
+          const c = this.ofObject("clip", clip, "json", (b) => {
+            try { const v = JSON.parse(b); return Array.isArray(v.bindings) ? { n: v.bindings.length } : { errs: ["no bindings"] }; } catch (e) { return { errs: [e.message] }; }
+          });
+          if (c.errs) this.err(`clip ${clip}`, c.errs[0]);
+          else if (names.length !== c.n) this.err(where, `bindings.${pf}.${path}.${clip}: ${names.length} names, the clip has ${c.n} bindings`);
+        }
+      }
+    }
+    for (const [name, id] of Object.entries(doc.shaders))
+      if (this.object(id, "Shader", `${where} shaders.${name}`)) {
+        const r = this.ofObject("shadername", id, "index", (b) => { try { return { name: JSON.parse(b).name }; } catch (e) { return { name: null }; } });
+        if (r.name !== name) this.err(where, `shaders.${name}: the shader ${id} is ${r.name}`);
+      }
+  }
+
+  // the document of the product `product` in directory `dir`
+  part(product, dir) {
+    const [file, schemaName] = PART_DOCS[product];
+    const where = `${dir}/${file}`, doc = this.doc(where, S[schemaName]);
+    if (!doc) return;
+    if (has(doc, "bindings")) this.tables(where, doc);
+    if (product === "live.scene") this.scene(where, doc);
+    else if (product === "live.notes") this.notes(where, doc);
+    else if (product === "live.noteskin") this.mono(doc.skin, "LiveNoteSkinAsset", `${where} skin`);
+    else if (product === "live.noteeffect") this.mono(doc.settings, "LiveNoteEffectAssetSettings", `${where} settings`);
+    else this.sounds(where, dir, doc, product === "live.music");
+  }
+
+  scene(where, d) {
+    for (const id of d.scene) this.prefab(id, `${where} scene`);
+    for (const [k, cls] of [["graphics", "GraphicsSettings"], ["quality", "QualitySettings"], ["player", "PlayerSettings"]])
+      if (has(d.graphics, k)) this.object(d.graphics[k], cls, `${where} graphics.${k}`);
+    if (d.renderSettings != null) this.object(d.renderSettings, "RenderSettings", `${where} renderSettings`);
+    for (const [skin, sprites] of Object.entries(d.laneSkins)) for (const k of LANE_SPRITES) this.sprite(sprites[k], `${where} laneSkins.${skin}.${k}`);
+    for (const [k, id] of Object.entries(d.prefabs)) if (id !== null) this.prefab(id, `${where} prefabs.${k}`);
+    for (const [k, id] of Object.entries(d.spriteAssets)) this.object(id, "MonoBehaviour", `${where} spriteAssets.${k}`);
+    for (const [band, b] of Object.entries(d.bands)) {
+      const w = `${where} bands.${band}`;
+      this.prefab(b.timeline, `${w} timeline`);
+      this.sprite(b.background, `${w} background`);
+      for (const [track, t] of Object.entries(b.tracks)) {
+        this.object(track, "MonoBehaviour", `${w} tracks`);
+        const p = this.prefab(t.prefab, `${w} tracks.${track}`);
+        if (p && !p.animators.includes(t.animator)) this.err(w, `tracks.${track}: ${t.animator} is no node of its prefab with an Animator`);
+      }
+    }
+    if (!has(d.laneSkins, d.settings.laneSkin)) this.err(where, `settings.laneSkin ${d.settings.laneSkin} not in laneSkins`);
+  }
+
+  notes(where, d) {
+    for (const [k, id] of Object.entries(d.prefabs)) this.prefab(id, `${where} prefabs.${k}`);
+    this.mono(d.laneEffect, "LiveLaneEffectAssetSettings", `${where} laneEffect`);
+  }
+
+  // sounds.json or music.json: the sound ids it uses are in `sounds`, every category has a volume, the loop points lie
+  // in the waveform, the waveform files are in the product and of the described format and length
+  sounds(where, dir, a, music) {
+    const errs = [], snd = (id) => has(a.sounds, String(id));
+    if (music) {
       if (!snd(a.music.soundId)) errs.push(`music.soundId ${a.music.soundId} not in sounds`);
-      for (const k of ["types"]) for (const [t, id] of Object.entries(a.noteSe[k])) if (!snd(id)) errs.push(`noteSe.types.${t}: sound ${id} not in sounds`);
+    } else {
+      for (const [t, id] of Object.entries(a.noteSe.types)) if (!snd(id)) errs.push(`noteSe.types.${t}: sound ${id} not in sounds`);
+      for (const [g, types] of Object.entries(a.noteSe.groups || {}))
+        for (const [t, id] of Object.entries(types)) if (!snd(id)) errs.push(`noteSe.groups.${g}.${t}: sound ${id} not in sounds`);
       // auto play ends every chart with an all perfect: of the live SE, FinishCheers (10) and AllPerfectDirection (16)
       // are played; the other types need no sound
       for (const t of [10, 16]) if (!has(a.liveSe, String(t)) || !snd(a.liveSe[t])) errs.push(`liveSe.${t}: no sound in sounds`);
       for (const [k, id] of Object.entries(a.voice || {})) if (/SoundId$/.test(k) && id > 0 && !snd(id)) errs.push(`voice.${k}: sound ${id} not in sounds`);
-      const layers = [];
-      for (const [id, s] of Object.entries(a.sounds)) {
+      for (const [id, s] of Object.entries(a.sounds))
         for (const c of s.categories) if (!has(a.categories, c)) errs.push(`sounds.${id}: category ${c} has no volume in categories`);
-        for (const L of s.layers) {
-          if ((L.loopStart === null) !== (L.loopEnd === null)) errs.push(`sounds.${id}: loopStart and loopEnd must both be set or both null`);
-          if (L.loopStart !== null && !(L.loopStart < L.loopEnd && L.loopEnd <= L.samples)) errs.push(`sounds.${id}: loop points outside the waveform`);
-          layers.push({ id, ...L });
-        }
+    }
+    for (const e of errs) this.err(where, e);
+    if (this.S.info && this.S.info.audio === false) return;     // a chart without waveforms
+    for (const [id, s] of Object.entries(a.sounds))
+      for (const L of s.layers) {
+        if ((L.loopStart === null) !== (L.loopEnd === null)) this.err(where, `sounds.${id}: loopStart and loopEnd must both be set or both null`);
+        if (L.loopStart !== null && !(L.loopStart < L.loopEnd && L.loopEnd <= L.samples)) this.err(where, `sounds.${id}: loop points outside the waveform`);
+        const p = `${dir}/${L.file}`;
+        if (!this.S.has(p)) { this.err(where, `sounds.${id}: ${p} missing`); continue; }
+        const e = this.ofFile(`wave|${L.sampleRate}|${L.channels}|${L.samples}`, p, (b) => waveCheck(b, L));
+        if (e) this.err(p, e);
       }
-      const music = a.sounds[String(a.music.soundId)];
-      return { errs, layers, musicFile: music ? music.layers[0].file : null };
-    });
-    if (!r || r.errs.length) return;
-    const m = this.man;
-    if (m.audioFormat && r.musicFile && extOf(r.musicFile) !== (m.audioFormat === "aac" ? "m4a" : "flac"))
-      this.err(p, `music file ${r.musicFile} does not match audioFormat ${m.audioFormat}`);
-    if (m.audio === false) return;                 // no waveforms in a chart without audio
-    for (const L of r.layers) {
-      if (!this.has(L.file)) { this.err(p, `sounds.${L.id}: ${L.file} not in the manifest`); continue; }
-      const asset = this.files[L.file].asset;
-      const e = this.site.once("wave", `${asset}|${L.sampleRate}|${L.channels}|${L.samples}`, () => {
-        const b = this.site.bytes(asset);
-        if (extOf(L.file) === "m4a") return isMp4(b) ? null : "not an MP4 file";
-        try {
-          const i = flacInfo(b);
-          if (i.sampleRate !== L.sampleRate) return `FLAC sample rate ${i.sampleRate}, described ${L.sampleRate}`;
-          if (L.channels !== undefined && i.channels !== L.channels) return `FLAC channels ${i.channels}, described ${L.channels}`;
-          if (i.samples !== L.samples) return `FLAC total samples ${i.samples}, described ${L.samples}`;
-          return null;
-        } catch (err) { return err.message; }
+  }
+
+  // every object of the store: its JSON files parse; a Texture2D's image is a PNG of its size; a Shader's parsed form
+  // and variant index, and the GLES3 programs of the shaders its Materials use; a Mesh's arrays
+  objects() {
+    const drawn = new Set();
+    for (const id of objectIds(this.S)) {
+      if (this.S.object(id).class !== "Material") continue;
+      const r = this.ofObject("materialshader", id, "json", (b) => { try { return { shader: refOf(JSON.parse(b).shader) }; } catch { return {}; } });
+      if (r.shader) drawn.add(r.shader);
+    }
+    for (const id of objectIds(this.S)) {
+      const o = this.S.object(id), roles = this.S.roles(id), where = `${o.class} ${id}${o.name ? ` (${o.name})` : ""}`;
+      if (!roles.includes("json")) { this.err(where, "no json file"); continue; }
+      const json = (role, check = () => []) => this.ofObject(`json:${o.class}:${role}`, id, role, (b) => {
+        let v;
+        try { v = JSON.parse(b); } catch (e) { return { errs: [`${role}: not valid JSON (${e.message})`] }; }
+        return { errs: check(v), v: o.class === "Shader" && role === "index" ? v : undefined };
       });
-      if (e) this.err(L.file, e);
+      const report = (r) => { for (const e of r.errs) this.err(where, e); return r.errs.length ? null : r; };
+      if (o.class === "Texture2D") {
+        const t = report(this.ofObject("texture", id, "json", (b) => {
+          const v = JSON.parse(b);
+          return ["m_Width", "m_Height", "m_MipCount"].every((k) => Number.isInteger(v[k]))
+            ? { errs: [], w: v.m_Width, h: v.m_Height, mips: v.m_MipCount } : { errs: ["m_Width, m_Height, m_MipCount missing"] };
+        }));
+        if (!t || !roles.includes("image")) continue;
+        const info = this.ofObject("png", id, "image", (b) => { try { return pngInfo(b); } catch (e) { return { error: e.message }; } });
+        if (info.error) this.err(where, `image: ${info.error}`);
+        else if (info.width !== t.w || info.height !== t.h) this.err(where, `image: PNG is ${info.width}x${info.height}, the texture ${t.w}x${t.h}`);
+        const full = Math.floor(Math.log2(Math.max(t.w, t.h, 1))) + 1;
+        if (!(t.mips >= 1 && t.mips <= full)) this.err(where, `m_MipCount ${t.mips} (1 to ${full})`);
+      } else if (o.class === "Shader") {
+        report(json("json", parsedShaderErrors));
+        const ix = report(json("index", (v) => (isObj(v) && typeof v.name === "string" && Array.isArray(v.variants) ? [] : ["index: not a variant index"])));
+        if (!ix || !drawn.has(id)) continue;
+        for (const v of ix.v.variants) {
+          if (v.platform !== SHADER_PLATFORM || v.type !== SHADER_PROGRAM_TYPE) continue;
+          if (!roles.includes(v.role)) { this.err(where, `no ${v.role} file`); continue; }
+          for (const e of this.ofObject("glsl", id, v.role, (b) => glslStages(b.toString("utf8")))) this.err(`${where} ${v.role}`, e);
+        }
+      } else if (o.class === "Mesh") {
+        report(json("json"));
+        if (!roles.includes("arrays")) { this.err(where, "no arrays file"); continue; }
+        report(json("arrays", (v) => (isObj(v) && Array.isArray(v.positions) && Array.isArray(v.submeshes)
+          && v.submeshes.every((s) => isObj(s) && typeof s.topology === "string" && (s.indices === null || Array.isArray(s.indices)))
+          ? [] : ["arrays: needs positions and submeshes [{topology, indices}]"])));
+      } else report(json("json"));
     }
   }
 
-  checkNoteAssets(p, score) {
-    const r = this.json("notes", p, (n) => {
-      const errs = [];
-      for (const k of ["settings", "prefabs", "noteSkin", "assets", "clips", "controllers"]) if (!isObj(n[k])) errs.push(`${k} missing`);
-      if (errs.length) return { errs };
-      const st = n.settings;
-      for (const k of ["laneCount", "laneTopRange", "laneBottomRange", "judgementScreenBottomPosition", "laneTopPosition", "tiltCenterLane"])
-        if (typeof st[k] !== "number") errs.push(`settings.${k} is not a number`);
-      if (!Array.isArray(st.laneSize) || st.laneSize.length !== 2) errs.push("settings.laneSize is not [width, height]");
-      if (typeof st.effect !== "string") errs.push("settings.effect is not a string");
-      if (!isObj(st.optionDefaults) || typeof st.optionDefaults.NoteSpeed !== "string") errs.push("settings.optionDefaults.NoteSpeed missing");
-      for (const k of ["note_speed_min", "note_speed_max", "note_speed_view_min", "note_speed_view_max"])
-        if (!isObj(st.liveSettings) || typeof st.liveSettings[k] !== "string") errs.push(`settings.liveSettings.${k} missing`);
-      if (!isObj(st.optionRanges)) errs.push("settings.optionRanges missing");
-      for (const [k, pf] of Object.entries(n.prefabs)) nodeList(pf, `prefabs.${k}`, errs);
-      for (const [k, a] of Object.entries(n.assets)) if (has(a, "nodes")) nodeList(a, `assets.${k}`, errs);
-      const refs = { clip: new Set(), controller: new Set() }, textures = [];
-      walk(n, (o) => {
-        if (typeof o.clip === "string" && Object.keys(o).length === 1) refs.clip.add(o.clip);
-        if (typeof o.controller === "string") refs.controller.add(o.controller);
-        if (isDescriptor(o)) textures.push(desc(o));
-      }, ["clips"]);
-      for (const c of Object.values(n.controllers)) walk(c, (o) => { if (typeof o.clip === "string") refs.clip.add(o.clip); });
-      for (const k of refs.clip) if (!has(n.clips, k)) errs.push(`clip ${k} not in clips`);
-      for (const k of refs.controller) if (!has(n.controllers, k)) errs.push(`controller ${k} not in controllers`);
-      return { errs: errs.slice(0, 20), laneCount: st.laneCount, textures: dedupe(textures) };
-    });
-    if (r && score && r.laneCount !== undefined && r.laneCount !== score.laneCount)
-      this.err(p, `settings.laneCount ${r.laneCount}, score laneCount ${score.laneCount}`);
-    return r && !r.errs.length ? r : null;
-  }
-
-  checkScene(p) {
-    const quality = this.man.quality ?? 1;
-    const r = this.json("scene", p, (s) => {
-      const errs = [];
-      if (!isObj(s.scene)) errs.push("scene missing"); else nodeList(s.scene, "scene", errs);
-      for (const k of ["startTimeline", "laneLinePrefab"]) if (!isObj(s.assets) || !isObj(s.assets[k])) errs.push(`assets.${k} missing`); else nodeList(s.assets[k], `assets.${k}`, errs);
-      const required = [];
-      for (const k of ["lane_base", "lane_tap_area", "out_side_line"]) {
-        const d = isObj(s.laneSkin) && s.laneSkin[k];
-        if (!isObj(d) || !isDescriptor(d.texture)) errs.push(`laneSkin.${k}.texture is not a texture descriptor`); else required.push(d.texture.texture);
-      }
-      for (const k of ["lightweightBackground", "jacket"]) {
-        const d = isObj(s.sprites) && s.sprites[k];
-        if (!isObj(d) || !isDescriptor(d.texture)) errs.push(`sprites.${k}.texture is not a texture descriptor`); else required.push(d.texture.texture);
-      }
-      const grain = isObj(s.postTextures) && isObj(s.postTextures.ForwardRendererLiveGameEffect) && s.postTextures.ForwardRendererLiveGameEffect.filmGrainTex;
-      if (!Array.isArray(grain) || !grain.every(isDescriptor)) errs.push("postTextures.ForwardRendererLiveGameEffect.filmGrainTex is not a list of texture descriptors");
-      else required.push(...grain.map((d) => d.texture));
-      if (!isObj(s.master) || !Array.isArray(s.master.liveQualitySettings)) errs.push("master.liveQualitySettings missing");
-      if (!isObj(s.master) || !isObj(s.master.optionDefaultsPreset1)) errs.push("master.optionDefaultsPreset1 missing");
-      const qualities = Array.isArray(s.master && s.master.liveQualitySettings) ? s.master.liveQualitySettings.map((q) => q._quality) : [];
-      const textures = [];
-      walk(s, (o) => { if (isDescriptor(o)) textures.push(desc(o)); });
-      return { errs: errs.slice(0, 20), required: [...new Set(required)], textures: dedupe(textures), qualities };
-    });
-    if (r && !r.errs.length && !r.qualities.includes(quality)) this.err(p, `no master.liveQualitySettings row for quality ${quality}`);
-    return r && !r.errs.length ? r : null;
-  }
-
-  checkShaders(dir) {
-    const idx = `${dir}/shaders.json`;
-    const r = this.json("shaders", idx, (list) => {
-      const errs = [];
-      if (!Array.isArray(list)) return { errs: ["not an array"] };
-      const names = new Set();
-      for (const [i, rec] of list.entries()) {
-        if (!isObj(rec) || typeof rec.name !== "string" || typeof rec.parsed !== "string" || !Array.isArray(rec.variants)) { errs.push(`[${i}]: needs name, parsed, variants`); continue; }
-        if (names.has(rec.name)) errs.push(`shader ${rec.name} twice`);
-        names.add(rec.name);
-        for (const v of rec.variants)
-          if (!isObj(v) || typeof v.file !== "string" || !Number.isInteger(v.subShader) || !Number.isInteger(v.pass) || !Array.isArray(v.keywords))
-            errs.push(`${rec.name}: a variant needs file, subShader, pass, keywords`);
-      }
-      return { errs, list: errs.length ? [] : list.map((x) => ({ name: x.name, parsed: x.parsed, files: x.variants.map((v) => v.file) })) };
-    });
-    if (!r || r.errs.length) return;
-    for (const rec of r.list) {
-      const pp = `${dir}/${rec.parsed}`;
-      this.json("shaderinfo", pp, (s) => ({ errs: parsedShaderErrors(s) }));
-      for (const f of rec.files) {
-        const fp = `${dir}/${f}`;
-        if (!this.has(fp)) { this.err(idx, `${rec.name}: ${fp} not in the manifest`); continue; }
-        if (!fp.endsWith(".glsl")) { this.err(fp, "a variant file must be .glsl"); continue; }
-        const errs = this.site.once("glsl", this.files[fp].asset, () => glslStages(this.text(fp)));
-        for (const e of errs) this.err(fp, e);
-      }
-    }
-  }
-
-  checkTextures(dir, textures, required) {
-    if (!textures) return;
-    for (const t of required || []) if (!this.has(`${dir}/${t}`)) this.err(`${dir}/${t}`, "required texture not in the manifest");
-    for (const d of textures) {
-      const p = `${dir}/${d.texture}`;
-      if (!this.has(p)) continue;                  // described but not part of this chart
-      const asset = this.files[p].asset;
-      const info = this.site.once("png", asset, () => { try { return pngInfo(this.site.bytes(asset)); } catch (e) { return { error: e.message }; } });
-      if (info.error) { this.err(p, info.error); continue; }
-      if (info.width !== d.width || info.height !== d.height)
-        this.err(p, `PNG is ${info.width}x${info.height}, descriptor ${d.name || ""} says ${d.width}x${d.height}`);
-      if (d.mipCount > 1) this.err(p, `descriptor ${d.name || ""}: mipCount ${d.mipCount} (mipmapped textures are not supported)`);
-    }
+  // the live: live.json (schema, through LiveData), its scores, its jacket and band, and its parts against each other
+  live() {
+    let data;
+    try { data = new LiveData(this.S); } catch (e) { this.err("live", e.message); return; }
+    const where = `${data.dir}/live.json`, live = this.doc(where, S.live);
+    if (!live) return;
+    const score = (f) => {
+      const p = `${data.dir}/${f}`;
+      if (!this.S.has(p)) { this.err(p, "missing"); return null; }
+      const r = this.ofFile("score", p, (b) => { try { return scoreCheck(JSON.parse(b)); } catch (e) { return { errs: [`not valid JSON (${e.message})`] }; } });
+      for (const e of r.errs) this.err(p, e);
+      return r.errs.length ? null : { ...r, path: p };
+    };
+    const sc = score(live.notes), mirror = live.notesMirror ? score(live.notesMirror) : null;
+    this.sprite(live.jacket, `${where} jacket`);
+    let scene, notes, audio;
+    try {
+      scene = data.scene; notes = data.notes; audio = data.audio(); data.noteskin(); data.noteeffect();
+    } catch (e) { this.err("live", e.message); return; }
+    for (const s of [sc, mirror]) if (s && notes.settings.laneCount !== s.laneCount)
+      this.err(s.path, `laneCount ${s.laneCount}, notes.json settings.laneCount ${notes.settings.laneCount}`);
+    if (!has(scene.bands, String(live.band.band))) this.err(where, `band ${live.band.band}: no start timeline in scene.json bands`);
+    // a quality row for every LiveQuality the live offers (the store's `options`, else its default)
+    const info = this.S.info, ctx = new LiveOptionContext({ live, scene, notes, audio, info, skins: data.noteskins, effects: data.noteeffects });
+    for (const q of (info.options && info.options.LiveQuality) || [ctx.defaults.LiveQuality])
+      if (!scene.settings.qualitySettings.some((r) => r._quality === q)) this.err(where, `scene.json settings.qualitySettings: no row for quality ${q}`);
+    const fmt = info.audioFormat, music = audio.sounds[String(audio.music.soundId)];
+    if (!music) this.err(where, `the music's sound ${audio.music.soundId} is in no sounds`);
+    else if (fmt && extOf(music.layers[0].file) !== WAVE_EXT[fmt]) this.err(where, `music file ${music.layers[0].file} does not match audioFormat ${fmt}`);
   }
 }
+
 
 // a prefab / scene node list: hierarchy order (parent before child), local TRS, components
 function nodeList(pf, where, errs) {
@@ -460,7 +647,6 @@ function nodeList(pf, where, errs) {
 const isDescriptor = (o) => isObj(o) && typeof o.texture === "string" && /\.png$/i.test(o.texture) &&
   Number.isInteger(o.width) && Number.isInteger(o.height);
 const desc = (o) => ({ texture: o.texture, width: o.width, height: o.height, mipCount: o.mipCount ?? 1, name: o.name });
-const dedupe = (ds) => [...new Map(ds.map((d) => [`${d.texture}|${d.width}|${d.height}|${d.mipCount}`, d])).values()];
 const dirOf = (p) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
 const inDir = (dir, p) => (dir ? `${dir}/${p}` : p);
 
@@ -547,17 +733,22 @@ const parsedShaderErrors = (s) => {
 // Lit programs hold each material keyword set with and without it
 const STORY_LIGHTS = "_ADDITIONAL_LIGHTS_VERTEX";
 
-// A model's product manifest (models/<id>.json). Its files are model.json and, as "<object id>#<role>", the files of
+// A product manifest (nnnotes.product/1). Its files are the product's own and, as "<object id>#<role>", the files of
 // its objects (the AssetStore's names for them).
-class Model extends Chart {
+class Product extends Chart {
   constructor(site, id, man, where = null) {
     super(site, id, man, where);
     this.objects = isObj(man.objects) ? man.objects : {};
     this.files = { ...(isObj(man.files) ? man.files : {}) };
     for (const [oid, o] of Object.entries(this.objects))
       if (isObj(o) && isObj(o.files)) for (const [role, f] of Object.entries(o.files)) this.files[`${oid}#${role}`] = f;
-    this.index = null;                // model.json, once the model is valid
-    this.read = new Set();            // the files the model viewer and the story player read
+    this.read = new Set();            // the files a reader of the product reads
+  }
+
+  // the manifest's name (its path without the directory and .json) is its subject with "/" as "_"
+  checkName() {
+    const name = path.posix.basename(this.where, ".json"), want = String(this.man.subject).replaceAll("/", "_");
+    if (name !== want) this.err("manifest", `subject ${this.man.subject}: the manifest's name is ${name}, not ${want}`);
   }
 
   // an object's file by role: json and index JSON, image PNG, a program GLSL, a blob any
@@ -566,21 +757,6 @@ class Model extends Chart {
     if (cut < 0) return extOf(p);
     const role = p.slice(cut + 1);
     return role === "json" || role === "index" ? "json" : role === "image" ? "png" : role.startsWith("program:") ? "glsl" : null;
-  }
-
-  // a models.json entry against the manifest: the problems found (not added to the model's own)
-  entryErrors(entry) {
-    const m = this.man, out = [], key = MODEL_KEY.exec(String(m.subject)), idx = this.index;
-    const e = (msg) => out.push(`models.json: ${msg}`);
-    if (key && entry.id !== key[2]) e(`id ${entry.id}, the manifest's model ${key[2]}`);
-    if (has(entry, "key") && entry.key !== m.subject) e(`key ${entry.key}, manifest subject ${m.subject}`);
-    if (has(entry, "group") && key && entry.group !== key[1]) e(`group ${entry.group}, the manifest subject's ${key[1]}`);
-    if (idx && has(entry, "canvas") && !sameJson(entry.canvas, idx.canvas)) e("canvas differs from model.json canvas");
-    if (idx && has(entry, "textures") && entry.textures !== idx.textures.length) e(`textures ${entry.textures}, model.json ${idx.textures.length}`);
-    const total = sizeOf(this.files), count = Object.keys(this.files).length;
-    if (has(entry, "bytes") && entry.bytes !== total) e(`bytes ${entry.bytes}, manifest files total ${total}`);
-    if (has(entry, "files") && entry.files !== count) e(`files ${entry.files}, manifest ${count}`);
-    return out;
   }
 
   // the object `id` is in the manifest, of class `cls` (`where`: the reference's place, for errors)
@@ -606,6 +782,29 @@ class Model extends Chart {
     if (!p) return null;
     const r = this.json(kind, p, (v) => { const errs = check(v); return { errs, v: errs.length ? null : v }; });
     return r ? r.v : null;
+  }
+}
+
+// A model's product manifest (models/<id>.json): the product live2d.model.
+class Model extends Product {
+  constructor(site, id, man, where = null) {
+    super(site, id, man, where);
+    this.index = null;                // model.json, once the model is valid
+  }
+
+  // a models.json entry against the manifest: the problems found (not added to the model's own)
+  entryErrors(entry) {
+    const m = this.man, out = [], key = MODEL_KEY.exec(String(m.subject)), idx = this.index;
+    const e = (msg) => out.push(`models.json: ${msg}`);
+    if (key && entry.id !== key[2]) e(`id ${entry.id}, the manifest's model ${key[2]}`);
+    if (has(entry, "key") && entry.key !== m.subject) e(`key ${entry.key}, manifest subject ${m.subject}`);
+    if (has(entry, "group") && key && entry.group !== key[1]) e(`group ${entry.group}, the manifest subject's ${key[1]}`);
+    if (idx && has(entry, "canvas") && !sameJson(entry.canvas, idx.canvas)) e("canvas differs from model.json canvas");
+    if (idx && has(entry, "textures") && entry.textures !== idx.textures.length) e(`textures ${entry.textures}, model.json ${idx.textures.length}`);
+    const total = sizeOf(this.files), count = Object.keys(this.files).length;
+    if (has(entry, "bytes") && entry.bytes !== total) e(`bytes ${entry.bytes}, manifest files total ${total}`);
+    if (has(entry, "files") && entry.files !== count) e(`files ${entry.files}, manifest ${count}`);
+    return out;
   }
 
   run() {
@@ -757,6 +956,57 @@ class Model extends Chart {
     }
     for (const p of Object.keys(this.files)) if (!this.read.has(p)) this.err(p, "listed but read by neither the model viewer nor the story player");
     if (!this.errs.length) this.index = idx;
+    return this.errs;
+  }
+}
+
+// ------------------------------------------------------------------------------------------------ one live
+// A product manifest a live names in its live.json `parts`, checked with the store of its own files and objects.
+class Part extends Product {
+  run(product) {
+    const m = this.man;
+    for (const e of S.product(m)) this.err("manifest", e);
+    if (this.errs.length) return this.errs;
+    if (m.product !== product) this.err("manifest", `product ${m.product}, live.json names a ${product}`);
+    this.checkName();
+    this.checkAssets();
+    if (this.errs.length) return this.errs;
+    const dir = productDir(this.where);
+    const files = Object.fromEntries(Object.entries(m.files).map(([p, f]) => [`${dir}/${p}`, f]));
+    const C = new LiveChecks(this.site, new SiteStore(this.site, files, m.objects), (w, msg) => this.err(w, msg));
+    C.part(product, dir);
+    C.objects();
+    return this.errs;
+  }
+}
+
+// A live's product manifest (lives/<id>.json, the product `live`) with the products its live.json `parts` names, each
+// checked once (Site.part).
+class Live extends Product {
+  run() {
+    const m = this.man;
+    for (const e of S.product(m)) this.err("manifest", e);
+    if (this.errs.length) return this.errs;
+    if (m.product !== LIVE_PRODUCT) this.err("manifest", `product ${m.product}, a live is ${LIVE_PRODUCT}`);
+    this.checkName();
+    this.checkAssets();
+    if (this.errs.length) return this.errs;
+    const live = this.json("livejson", "live.json", (v) => ({ errs: S.live(v), v: S.live(v).length ? null : v }));
+    if (!live || !live.v) return this.errs;
+    const loaded = [[productDir(this.where), m]];
+    for (const [part, product] of Object.entries(LIVE_PARTS)) {
+      const p = live.v.parts[part], r = this.site.part(p, product);
+      if (r.errs.length) {
+        if (r.shown) this.err(p, "not valid (reported above)");
+        else for (const e of r.errs) this.err(p, e);
+        r.shown = true;
+      } else loaded.push([productDir(p), r.man]);
+    }
+    if (this.errs.length) return this.errs;
+    let merged;
+    try { merged = liveManifest(loaded); } catch (e) { this.err("live", e.message); return this.errs; }
+    const { files, objects, ...info } = merged;
+    new LiveChecks(this.site, new SiteStore(this.site, files, objects, info), (w, msg) => this.err(w, msg)).live();
     return this.errs;
   }
 }
@@ -965,6 +1215,37 @@ class Story extends Chart {
   }
 
   // the files every language shares: story.json, episode.json, scene.json, commands, sounds, models, shaders, textures
+  // a shader directory: its index, the parsed shader files, the GLSL stage blocks of every program
+  checkShaders(dir) {
+    const idx = `${dir}/shaders.json`;
+    const r = this.json("shaders", idx, (list) => {
+      const errs = [];
+      if (!Array.isArray(list)) return { errs: ["not an array"] };
+      const names = new Set();
+      for (const [i, rec] of list.entries()) {
+        if (!isObj(rec) || typeof rec.name !== "string" || typeof rec.parsed !== "string" || !Array.isArray(rec.variants)) { errs.push(`[${i}]: needs name, parsed, variants`); continue; }
+        if (names.has(rec.name)) errs.push(`shader ${rec.name} twice`);
+        names.add(rec.name);
+        for (const v of rec.variants)
+          if (!isObj(v) || typeof v.file !== "string" || !Number.isInteger(v.subShader) || !Number.isInteger(v.pass) || !Array.isArray(v.keywords))
+            errs.push(`${rec.name}: a variant needs file, subShader, pass, keywords`);
+      }
+      return { errs, list: errs.length ? [] : list.map((x) => ({ name: x.name, parsed: x.parsed, files: x.variants.map((v) => v.file) })) };
+    });
+    if (!r || r.errs.length) return;
+    for (const rec of r.list) {
+      const pp = `${dir}/${rec.parsed}`;
+      this.json("shaderinfo", pp, (s) => ({ errs: parsedShaderErrors(s) }));
+      for (const f of rec.files) {
+        const fp = `${dir}/${f}`;
+        if (!this.has(fp)) { this.err(idx, `${rec.name}: ${fp} not in the manifest`); continue; }
+        if (!fp.endsWith(".glsl")) { this.err(fp, "a variant file must be .glsl"); continue; }
+        const errs = this.site.once("glsl", this.files[fp].asset, () => glslStages(this.text(fp)));
+        for (const e of errs) this.err(fp, e);
+      }
+    }
+  }
+
   checkCommon() {
     const m = this.man;
     const story = this.doc("story.json", S.story);
@@ -1410,7 +1691,7 @@ function runAll(site, list, Kind) {
 
 function main(argv) {
   const [dir, ...only] = argv;
-  if (!dir) { console.error("usage: node scripts/validate-data.mjs <site dir> [chart id | model id | story id ...]"); return 2; }
+  if (!dir) { console.error("usage: node scripts/validate-data.mjs <site dir> [live id | chart id | model id | story id ...]"); return 2; }
   const site = new Site(dir);
   const out = [];
   let entries;
@@ -1429,6 +1710,9 @@ function main(argv) {
     entries = [...files("charts"), ...list("charts").filter((e) => e.isDirectory()).map((e) => e.name).sort()
       .flatMap((r) => files(`charts/${r}`))];
   } else entries = [];
+  // lives/<musicId>_<difficulty>[_<band>].json of a product layout
+  const lives = !fs.existsSync(site.file("lives")) ? [] : fs.readdirSync(site.file("lives")).filter((f) => f.endsWith(".json")).sort()
+    .map((f) => ({ id: f.slice(0, -5), manifest: `lives/${f}`, entry: null }));
   let models = [];
   const modelsPath = site.file("models.json");
   if (fs.existsSync(modelsPath)) {
@@ -1459,22 +1743,27 @@ function main(argv) {
     stories = [...files("stories"), ...list("stories").filter((e) => e.isDirectory()).map((e) => e.name).sort()
       .flatMap((r) => files(`stories/${r}`))];
   }
+  let liveList = lives;
   if (only.length) {
-    const want = new Set(only), kinds = stories.length ? "chart, model or story" : "chart or model";
+    const want = new Set(only), kinds = `${lives.length ? "live, " : ""}chart, model${stories.length ? " or story" : ""}`;
+    liveList = lives.filter((e) => want.has(e.id));
     entries = entries.filter((e) => want.has(e.id));
     models = models.filter((e) => want.has(e.id));
     stories = stories.filter((e) => want.has(e.id));
     for (const id of want)
-      if (![entries, models, stories].some((l) => l.some((e) => e.id === id))) { console.error(`${kinds} ${id} not found`); return 2; }
+      if (![liveList, entries, models, stories].some((l) => l.some((e) => e.id === id))) { console.error(`${kinds} ${id} not found`); return 2; }
   }
+  const okLives = runAll(site, liveList, Live);
   const ok = runAll(site, entries, Chart);
   const okModels = runAll(site, models, Model);
   const okStories = runAll(site, stories, Story);
   for (const e of out) console.log(e);
-  if (entries.length || (!models.length && !stories.length)) console.log(`${ok}/${entries.length} charts valid`);
+  if (liveList.length) console.log(`${okLives}/${liveList.length} lives valid`);
+  if (entries.length || (!liveList.length && !models.length && !stories.length)) console.log(`${ok}/${entries.length} charts valid`);
   if (models.length) console.log(`${okModels}/${models.length} models valid`);
   if (stories.length) console.log(`${okStories}/${stories.length} stories valid`);
-  return ok === entries.length && okModels === models.length && okStories === stories.length && !out.length ? 0 : 1;
+  return okLives === liveList.length && ok === entries.length && okModels === models.length && okStories === stories.length
+    && !out.length ? 0 : 1;
 }
 
 process.exitCode = main(process.argv.slice(2));

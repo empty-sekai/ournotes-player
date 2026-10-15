@@ -41,6 +41,8 @@ class OverlayStore extends AssetStore {
   }
 
   _path(p) { return this.alias.get(p) ?? p; }
+  // the inner store's path of `p`, null for a file added in memory
+  source(p) { return this._text.has(p) ? null : this._path(p); }
   has(p) { return this._text.has(p) || this.inner.has(this._path(p)); }
   text(p) { return this._text.has(p) ? this._text.get(p) : this.inner.text(this._path(p)); }
   bytes(p) { return this._text.has(p) ? super.bytes(p) : this.inner.bytes(this._path(p)); }
