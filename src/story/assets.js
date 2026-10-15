@@ -1,4 +1,5 @@
 import { AssetStore, PRODUCT_MANIFEST, decodeAsset } from "../data/assets.js";
+import { MODEL_PRODUCT } from "../live2d/model.js";
 import { ADV_PLAYBACK_MODE, StoryCommandError } from "./interfaces.js";
 import { StoryPlayerCore } from "./player-core.js";
 import { simpleUnsupportedCommands } from "./simple/validator.js";
@@ -9,8 +10,7 @@ import { simpleUnsupportedCommands } from "./simple/validator.js";
 // the story manifest format, the formats this player reads
 export const STORY_MANIFEST_FORMAT = "ournotes.story-manifest/2";
 export const STORY_MANIFEST_FORMATS = Object.freeze([STORY_MANIFEST_FORMAT]);
-// the product of a model manifest (a product manifest, nnnotes.product/1)
-export const MODEL_PRODUCT = "live2d.model";
+export { MODEL_PRODUCT };
 
 // Checks that `mm` (fetched from `where`) is the model manifest of model `id`: a product manifest of live2d.model whose
 // subject is a model key Character/Live2D/<group>/<id>/model/<id>.
