@@ -65,10 +65,9 @@ export class SimpleCaptureRenderer {
     this.white = null;
   }
 
-  // a character's drawing with its model's shaders (`lib`), texture directory (`dir`) and Cubism mask materials
-  // (`resources`, model.json resources), as StoryRenderer.addCharacter
-  addCharacter(ch, { lib, dir, resources }) {
-    const g = new Live2DDrawing(this.gl, lib, ch, { dir, resources, white: this.white, assets: this.assets });
+  // a character's drawing with its model's shaders (`lib`) and model.json (`model`), as StoryRenderer.addCharacter
+  addCharacter(ch, { lib, model }) {
+    const g = new Live2DDrawing(this.gl, lib, ch, { model, white: this.white, assets: this.assets });
     this.drawings.set(ch, g);
     return g;
   }

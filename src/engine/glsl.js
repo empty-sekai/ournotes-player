@@ -311,26 +311,54 @@ export const applyState = (gl, s) => {
   }
 };
 
-// Shader index + variant selection + program cache. `base` is a packed shader
-// directory (shaders.json + <name>/gles3/*.glsl + <name>.json).
+// The GPU programs a ShaderLib draws with: the GLES3 sub-programs (GLSL ES 3.00) of the shaders' gles3 platform.
+export const SHADER_PLATFORM = "gles3", SHADER_PROGRAM_TYPE = "GLES3";
+const RECORDS = Symbol("shader records");
+
+// Shader index + variant selection + program cache. The shaders are named by their Unity names:
+//   new ShaderLib(gl, base, assets)                a packed shader directory `base` (shaders.json +
+//                                                  <name>/gles3/*.glsl + <name>.json)
+//   ShaderLib.fromObjects(gl, shaders, assets)     the Shader objects of a shader table {name: object id}: each
+//                                                  object's `json` (the parsed form), `index` (its variants) and
+//                                                  `program:<platform>/<name>` files (docs/data-format.md "Shaders")
 export class ShaderLib {
   constructor(gl, base = "shaders", assets = assetsOf(gl)) {
     this.gl = gl;
-    this.base = base;
     this.assets = assets;
     GL.init(gl);
-    this.index = new Map(assets.json(`${base}/shaders.json`).map((r) => [r.name, r]));
+    // name -> {variants: [{subShader, pass, keywords, key}], info(): the parsed form, text(variant): its GLSL}
+    this.index = base && base[RECORDS] ? base[RECORDS] : new Map(assets.json(`${base}/shaders.json`).map((r) => [r.name, {
+      variants: r.variants.map((v) => ({ ...v, key: `${base}/${v.file}` })),
+      info: () => assets.json(`${base}/${r.parsed}`),
+      text: (v) => assets.text(v.key),
+    }]));
     this.parsed = new Map();
-    this.cache = new Map();             // variant file -> UnityProgram
+    this.cache = new Map();             // variant key -> UnityProgram
     this.variants = new Map();          // "name|subShader|pass|keywords" -> UnityProgram (the variant search, once)
     this.states = new Map();            // "name|subShader|pass" -> {state, names, byValues}: passState per value set
+  }
+
+  // The shaders of a shader table {Unity name: Shader object id}; a name must be the one its object's index states.
+  static fromObjects(gl, shaders, assets = assetsOf(gl)) {
+    const records = new Map(Object.entries(shaders).map(([name, id]) => {
+      assets.object(id, "Shader");
+      const index = assets.objectJson(id, "index");
+      if (index.name !== name) throw new Error(`shader ${id} is ${index.name}, the table names it ${name}`);
+      return [name, {
+        variants: index.variants.filter((v) => v.platform === SHADER_PLATFORM && v.type === SHADER_PROGRAM_TYPE)
+          .map((v) => ({ ...v, key: `${id}#${v.role}` })),
+        info: () => assets.objectJson(id),
+        text: (v) => assets.objectText(id, v.role),
+      }];
+    }));
+    return new ShaderLib(gl, { [RECORDS]: records }, assets);
   }
 
   info(name) {
     if (!this.parsed.has(name)) {
       const rec = this.index.get(name);
       if (!rec) throw new Error(`shader not packed: ${name}`);
-      this.parsed.set(name, this.assets.json(`${this.base}/${rec.parsed}`));
+      this.parsed.set(name, rec.info());
     }
     return this.parsed.get(name);
   }
@@ -353,11 +381,11 @@ export class ShaderLib {
     const want = [...new Set(keywords.filter((k) => known.has(k)))].sort();
     const v = vs.find((x) => x.keywords.length === want.length && [...x.keywords].sort().every((k, i) => k === want[i]));
     if (!v) throw new Error(`${name} pass ${pass}: no variant for [${want.join(" ")}]`);
-    if (!this.cache.has(v.file)) {
+    if (!this.cache.has(v.key)) {
       const label = `${name}#${subShader}.${pass}[${want.join(" ")}]`;
-      this.cache.set(v.file, new UnityProgram(this.gl, label, this.assets.text(`${this.base}/${v.file}`)));
+      this.cache.set(v.key, new UnityProgram(this.gl, label, rec.text(v)));
     }
-    return this.cache.get(v.file);
+    return this.cache.get(v.key);
   }
 
   // passState of the pass against the material floats. The result depends on the floats the state names only: it is

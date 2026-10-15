@@ -76,8 +76,8 @@ for (const e of chosen()) {
       const story = store.json("story.json");
       for (const p of [story.episode, story.scene, story.ui]) assert.ok(store.has(p), `${lang}: ${p}`);
       for (const [key, id] of Object.entries(story.models)) {
-        const m = modelIndex(store, `live2d/${id}`);
-        for (const f of [m.moc3, m.prefab, m.shaders]) assert.ok(store.has(f), `${lang}: ${key}: ${f}`);
+        const m = modelIndex(store, `live2d/${id}`);                     // its objects checked by class
+        assert.ok(store.roles(m.moc).includes("blob:_bytes"), `${lang}: ${key}: the moc's bytes`);
       }
       for (const dir of Object.values(story.audio)) assert.ok(store.has(`${dir}/cues.json`), `${lang}: ${dir}/cues.json`);
       assert.equal(store.json("ui/fonts.json").language, lang);

@@ -14,36 +14,47 @@ const sample = (s, t) => {
   return F(F(F(F(F(F(s.k[k] * x) + s.k[k + 1]) * x) + s.k[k + 2]) * x) + s.k[k + 3]);
 };
 
+// The class a clip binding (clip.json) animates: a MonoBehaviour's script class (the last part of `scriptClass`),
+// else the class of its type id (null when unknown).
+const bindingClass = (b) => (b.typeID === 114 ? (b.scriptClass ? b.scriptClass.slice(b.scriptClass.lastIndexOf("|") + 1) : null)
+  : b.class ?? null);
+
 // One AnimationClip as the Animator samples it into raw CubismParameter.Value (no clamp) and the model curves'
-// controller fields: the streamed cubic keys and the constant curves of the exported clip data.
+// controller fields: the streamed cubic keys and the constant curves of the clip (clip.json). `names`: per binding of
+// the clip, the path and the attribute it animates in the model's hierarchy (model.json bindings).
 // ENGINE: Mecanim samples streamed clips natively; this is the cubic form of the stored keys, float32 in source order.
 export class Live2DClip {
-  constructor(clip, params) {
-    this.name = clip.clip;
+  constructor(clip, names, params) {
+    this.name = clip.name;
     this.length = clip.stopTime;
     this.loopTime = clip.loopTime;
     if (clip.dense.curveCount) throw new Error(`${this.name}: dense clip curves not implemented`);
     if (clip.startTime !== 0 || clip.cycleOffset !== 0) throw new Error(`${this.name}: clip start / cycle offset not implemented`);
+    const nS = clip.streamed.curveCount;
+    // every binding animates one float curve: the streamed ones, then the constant ones
+    if (!names || names.length !== clip.bindings.length) throw new Error(`${this.name}: no names for its bindings`);
+    if (clip.bindings.length !== nS + clip.constant.length || clip.bindings.some((b) => b.pptr || (b.curves ?? 1) !== 1))
+      throw new Error(`${this.name}: bindings other than one float curve each not implemented`);
     const ev = clip.events.filter((e) => e.functionName === "InstanceId");
     this.instanceId = ev.length ? ev[ev.length - 1].intParameter : -1;
-    // A binding whose path is not in the model's hierarchy (path null in the export) animates nothing.
+    // A binding whose path is not in the model's hierarchy (path null) animates nothing.
     // ENGINE: the Animator leaves a binding without a transform at its path unbound.
-    const target = (b) => {
-      if (b.path === null) return -1;
-      if (b.path === "" && FIELDS[`${b.class}.${b.attribute}`]) return FIELDS[`${b.class}.${b.attribute}`];
-      if (b.class !== "CubismParameter" || b.attribute !== "Value" || !b.path.startsWith("Parameters/"))
-        throw new Error(`${this.name}: binding ${JSON.stringify(b)} not implemented`);
-      return params.idx(b.path.slice("Parameters/".length));
+    const target = (i) => {
+      const { path, attribute } = names[i], cls = bindingClass(clip.bindings[i]);
+      if (path === null) return -1;
+      if (path === "" && FIELDS[`${cls}.${attribute}`]) return FIELDS[`${cls}.${attribute}`];
+      if (cls !== "CubismParameter" || attribute !== "Value" || !path.startsWith("Parameters/"))
+        throw new Error(`${this.name}: binding of ${cls} ${JSON.stringify(path)} ${attribute} not implemented`);
+      return params.idx(path.slice("Parameters/".length));
     };
-    const nS = clip.streamed.curveCount;
     this.streamed = [];
-    for (let c = 0; c < nS; c++) this.streamed.push({ param: target(clip.bindings[c]), t: [], k: [] });
+    for (let c = 0; c < nS; c++) this.streamed.push({ param: target(c), t: [], k: [] });
     for (const [time, keys] of clip.streamed.frames)
       for (const [c, c0, c1, c2, c3] of keys) {
         const s = this.streamed[c];
         s.t.push(time); s.k.push(F(c0), F(c1), F(c2), F(c3));
       }
-    const constants = clip.constant.map((v, j) => ({ param: target(clip.bindings[nS + j]), v: F(v) }));
+    const constants = clip.constant.map((v, j) => ({ param: target(nS + j), v: F(v) }));
     const field = (c) => typeof c.param === "string";
     this.fieldCurves = this.streamed.filter(field);
     this.fieldConstants = constants.filter(field);

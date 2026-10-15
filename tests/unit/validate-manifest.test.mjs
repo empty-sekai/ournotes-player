@@ -1,7 +1,8 @@
 // scripts/validate-data.mjs on the manifest keys of a site of several regions / languages and on model manifests:
-// the schemas describe regions, language, titles, bandNames and the model facts; without charts.json the region
-// manifests charts/<region>/<id>.json are validated too; models.json facts must equal the manifest's. Synthetic sites
-// (the manifests list no files, so the content checks fail; the lines checked here are the schema and index ones).
+// the schemas describe regions, language, titles and bandNames, a model manifest is a product manifest of live2d.model;
+// without charts.json the region manifests charts/<region>/<id>.json are validated too; a models.json entry agrees
+// with its model. Synthetic sites (the chart manifests list no files, so their content checks fail; the lines checked
+// here are the schema and index ones).
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -10,13 +11,16 @@ import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { compile } from "../../scripts/lib/json-schema.mjs";
+import { modelObjects, modelProduct, productSize } from "./site-fixture.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const script = path.join(here, "..", "..", "scripts", "validate-data.mjs");
 const schema = (name) => compile(JSON.parse(fs.readFileSync(path.join(here, "..", "..", "schema", `${name}.schema.json`), "utf8")));
 
+// validates a site of the JSON files `files` (path -> value; a function: called with the site directory first)
 const site = (files) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ournotes-site-"));
+  if (typeof files === "function") files = files(dir);
   for (const [p, v] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(dir, p)), { recursive: true });
     fs.writeFileSync(path.join(dir, p), JSON.stringify(v));
@@ -42,16 +46,6 @@ test("manifest schema: regions, language, titles and bandNames; a manifest witho
   assert.ok(S(manifest({}, { language: "" })).some((e) => e.includes("/chart/language")));
 });
 
-test("model manifest schema: the model facts", () => {
-  const S = schema("model");
-  const m = (model) => ({ format: 2, id: "m1", files: {}, ...(model === undefined ? {} : { model }) });
-  assert.deepEqual(S(m()), []);
-  assert.deepEqual(S(m({ group: "003_adv", textures: 2, nodes: 525, extra: true,
-                         canvas: { pixelsPerUnit: 6000, originX: 3000, originY: 4500, width: 6000, height: 9000, mocVersion: 5 } })), []);
-  assert.ok(S(m({ textures: -1 })).some((e) => e.includes("/model/textures")));
-  assert.ok(S(m({ canvas: { mocVersion: 5.5 } })).some((e) => e.includes("/model/canvas/mocVersion")));
-});
-
 test("without charts.json the region manifests are validated too", () => {
   const r = site({ "charts/1_easy.json": manifest({ regions: ["tw"] }), "charts/kr/1_easy.json": manifest({ regions: ["K R"] }) });
   assert.equal(r.status, 1);
@@ -60,68 +54,69 @@ test("without charts.json the region manifests are validated too", () => {
   assert.equal(r.lines.filter((l) => l.startsWith("manifest:") && l.includes("/regions/0")).length, 1);
 });
 
-test("a models.json entry's key and facts equal its manifest's", () => {
-  const man = { format: 2, id: "m1", key: "Character/Live2D/g/m1", model: { group: "g", textures: 2 }, files: {} };
-  const ok = site({ "models.json": { format: 2, models: [{ id: "m1", manifest: "models/m1.json", key: man.key, group: "g", textures: 2 }] },
-                    "models/m1.json": man });
-  assert.ok(!ok.lines.some((l) => l.startsWith("models.json:")), ok.lines.join("\n"));
-  const bad = site({ "models.json": { format: 2, models: [{ id: "m1", manifest: "models/m1.json", key: "other", group: "h", textures: 2 }] },
-                     "models/m1.json": man });
+const KEY = "Character/Live2D/g/m1/model/m1";
+
+test("a models.json entry agrees with its model: id, key and group of the subject; canvas and textures of model.json; bytes and files", () => {
+  const lines = (entry, edit = (m) => m) => site((dir) => {
+    const m = modelObjects("m1"), man = edit(modelProduct(dir, m));
+    const files = Object.keys(man.files).length + Object.values(man.objects).reduce((n, o) => n + Object.keys(o.files).length, 0);
+    const full = { id: "m1", manifest: "models/m1.json", key: KEY, group: "g", canvas: m.model.canvas, textures: 1,
+                   bytes: productSize(man), files };
+    return { "models.json": { format: 2, models: [{ ...full, ...entry }] }, "models/m1.json": man };
+  });
+  const ok = lines({});
+  assert.equal(ok.status, 0, ok.lines.join("\n"));
+  assert.deepEqual(ok.lines, ["1/1 models valid"]);
+  const bad = lines({ key: "other", group: "h", textures: 2, bytes: 1, files: 1, canvas: {} });
   assert.equal(bad.status, 1);
-  assert.ok(bad.lines.includes("models.json: key differs from the manifest"));
-  assert.ok(bad.lines.includes("models.json: group differs from the manifest's model.group"));
-  assert.ok(!bad.lines.some((l) => l.includes("model.textures")));
+  for (const l of [`models.json: key other, manifest subject ${KEY}`, "models.json: group h, the manifest subject's g",
+                   "models.json: textures 2, model.json 1", "models.json: canvas differs from model.json canvas"])
+    assert.ok(bad.lines.includes(l), `${l} in\n${bad.lines.join("\n")}`);
+  assert.ok(bad.lines.some((l) => l.startsWith("models.json: bytes 1, manifest files total")), bad.lines.join("\n"));
+  assert.ok(bad.lines.some((l) => l.startsWith("models.json: files 1, manifest")), bad.lines.join("\n"));
 });
 
-test("model display names: schemas, and equal in models.json and the manifest when either has them", () => {
-  const names = { ja: "エー", "zh-Hant": "A" };
-  assert.deepEqual(schema("model")({ format: 2, id: "m1", files: {}, model: { character: 3, names, label: "A" } }), []);
+test("models.json: display names of the models", () => {
+  const names = { ja: "ア", en: "A" };
   assert.deepEqual(schema("models")({ format: 2, models: [{ id: "m1", manifest: "models/m1.json", character: 3, names, label: "A" }] }), []);
-  assert.ok(schema("model")({ format: 2, id: "m1", files: {}, model: { names: { ja: "" } } }).some((e) => e.includes("/model/names/ja")));
   assert.ok(schema("models")({ format: 2, models: [{ id: "m1", manifest: "models/m1.json", character: 1.5 }] })
     .some((e) => e.includes("/models/0/character")));
-  const man = (model) => ({ format: 2, id: "m1", key: "k", model: { group: "g", ...model }, files: {} });
-  const entry = (extra) => ({ format: 2, models: [{ id: "m1", manifest: "models/m1.json", ...extra }] });
-  const lines = (index, m) => site({ "models.json": index, "models/m1.json": m }).lines.filter((l) => l.startsWith("models.json:"));
-  assert.deepEqual(lines(entry({ character: 3, names, label: "A" }), man({ character: 3, names, label: "A" })), []);
-  assert.deepEqual(lines(entry({}), man({})), []);
-  assert.deepEqual(lines(entry({ character: 3, label: "A" }), man({ names })), [
-    "models.json: character differs from the manifest's model.character",
-    "models.json: names differs from the manifest's model.names",
-    "models.json: label differs from the manifest's model.label",
-  ]);
+  assert.ok(schema("models")({ format: 2, models: [{ id: "m1", manifest: "models/m1.json", names: { ja: "" } }] })
+    .some((e) => e.includes("/models/0/names/ja")));
 });
 
-test("chart and model manifests: formats 2 and 3, file entries stored as they are or encoded", () => {
+test("chart manifests: formats 2 and 3, file entries stored as they are or encoded", () => {
   const a = "a".repeat(64);
   const files = { "live.json": { asset: `assets/${a}.json.gz`, size: 100, stored: 60 },
                   "x.glsl": { asset: `assets/${a}.glsl.br`, size: 100, stored: 40 },
                   "t.png": { asset: `assets/${a}.png`, size: 10 },
                   "n.json": { parts: [["k", `assets/${a}.json.gz`, 50, 20], ["l", `assets/${a}.json`, 5]], size: 63 } };
-  for (const format of [2, 3]) {
-    assert.deepEqual(schema("manifest")(manifest({ format, files })), []);
-    assert.deepEqual(schema("model")({ format, id: "m1", files }), []);
-  }
-  for (const format of [1, 4]) {
-    assert.ok(schema("manifest")(manifest({ format })).some((e) => e.includes("/format")));
-    assert.ok(schema("model")({ format, id: "m1", files: {} }).some((e) => e.includes("/format")));
-  }
+  for (const format of [2, 3]) assert.deepEqual(schema("manifest")(manifest({ format, files })), []);
+  for (const format of [1, 4]) assert.ok(schema("manifest")(manifest({ format })).some((e) => e.includes("/format")));
   assert.ok(schema("manifest")(manifest({ files: { "live.json": { asset: `assets/${a}.json.gz`, size: 100 } } })).length > 0);
-  assert.ok(schema("model")({ format: 3, id: "m1", files: { "n.json": { parts: [["k", `assets/${a}.json`, 5, 4]], size: 9 } } }).length > 0);
-  // model.json: format 2 states motionSync
-  const mj = { format: 2, motionSync: false, moc3: "m.moc3", prefab: "m.prefab.json", shaders: "shaders/shaders.json",
-               resources: { cubismMask: { shader: { shader: "Live2D Cubism/Mask" }, floats: { _Cull: 0 } },
-                            cubismMaskCulling: { shader: { shader: "Live2D Cubism/Mask" }, floats: { _Cull: 1 } } } };
-  assert.deepEqual(schema("model-json")(mj), []);
-  const { motionSync, ...noSync } = mj;
-  assert.equal(motionSync, false);
-  assert.deepEqual(schema("model-json")({ ...noSync, format: 1 }), []);
-  assert.ok(schema("model-json")(noSync).length > 0);
-  assert.ok(schema("model-json")({ ...mj, format: 3 }).some((e) => e.includes("/format")));
 });
 
-test("a model manifest's id is its name without models.json", () => {
-  const r = site({ "models/m1.json": { format: 3, id: "m2", files: {} } });
+test("product manifests and model.json: object tables of whole or encoded files; model.json format 3", () => {
+  const a = "a".repeat(64), S = schema("product");
+  const man = { schema: "nnnotes.product/1", product: "live2d.model", subject: KEY,
+                files: { "model.json": { asset: `assets/${a}.json.gz`, size: 100, stored: 60 } },
+                objects: { "CAB-x:-12": { class: "Texture2D", name: "t", files: { json: { asset: `assets/${a}.json`, size: 9 },
+                                                                                 image: { asset: `assets/${a}.png`, size: 10 } } } } };
+  assert.deepEqual(S(man), []);
+  assert.ok(S({ ...man, schema: "nnnotes.product/2" }).some((e) => e.includes("/schema")));
+  assert.ok(S({ ...man, objects: { "CAB-x": man.objects["CAB-x:-12"] } }).length > 0);              // not an object id
+  assert.ok(S({ ...man, files: { "n.json": { parts: [["k", `assets/${a}.json`, 5]], size: 7 } } }).length > 0);   // no parts
+  const { model } = modelObjects("m1");
+  assert.deepEqual(schema("model-json")(model), []);
+  assert.ok(schema("model-json")({ ...model, format: 2 }).some((e) => e.includes("/format")));
+  const { motionSync, ...noSync } = model;
+  assert.equal(motionSync, false);
+  assert.ok(schema("model-json")(noSync).length > 0);
+  assert.ok(schema("model-json")({ ...model, moc: "m1.moc3" }).some((e) => e.includes("/moc")));
+});
+
+test("a model manifest's subject names the model of the manifest's name", () => {
+  const r = site((dir) => ({ "models/m2.json": modelProduct(dir, modelObjects("m1")) }));
   assert.equal(r.status, 1);
-  assert.ok(r.lines.includes("manifest: id m2, expected m1 (the manifest's name)"), r.lines.join("\n"));
+  assert.ok(r.lines.includes("manifest: subject: model m1, expected m2 (the manifest's name)"), r.lines.join("\n"));
 });

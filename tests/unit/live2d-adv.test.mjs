@@ -1,9 +1,10 @@
-// Live2DCharacter's story (ADV) calls over a synthetic model: a stand-in for Live2D Cubism Core and a prefab with the
-// components the runtime reads. Pause / resume with requests made while paused, motion speed, seeking the playing
-// motion, the parameter loop, the eye-blink stop, the angle and look overrides, brightness, sorting, layer, parent
-// and the lip-sync entry points. Synthetic inputs only.
+// Live2DCharacter's story (ADV) calls over a synthetic model: a stand-in for Live2D Cubism Core and the model's objects
+// (live2d-objects.mjs), with the components the runtime reads. Pause / resume with requests made while paused, motion
+// speed, seeking the playing motion, the parameter loop, the eye-blink stop, the angle and look overrides, brightness,
+// sorting, layer, parent and the lip-sync entry points. Synthetic inputs only.
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { ModelObjects, component, mb, node, ref } from "./live2d-objects.mjs";
 import { Transform } from "../../src/engine/math.js";
 import { PlayerLoop } from "../../src/engine/loop.js";
 import { EASE } from "../../src/engine/tween.js";
@@ -50,41 +51,48 @@ const fadeData = (name, len, ids, curves, pfit = ids.map(() => -1), pfot = ids.m
   m_Name: `${name}.fade`, MotionName: name, FadeInTime: 0.5, FadeOutTime: 0.5, MotionLength: len,
   ParameterFadeInTimes: pfit, ParameterFadeOutTimes: pfot, ParameterIds: ids, ParameterCurves: curves,
 });
-const clip = (name, id, len, value) => ({
-  clip: name, stopTime: len, loopTime: true, startTime: 0, cycleOffset: 0,
-  events: [{ functionName: "InstanceId", intParameter: id }], dense: { curveCount: 0 },
-  bindings: [{ path: "Parameters/ParamAngleX", class: "CubismParameter", attribute: "Value" }],
-  streamed: { curveCount: 0, frames: [] }, constant: [value],
+const clip = (o, name, id, len, value) => o.clip({
+  name, stopTime: len, loopTime: true, events: [{ functionName: "InstanceId", intParameter: id }],
+  bindings: [{ cls: "CubismParameter", path: "Parameters/ParamAngleX", attribute: "Value" }], constant: [value],
 });
 // ParamAngleX from 0 to `to` over the clip's length (one streamed cubic segment, linear)
-const ramp = (name, id, len, to) => ({
-  ...clip(name, id, len, 0), constant: [],
+const ramp = (o, name, id, len, to) => o.clip({
+  name, stopTime: len, loopTime: true, events: [{ functionName: "InstanceId", intParameter: id }],
+  bindings: [{ cls: "CubismParameter", path: "Parameters/ParamAngleX", attribute: "Value" }], constant: [],
   streamed: { curveCount: 1, frames: [[0, [[0, 0, 0, F(to / len), 0]]], [len, [[0, 0, 0, 0, to]]]] },
 });
 
-const prefab = ({ mouthTags = ["ParamMouthOpenY"] } = {}) => {
+// the model's objects and model.json: an AssetStore (store) and the model.json document (model)
+const modelFiles = ({ mouthTags = ["ParamMouthOpenY"] } = {}) => {
+  const o = new ModelObjects();
+  const lit = o.shader("Live2D Cubism/Lit", { properties: [], subShaders: [] }, []);
+  const materialId = o.material("Lit", { shader: lit });
+  const textureId = o.texture("texture_00");
+  const fades = o.mono("CubismFadeMotionList", "common.fadeMotionList", {
+    MotionInstanceIds: [-1, -2, -3, -4],
+    CubismFadeMotionObjects: [
+      o.mono("CubismFadeMotionData", "mtn_idle.fade", fadeData("mtn_idle", 2, ["ParamAngleX", "ParamEyeLOpen"],
+        [curve(2, 0, 0), curve(2, 1, 1)])),
+      o.mono("CubismFadeMotionData", "mtn_turn.fade", fadeData("mtn_turn", 1, ["ParamAngleX"], [curve(1, 30, 30)])),
+      o.mono("CubismFadeMotionData", "misc_sway.fade", fadeData("misc_sway", 2, ["ParamLoopA", "ParamMissing"],
+        [curve(2, 0, 1), curve(2, 0, 1)])),
+      o.mono("CubismFadeMotionData", "mtn_nod.fade", fadeData("mtn_nod", 1, ["ParamAngleX"], [curve(1, 0, 20)])),
+    ].map(ref),
+  });
+  const expressions = o.mono("CubismExpressionList", "common.expressionList", { CubismExpressionObjects: [
+    o.mono("CubismExpressionData", "exp_idle.exp3", { FadeInTime: 0.5, FadeOutTime: 0.5, Parameters: [] }),
+    o.mono("CubismExpressionData", "exp_closed.exp3", { FadeInTime: 0.5, FadeOutTime: 0.5,
+                                                        Parameters: [{ Id: "ParamEyeLOpen", Value: 0, Blend: 2 }] }),
+  ].map(ref) });
+  const idle = clip(o, "mtn_idle", -1, 2, 0), turn = clip(o, "mtn_turn", -2, 1, 30), nod = ramp(o, "mtn_nod", -4, 1, 20);
   const root = "model";
-  const node = (path, components = []) => ({ path, name: path.split("/").pop(), active: true, layer: 0,
-    localPosition: { x: 0, y: 0, z: 0 }, localRotation: { x: 0, y: 0, z: 0, w: 1 }, localScale: { x: 1, y: 1, z: 1 }, components });
-  const mb = (cls, fields) => ({ type: "MonoBehaviour", class: cls, ...fields });
-  const head = node(`${root}/Anchors/Head`);
-  head.localPosition = { x: 0.25, y: 1.5, z: 0 };
-  return { key: "model", canvas: {}, nodes: [
+  const prefabId = o.prefab([
     node(root, [
       mb("Live2DCharacter", { DefaultMotionName: "mtn_idle", DefaultExpressionName: "exp_idle", BasePosition: { x: 0, y: 0, z: 0 },
-                              BaseScale: 1, _motionList: [clip("mtn_idle", -1, 2, 0), clip("mtn_turn", -2, 1, 30),
-                                            ramp("mtn_nod", -4, 1, 20)],
-                              _expressionList: ["exp_idle", "exp_closed"] }),
-      mb("CubismFadeController", { CubismFadeMotionList: { MotionInstanceIds: [-1, -2, -3, -4], CubismFadeMotionObjects: [
-        fadeData("mtn_idle", 2, ["ParamAngleX", "ParamEyeLOpen"], [curve(2, 0, 0), curve(2, 1, 1)]),
-        fadeData("mtn_turn", 1, ["ParamAngleX"], [curve(1, 30, 30)]),
-        fadeData("misc_sway", 2, ["ParamLoopA", "ParamMissing"], [curve(2, 0, 1), curve(2, 0, 1)]),
-        fadeData("mtn_nod", 1, ["ParamAngleX"], [curve(1, 0, 20)]),
-      ] } }),
+                              BaseScale: 1, _motionList: [idle, turn, nod].map(ref), _expressionList: ["exp_idle", "exp_closed"] }),
+      mb("CubismFadeController", { CubismFadeMotionList: ref(fades) }),
       mb("CubismExpressionController", { UseLegacyBlendCalculation: 0, CurrentExpressionIndex: -1, CurrentFadeInTime: -1,
-        ExpressionsList: { CubismExpressionObjects: [
-          { name: "exp_idle.exp3", FadeInTime: 0.5, FadeOutTime: 0.5, Parameters: [] },
-          { name: "exp_closed.exp3", FadeInTime: 0.5, FadeOutTime: 0.5, Parameters: [{ Id: "ParamEyeLOpen", Value: 0, Blend: 2 }] }] } }),
+                                         ExpressionsList: ref(expressions) }),
       mb("CubismHarmonicMotionController", { BlendMode: 1, ChannelTimescales: [1] }),
       mb("CubismAutoEyeBlinkInput", { Mean: 2.5, MaximumDeviation: 2, Timescale: 10 }),
       mb("CubismEyeBlinkController", { BlendMode: 2, EyeOpening: 1 }),
@@ -98,14 +106,17 @@ const prefab = ({ mouthTags = ["ParamMouthOpenY"] } = {}) => {
       ...(id === "ParamBreath" ? [mb("CubismHarmonicMotionParameter", { Channel: 0, Direction: 2, NormalizedOrigin: 0.5,
                                                                          NormalizedRange: 0.5, Duration: 3 })] : [])])),
     node(`${root}/Anchors`),
-    head,
+    node(`${root}/Anchors/Head`, [], { localPosition: { x: 0.25, y: 1.5, z: 0 } }),
     node(`${root}/Drawables`),
     node(`${root}/Drawables/ArtMesh0`, [
       mb("CubismDrawable", { _unmanagedIndex: 0 }),
-      { type: "MeshRenderer", m_Materials: [{ material: "Lit" }] },
-      mb("CubismRenderer", { _localSortingOrder: 0, _color: { r: 1, g: 1, b: 1, a: 1 }, _mainTexture: {} }),
+      component("MeshRenderer", { m_Materials: [ref(materialId)] }),
+      mb("CubismRenderer", { _localSortingOrder: 0, _color: { r: 1, g: 1, b: 1, a: 1 }, _mainTexture: ref(textureId) }),
     ]),
-  ] };
+  ]);
+  const options = { prefab: prefabId, moc: o.moc(new Uint8Array([0x4d, 0x4f, 0x43, 0x33, 5, 0, 0, 0, 0, 0, 0, 0])),
+                    shaders: [lit], resources: {} };
+  return { store: o.store(options), model: o.modelJson(options) };
 };
 
 // a loaded, shown character driven by a 30 fps loop (the story's hooks)
@@ -114,8 +125,8 @@ const shown = async (opts = {}) => {
   globalThis.Live2DCubismCore = fakeCore();
   try {
     const loop = new PlayerLoop(30);
-    const moc = new Uint8Array([0x4d, 0x4f, 0x43, 0x33, 5, 0, 0, 0, 0, 0, 0, 0]).buffer;
-    const ch = new Live2DCharacter(prefab(opts), moc, loop, { random: new UnityRandom(1) });
+    const { store, model } = modelFiles(opts);
+    const ch = new Live2DCharacter(store, model, loop, { random: new UnityRandom(1) });
     const requests = [];
     loop.on("update", () => { for (const f of requests.splice(0)) f(); ch.update(); });
     loop.on("animation", () => ch.animatorUpdate());

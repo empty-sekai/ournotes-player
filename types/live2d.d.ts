@@ -8,26 +8,12 @@ export type { FromManifestOptions, ManifestInfo };
 /** Game time per step: the ADV's 30 frames per second. */
 export const MODEL_FRAME_RATE: 30;
 
-/** A model manifest without its `files` map (`id`, `key`, `model`, ... as the site provides them). */
+/** A model manifest (a product manifest of live2d.model) without its `files` and `objects`. */
 export interface ModelInfo {
-  format?: number;
-  id?: string;
-  key?: string;
-  /** Facts about the model: its group, the moc3 canvas, the atlas page and node counts, the character's names. */
-  model?: {
-    group?: string;
-    canvas?: { pixelsPerUnit?: number; originX?: number; originY?: number; width?: number; height?: number;
-               mocVersion?: number; [key: string]: unknown };
-    textures?: number;
-    nodes?: number;
-    /** The character's id in the game's master data. */
-    character?: number;
-    /** The character's name per language (`ja`, `en`, `zh-Hant`, `zh-Hans`, `ko`). */
-    names?: Record<string, string>;
-    /** A display text: the character's name in the site's language. */
-    label?: string;
-    [key: string]: unknown;
-  };
+  schema?: "nnnotes.product/1";
+  product?: "live2d.model";
+  /** The model's key, Character/Live2D/<group>/<name>/model/<name>. */
+  subject?: string;
   [key: string]: unknown;
 }
 

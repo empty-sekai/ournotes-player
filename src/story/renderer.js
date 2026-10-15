@@ -87,11 +87,9 @@ export class StoryRenderer {
   }
 
   // a character's drawing (its buffers now, its textures and programs in load()): `lib` the ShaderLib of its model's
-  // shaders, `dir` the directory its texture paths are relative to, `resources` its model's Cubism mask materials
-  // (model.json resources)
-  addCharacter(ch, { lib, dir, resources }) {
-    const g = new Live2DDrawing(this.gl, lib, ch, { dir, resources, white: this.tex ? this.tex.white : null,
-                                                    assets: this.assets });
+  // shaders, `model` its model.json (models.js)
+  addCharacter(ch, { lib, model }) {
+    const g = new Live2DDrawing(this.gl, lib, ch, { model, white: this.tex ? this.tex.white : null, assets: this.assets });
     this.characters.push({ ch, gl: g });
     return g;
   }

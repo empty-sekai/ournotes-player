@@ -24,9 +24,8 @@ export async function useModelPlayer(host: HTMLElement): Promise<string[]> {
   player.pause();
   player.play();
   const info: ModelInfo | null = player.info;
-  const character: number | undefined = info?.model?.character;
-  const shown: string = info?.model?.names?.["zh-Hant"] ?? info?.model?.label ?? String(character ?? "");
-  const names: string[] = [player.name, player.motion, player.expression, String(player.motionPlaying), String(info && info.id), shown];
+  const subject: string | undefined = info?.subject;
+  const names: string[] = [player.name, player.motion, player.expression, String(player.motionPlaying), subject ?? ""];
   const root: HTMLDivElement = player.root, canvas: HTMLCanvasElement = player.canvas;
   console.log(root.tagName, canvas.width, player.session && player.session.time, player.disposed);
   await player.dispose();
