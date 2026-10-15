@@ -1,14 +1,17 @@
 import { LIVE_PRODUCT, productDir } from "./store.js";
 
 // LiveData: the documents of one live in its store (loadLiveStore, or a chart store read through legacy.js):
-//   live          live.json of the live product: the chart, the score files, the parts
+//   live          live.json of the live product: the chart, the score files, the band, the parts
 //   score(m)      the converted score (notes.json; notes.mirror.json with the MirrorChart option)
 //   audio()       the sound data of the live: the sounds of a live.sounds product and the music of the live.music part
-//   sceneDoc, noteAssets   the live scene and the note assets (livescene/scene.json, livenotes/notes.json)
+//   scene, notes  scene.json of the live.scene part, notes.json of the live.notes part
+//   noteskin(n), noteeffect(n)   noteskin.json / noteeffect.json of the note skin / effect set named n (default: the
+//                 part's); noteskins, noteeffects: the names of those loaded (the parts and the variants)
 // A product's files are under its directory in the store (store.js productDir).
 
 export const LIVE_JSON_FORMAT = 1, SOUNDS_FORMAT = 1, MUSIC_FORMAT = 1;
-const SOUNDS = "live.sounds";
+export const SCENE_FORMAT = 1, NOTES_FORMAT = 1, NOTESKIN_FORMAT = 1, NOTEEFFECT_FORMAT = 1;
+const SOUNDS = "live.sounds", NOTESKIN = "live.noteskin", NOTEEFFECT = "live.noteeffect";
 
 const checkFormat = (doc, format, where) => {
   if (!doc || doc.format !== format) throw new Error(`${where}: format ${doc && doc.format} (${format} expected)`);
@@ -25,10 +28,45 @@ export class LiveData {
     this.products = info.products;
     this.live = checkFormat(assets.json(`${this.dir}/live.json`), LIVE_JSON_FORMAT, `${this.dir}/live.json`);
     this.parts = Object.fromEntries(Object.entries(this.live.parts).map(([part, p]) => [part, productDir(p)]));
+    this._docs = new Map();
   }
 
   // the JSON file `file` of the product in directory `dir`
   json(dir, file) { return this.assets.json(`${dir}/${file}`); }
+
+  // a document of a product, read once (shared: callers do not modify it)
+  _doc(dir, file, format) {
+    const k = `${dir}/${file}`;
+    if (!this._docs.has(k)) this._docs.set(k, checkFormat(this.json(dir, file), format, k));
+    return this._docs.get(k);
+  }
+
+  get scene() { return this._doc(this.parts.scene, "scene.json", SCENE_FORMAT); }
+  get notes() { return this._doc(this.parts.notes, "notes.json", NOTES_FORMAT); }
+
+  // the subject of the loaded product of `product` in directory `dir`
+  _subject(product, dir) {
+    const hit = Object.entries(this.products[product] || {}).find(([, d]) => d === dir);
+    if (!hit) throw new Error(`${dir}: not a loaded ${product} product`);
+    return hit[0];
+  }
+
+  get noteskins() { return Object.keys(this.products[NOTESKIN] || {}); }
+  get noteeffects() { return Object.keys(this.products[NOTEEFFECT] || {}); }
+
+  // the note skin `name` (MasterLiveNoteSkin._assetName, notes.json settings.skins); default: the live's part
+  noteskin(name = this._subject(NOTESKIN, this.parts.noteskin)) {
+    const dir = (this.products[NOTESKIN] || {})[name];
+    if (!dir) throw new Error(`note skin ${name}: not loaded`);
+    return this._doc(dir, "noteskin.json", NOTESKIN_FORMAT);
+  }
+
+  // the note effect set `name` (MasterLiveNoteEffectSkin._assetName, notes.json settings.effects); default: the part
+  noteeffect(name = this._subject(NOTEEFFECT, this.parts.noteeffect)) {
+    const dir = (this.products[NOTEEFFECT] || {})[name];
+    if (!dir) throw new Error(`note effect set ${name}: not loaded`);
+    return this._doc(dir, "noteeffect.json", NOTEEFFECT_FORMAT);
+  }
 
   // the converted score; `mirror`: the one converted with MirrorChart (live.json notesMirror)
   score(mirror = false) {
@@ -58,7 +96,4 @@ export class LiveData {
     }
     return { ...doc, sounds, music: music.music };
   }
-
-  get sceneDoc() { return this.assets.json("livescene/scene.json"); }
-  get noteAssets() { return this.assets.json("livenotes/notes.json"); }
 }

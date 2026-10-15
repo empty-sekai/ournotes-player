@@ -23,8 +23,9 @@ export const LiveLightWeightBackground = {
   ROOT: "Live/RenderCanvas/LightWeightCompositeRoot",
   LAYERS: ["Layer_JacketLarge", "Layer_BaseWhite", "Layer_JacketSmall", "Layer_StageBg"],   // CreateCompositedRenderTexture array order
 
-  // normalised layer rects in the root (pure)
-  layers(scene, prefab) {
+  // normalised layer rects in the root (pure); objects: LiveObjects, sprites: {stage, jacket} (the band's LightWeight
+  // background sprite, the music's jacket sprite: object ids)
+  layers(objects, prefab, sprites) {
     const root = prefab.nodes.get(LiveLightWeightBackground.ROOT).node;
     const rw = root.rect.m_SizeDelta.x, rh = root.rect.m_SizeDelta.y;      // root anchors 0.5/0.5: rect = sizeDelta
     // the root's rect is its sizeDelta because both its anchors are 0.5 (the RenderCanvas rect does not enter);
@@ -34,7 +35,7 @@ export const LiveLightWeightBackground = {
       width: W, height: H,
       layers: LiveLightWeightBackground.LAYERS.map((name) => {
         const path = `${LiveLightWeightBackground.ROOT}/${name}`;
-        const n = prefab.nodes.get(path).node, img = prefab.component(path, "Image");
+        const n = prefab.nodes.get(path).node, img = prefab.fields(path, "Image");
         const r = n.rect, s = n.localScale;
         if (r.m_AnchorMin.x !== 0.5 || r.m_AnchorMax.x !== 0.5 || r.m_AnchorMin.y !== 0.5 || r.m_AnchorMax.y !== 0.5)
           throw new Error(`${path}: anchors`);
@@ -43,18 +44,18 @@ export const LiveLightWeightBackground = {
         const x0 = F(F(F(cx - F(w / 2)) + F(rw / 2)) / rw), y0 = F(F(F(cy - F(h / 2)) + F(rh / 2)) / rh);
         const x1 = F(F(F(cx + F(w / 2)) + F(rw / 2)) / rw), y1 = F(F(F(cy + F(h / 2)) + F(rh / 2)) / rh);
         // texture: jacket (MusicJacket), the Image sprite's texture (whole atlas page for BaseWhite), stage sprite
-        const tex = name === "Layer_StageBg" ? scene.sprites.lightweightBackground.texture
-          : name.startsWith("Layer_Jacket") ? scene.sprites.jacket.texture
-            : img.m_Sprite ? img.m_Sprite.texture : null;
+        const sprite = name === "Layer_StageBg" ? sprites.stage : name.startsWith("Layer_Jacket") ? sprites.jacket : img.m_Sprite;
+        const tex = sprite ? objects.sprite(sprite).texture : null;
         const c = img.m_Color;
         return { name, tint: [c.r, c.g, c.b, c.a], rectMin: [x0, y0, 0, 0], rectMax: [x1, y1, 0, 0], texture: tex };
       }),
     };
   },
 
-  // Builds blur_result; returns an GLTarget (RGB565, bilinear, clamp). `vao` = an empty VAO.
-  async build(gl, lib, scene, prefab, base, vao) {
-    const L = LiveLightWeightBackground.layers(scene, prefab), W = L.width, H = L.height;
+  // Builds blur_result; returns an GLTarget (RGB565, bilinear, clamp). `vao` = an empty VAO. The layer textures are
+  // uploaded for the build and deleted after it.
+  async build(gl, objects, prefab, sprites, vao) {
+    const lib = objects.lib, L = LiveLightWeightBackground.layers(objects, prefab, sprites), W = L.width, H = L.height;
     const composite = new GLTarget(gl, W, H, { label: "composite_bg" });                  // ARGB32
     const R565 = { internal: gl.RGB565, format: gl.RGB, type: gl.UNSIGNED_SHORT_5_6_5 };
     const result = new GLTarget(gl, W, H, { ...R565, label: "blur_result" });
@@ -91,8 +92,8 @@ export const LiveLightWeightBackground = {
       if (!(l.tint[3] > 0)) continue;
       let t = white;
       if (l.texture) {
-        if (!textures.has(l.texture.texture)) textures.set(l.texture.texture, await GLTex.load(gl, base, l.texture));
-        t = textures.get(l.texture.texture);
+        if (!textures.has(l.texture.id)) textures.set(l.texture.id, await GLTex.loadObject(gl, l.texture.id, objects.assets));
+        t = textures.get(l.texture.id);
       }
       blit("Hidden/CompositeRectBlit", 0, { _MainTex: t, _Tint: l.tint, _RectMin: l.rectMin, _RectMax: l.rectMax }, composite);
     }

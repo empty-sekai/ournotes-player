@@ -1,6 +1,6 @@
-import { AnimClip, AnimController, Animator } from "../engine/anim.js";
+import { Animator } from "../engine/anim.js";
 import { F } from "../engine/core.js";
-import { ShaderLib } from "../engine/glsl.js";
+import { componentClass } from "../engine/prefab.js";
 import { GLTex } from "../engine/texture.js";
 import { DOTRunner, DOTSequence, UIAffine, UIDraw, UIError, UIImage, UILayout, UINode, UISprite, UI_CLIP_TARGET, dotFloat, dotPunch, uiCanvasSize } from "../engine/ugui.js";
 
@@ -19,10 +19,10 @@ import { DOTRunner, DOTSequence, UIAffine, UIDraw, UIError, UIImage, UILayout, U
 //   LiveCanvasOrderInLayerSetter.Awake + LiveOrderInLayerUtility.GetOrderInLayer (100 -> 10000);
 //   DOTween: the DOTween model in engine/ugui.js (Punch, SetPunch, Vector3ArrayPlugin and the Sequence cycle follow
 //   the game's DOTween build; the rest follows DOTween's documented behaviour).
-// Data: livescene/scene.json (scene.nodes under Live/LiveUICanvas), livenotes/notes.json (prefabs.judge_effect_view,
-// controllers / clips of EmbLive/Animation/Combo/*, assets Live/UiSpriteAssets/{LiveJudgementSpriteAsset,
-// LiveComboSpriteAsset} with their inline sprite records), textures under livenotes/textures, UI/Default under
-// livenotes/shaders.
+// Data: the scene product through LiveObjects: scene.json `scene` (the nodes under Live/LiveUICanvas),
+// prefabs.judgeEffectView (UILiveNoteJudgeEffectView), spriteAssets.judgement / combo (LiveJudgementSpriteAsset,
+// LiveComboSpriteAsset), the UILiveCombo Animator's controller and clips (bindings named for that Animator), the sprites
+// and textures they reference, and UI/Default from the shader name table.
 //
 // Frame: update(fr) in the update phase (LiveUIView.UpdateLiveSimulateFrame: ShowJudgement, then
 // UIComboCounterView.UpdateView), tweens(dt) in the DOTween phase, animate(dt) with the Animators, submit(renderer) in
@@ -33,9 +33,6 @@ export const LIVEUI = {
   COMBO: "Live/LiveUICanvas/UISafeArea/ContentArea/UILiveCombo",
   JUDGEMENT: "Live/LiveUICanvas/UILiveJudgement",
   PREFAB: "UILiveNoteJudgeEffectView",
-  JUDGEMENT_SPRITES: "Live/UiSpriteAssets/LiveJudgementSpriteAsset",
-  COMBO_SPRITES: "Live/UiSpriteAssets/LiveComboSpriteAsset",
-  COMBO_CONTROLLER: "EmbLive/Animation/Combo/UILiveCombo",
   SHADER: "UI/Default",
   // UILiveNoteJudgeEffectView.Initialize: _judgementImages[i] <-> judgement KEYS[i] (static array)
   JUDGE_KEYS: [5, 4, 3, 2, 1, 6],
@@ -43,17 +40,23 @@ export const LIVEUI = {
   PRIORITY_3_6: [3, 5, 10, 20],
 };
 
-export const liveComp = (rec, cls) => (rec.components || []).find((c) => (c.class || c.type) === cls) || null;
+// the fields of a node record's component of class `cls` (prefab.json components), or null
+export const liveComp = (rec, cls) => {
+  const c = (rec.components || []).find((x) => componentClass(x) === cls);
+  return c ? c.fields : null;
+};
 
 // ------------------------------------------------------------------- scene / prefab records -> UINode
 // The fields UINode reads (path, name, active, rect, localRotation, localScale, canvasGroup) plus the components
 // this module uses; graphics other than Image / TextMeshProUGUI do not occur in the subset (checked).
 export class LiveUITree {
-  constructor(refPPU) {
+  // objects: LiveObjects (the sprites and their textures)
+  constructor(refPPU, objects) {
     this.refPPU = refPPU;
+    this.objects = objects;
     this.nodes = new Map();
-    this.sprites = new Map();             // "<sprite>@<texture path>" -> UISprite
-    this.textures = new Map();            // texture path (relative to livenotes/) -> exported descriptor, loaded by load()
+    this.sprites = new Map();             // Sprite object id -> UISprite
+    this.textures = new Map();            // Texture2D object id -> its record, loaded by load()
   }
 
   add(rec, path, parent) {
@@ -89,23 +92,20 @@ export class LiveUITree {
     return n;
   }
 
-  // exported sprite record (inline in components and sprite assets) -> UISprite. load = true registers its texture
-  // for LiveUIFx.load(): only the sprite assets' sprites (livenotes/textures); sprites of scene / prefab image records
-  // are either replaced before they can draw or sit under disabled images / zero-alpha groups (a draw of an unloaded
-  // texture raises).
-  sprite(s, load = false) {
-    if (!s) return null;
-    const tex = s.texture;
-    const key = `${s.sprite}@${tex.texture}`;
-    if (!this.sprites.has(key)) {
-      if (s.downscaleMultiplier !== undefined && s.downscaleMultiplier !== 1)
-        throw new UIError(`sprite ${s.sprite}: atlas variant scale ${s.downscaleMultiplier}`);
-      this.sprites.set(key, new UISprite(s.sprite, { rect: s.rect, border: s.border, pixelsPerUnit: s.pixelsToUnits,
+  // a sprite reference (in components and sprite assets) -> UISprite. load = true registers its texture for
+  // LiveUIFx.load(): only the sprite assets' sprites; sprites of scene / prefab image records are either replaced
+  // before they can draw or sit under disabled images / zero-alpha groups (a draw of an unloaded texture raises).
+  sprite(v, load = false) {
+    if (!v) return null;
+    const s = this.objects.sprite(v), tex = s.texture;
+    if (!this.sprites.has(s.id)) {
+      if (s.downscaleMultiplier !== 1) throw new UIError(`sprite ${s.name}: atlas variant scale ${s.downscaleMultiplier}`);
+      this.sprites.set(s.id, new UISprite(s.name, { rect: s.rect, border: s.border, pixelsPerUnit: s.pixelsToUnits,
         pivot: s.pivot, textureRect: s.textureRect, textureRectOffset: s.textureRectOffset },
-      { width: tex.width, height: tex.height, name: tex.texture }));
+      { width: tex.width, height: tex.height, name: tex.id }));
     }
-    if (load) this.textures.set(tex.texture, tex);
-    return this.sprites.get(key);
+    if (load) this.textures.set(tex.id, tex);
+    return this.sprites.get(s.id);
   }
 
   // GameObjectExtension.SetActiveFast: no-op when activeSelf already equals v
@@ -329,10 +329,13 @@ export class LiveUIFx {
   // (Only matters if Init / Add arrive inside a running Init fade, which auto play at Perfect never does.)
   // settings: the live settings (settings.js) read by LiveUIView.Initialize (ComboCountDisplay 206,
   // ContinuationEffectDisplay 208, JudgeResultPositionType 103); absent: the defaults.
-  constructor(gl, { scene, notes, settings = null }, opts = {}) {
+  // objects: LiveObjects; scene: scene.json
+  constructor(gl, { objects, scene, settings = null }, opts = {}) {
     this.gl = gl;
+    this.objects = objects;
     const opt = (k, d) => (settings && settings[k] !== undefined ? settings[k] : d);
-    const recs = new Map(scene.scene.nodes.map((r) => [r.path, r]));
+    const nodes = scene.scene.flatMap((id) => objects.assets.prefab(id).nodes);
+    const recs = new Map(nodes.map((r) => [r.path, r]));
     const rec = (p) => { const r = recs.get(p); if (!r) throw new UIError(`scene node missing: ${p}`); return r; };
     const canvasRec = rec(LIVEUI.CANVAS);
     const canvas = liveComp(canvasRec, "Canvas"), scaler = liveComp(canvasRec, "CanvasScaler");
@@ -347,13 +350,13 @@ export class LiveUIFx {
     if (!ol || ol._orderInLayer !== 100) throw new UIError("LiveUICanvas: order-in-layer setter differs");
     this.sortingOrder = 10000 + ol._offset;
     this.planeDistance = canvas.m_PlaneDistance;
-    const tree = this.tree = new LiveUITree(scaler.m_ReferencePixelsPerUnit);
+    const tree = this.tree = new LiveUITree(scaler.m_ReferencePixelsPerUnit, objects);
     // subset: the canvas, the combo counter's chain and subtree, the judgement view and its effect_root
     // UISafeArea (flexible margin (0,0,0,40)) keeps ContentArea's serialized rect: the player has no device safe
     // area, and the serialized offsets (bottom 40, top 0) are that margin; UISafeAreaGlobalSettings overrides not read.
     const want = (p) => p === LIVEUI.CANVAS || p === `${LIVEUI.CANVAS}/UISafeArea` || p === `${LIVEUI.CANVAS}/UISafeArea/ContentArea` ||
       p === LIVEUI.COMBO || p.startsWith(`${LIVEUI.COMBO}/`) || p === LIVEUI.JUDGEMENT || p.startsWith(`${LIVEUI.JUDGEMENT}/`);
-    for (const r of scene.scene.nodes) {           // hierarchy order (parents first, siblings in order)
+    for (const r of nodes) {                       // hierarchy order (parents first, siblings in order)
       if (!want(r.path)) continue;
       const pp = r.path.slice(0, r.path.lastIndexOf("/"));
       tree.add(r, r.path, r.path === LIVEUI.CANVAS ? null : tree.node(pp));
@@ -364,15 +367,14 @@ export class LiveUIFx {
     // Instantiate(prefab, parent) keeps the prefab's local RectTransform)
     const jv = liveComp(rec(LIVEUI.JUDGEMENT), "LiveJudgementView");
     const parentPath = jv._judgementEffectParent.transform;
-    const prefab = notes.prefabs.judge_effect_view;
+    const prefab = objects.assets.prefab(scene.prefabs.judgeEffectView);
     if (prefab.nodes[0].path !== LIVEUI.PREFAB) throw new UIError("judge effect prefab root differs");
     const inst = (p) => `${parentPath}/${p}`;
     for (const r of prefab.nodes) {
       const pp = r.path.includes("/") ? inst(r.path.slice(0, r.path.lastIndexOf("/"))) : parentPath;
       tree.add(r, inst(r.path), tree.node(pp));
     }
-    const jsa = notes.assets[LIVEUI.JUDGEMENT_SPRITES];
-    if (!jsa) throw new UIError(`asset missing: ${LIVEUI.JUDGEMENT_SPRITES}`);
+    const jsa = objects.mono(scene.spriteAssets.judgement);                  // LiveJudgementSpriteAsset
     const judgeSprites = new Map([[5, jsa.PerfectSprite], [4, jsa.GreatSprite], [3, jsa.GoodSprite], [2, jsa.BadSprite],
                                   [1, jsa.MissSprite], [6, jsa.JustSprite]]);
     for (const s of judgeSprites.values()) tree.sprite(s, true);
@@ -385,18 +387,14 @@ export class LiveUIFx {
     // combo: Animator UILiveCombo on UIComboCounterView's GameObject
     const comboNode = tree.node(LIVEUI.COMBO), comboRec = rec(LIVEUI.COMBO);
     const an = liveComp(comboRec, "Animator");
-    const ctrlKey = notes.assets[LIVEUI.COMBO_CONTROLLER] && notes.assets[LIVEUI.COMBO_CONTROLLER].controller;
-    const raw = ctrlKey && notes.controllers[ctrlKey];
-    if (!an || !raw || raw.name !== an.m_Controller.name) throw new UIError("UILiveCombo: controller not exported");
+    if (!an || !an.m_Controller) throw new UIError("UILiveCombo: Animator without controller");
     if (!an.m_Enabled || an.m_UpdateMode !== 0 || an.m_CullingMode !== 0 || an.m_KeepAnimatorStateOnDisable || an.m_ApplyRootMotion)
       throw new UIError("UILiveCombo: Animator settings outside the implemented subset");
-    const ctrl = AnimController.fromMecanim(raw, (key) => {
-      if (!notes.clips[key]) throw new UIError(`clip ${key} not exported`);
-      return AnimClip.fromMecanim(notes.clips[key], key);
-    });
+    const root = LIVEUI.COMBO.slice(0, LIVEUI.COMBO.indexOf("/"));
+    const rootId = scene.scene.find((id) => objects.assets.prefab(id).nodes[0].path === root);
+    const ctrl = objects.controller(an.m_Controller, rootId, LIVEUI.COMBO);
     this.animator = new Animator(ctrl, (b) => LiveUIFx.bind(comboNode, b), "UILiveCombo");
-    const csa = notes.assets[LIVEUI.COMBO_SPRITES];
-    if (!csa) throw new UIError(`asset missing: ${LIVEUI.COMBO_SPRITES}`);
+    const csa = objects.mono(scene.spriteAssets.combo);                       // LiveComboSpriteAsset
     for (const ts of [csa.NormalSprites, csa.FullComboSprites, csa.AllPerfectSprites])
       for (const s of [ts.TitleSprite, ts.GlowSprite, ...ts.BaseDigitSprites, ...ts.FillDigitSprites]) if (s) tree.sprite(s, true);
     this.combo = new LiveComboCounter(tree, liveComp(comboRec, "UIComboCounterView"), csa, this.animator);
@@ -488,7 +486,7 @@ export class LiveUIFx {
   }
 
   // ------------------------------------------------------------ GL
-  // the GL resources of an already loaded LiveUIFx (same scene and notes): what load() creates
+  // the GL resources of an already loaded LiveUIFx (same objects and scene): what load() creates
   adoptGL(prev) {
     for (const k of ["lib", "solid", "material", "tex", "vao", "vbo", "ibo"]) this[k] = prev[k];
   }
@@ -496,7 +494,7 @@ export class LiveUIFx {
   async load() {
     const gl = this.gl;
     if (!gl) return;
-    this.lib = new ShaderLib(gl, "livenotes/shaders");
+    this.lib = this.objects.lib;
     this.solid = {
       white: GLTex.solid(gl, [255, 255, 255, 255], "white"), black: GLTex.solid(gl, [0, 0, 0, 255], "black"),
       gray: GLTex.solid(gl, [128, 128, 128, 255], "gray"), bump: GLTex.solid(gl, [128, 128, 255, 255], "bump"),
@@ -508,7 +506,7 @@ export class LiveUIFx {
     this.material = { shader: LIVEUI.SHADER, keywords: [], floats: num, colors: {}, defaults };
     this.lib.program(LIVEUI.SHADER, 0, []);
     this.tex = new Map();
-    for (const [p, desc] of this.tree.textures) this.tex.set(p, await GLTex.load(gl, "livenotes", desc));
+    for (const id of this.tree.textures.keys()) this.tex.set(id, await this.objects.texture(id));
     this.vao = gl.createVertexArray(); this.vbo = gl.createBuffer(); this.ibo = gl.createBuffer();
   }
 

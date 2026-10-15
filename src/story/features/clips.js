@@ -47,7 +47,7 @@ export class AnimRecords {
   controllerOf(raw, where) {
     const own = ownClips(raw, (name) => new this.Err(`${where}: two clips named ${name}`));
     const made = new Map();
-    return AnimController.fromMecanim(raw, (key) => {
+    return AnimController.fromMecanim(raw, ({ clip: key }) => {
       if (!made.has(key)) made.set(key, AnimClip.fromMecanim(own.get(key) || this._get(this.clips, "clip", key, where), key));
       return made.get(key);
     });

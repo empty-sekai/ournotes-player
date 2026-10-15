@@ -1,12 +1,13 @@
 import { FxError, FxMatrixTransform, FxParticleSystem } from "../engine/particles.js";
+import { componentClass } from "../engine/prefab.js";
 import { UnityRandom } from "../engine/random.js";
 
 // ------------------------------------------------------------------------------------------------ intro lane-in stars
 // The 7 `ef_particle_star` systems of the start timeline's LiveGameLaneInEffect
 // (live_start_playable_timeline/root/LiveGameLaneInEffect/lines/lane_lineNN/star_icon/ef_particle_star,
-// livescene/scene.json). The stage hands them over through
-// stage.intro.stars() -> [{path, active (activeInHierarchy), localToWorld, components}] every frame.
-//   new LiveIntroStars(gl, { materials /* FxMaterials(gl, "livescene") */, rng /* UnityRandom */ })
+// the band's timeline prefab). The stage hands them over through
+// stage.intro.stars() -> [{path, active (activeInHierarchy), localToWorld, components (prefab.json)}] every frame.
+//   new LiveIntroStars(gl, { materials /* FxMaterials of the live's objects */, rng /* UnityRandom */ })
 //   prepare(stars)       optional, before materials.load(): builds the systems so their material is loaded up front
 //   update(stars, dt)    animation phase, after the timeline evaluation of the frame (Unity: PlayableDirector in
 //                        DirectorUpdateAnimation, then ParticleSystemBeginUpdateAll): matrix, activation
@@ -26,13 +27,13 @@ export class LiveIntroStars {
   _entry(s) {
     let e = this.entries.get(s.path);
     if (e) return e;
-    const comp = (type) => s.components.find((c) => c.type === type) || null;
+    const comp = (cls) => { const c = s.components.find((x) => componentClass(x) === cls); return c ? c.fields : null; };
     const psc = comp("ParticleSystem");
     if (!psc) throw new FxError(`${s.path}: no ParticleSystem`);
     const t = new FxMatrixTransform(s.localToWorld);
     const ps = new FxParticleSystem(psc, comp("ParticleSystemRenderer"), t,
                                        { rng: this.rng, materials: this.materials, name: s.path });
-    const order = s.components.find((c) => c.type === "MonoBehaviour" && c.class === "LiveParticleOrderInLayerSetter");
+    const order = comp("LiveParticleOrderInLayerSetter");
     if (order) ps.sortingOrder = order._orderInLayer * 100 + order._offset;
     if (ps.renderer && this.materials) for (const m of ps.renderer.materials) this.materials.get(m);
     e = { ps, t };

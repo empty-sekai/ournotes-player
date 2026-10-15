@@ -14,42 +14,54 @@ import { fileURLToPath } from "node:url";
 import { LiveNotes, NoteGL } from "../../src/live/noteview.js";
 import { NoteGeo } from "../../src/live/notegeo.js";
 import { DirStore, headlessGL, storeFromDir } from "../../scripts/lib/headless.mjs";
+import { chartFiles } from "./live-legacy-fixture.mjs";
 
 const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "scripts", "read-set.mjs");
 
 // ---- synthetic note views
 const TRS = { localPosition: { x: 0, y: 0, z: 0 }, localRotation: { x: 0, y: 0, z: 0, w: 1 }, localScale: { x: 1, y: 1, z: 1 } };
-const mat = (name, shader = "Sprites/Default") => ({ material: name, shader: { shader }, keywords: [], floats: { _Z: 1 }, colors: {} });
-const sr = (m, enabled = 1) => ({ type: "SpriteRenderer", m_Enabled: enabled, m_Materials: [m], m_Size: { x: 1, y: 1 },
-                                  m_Color: { r: 1, g: 1, b: 1, a: 1 }, m_SortingOrder: 0, m_SortingLayer: 0, m_DrawMode: 0 });
+// a material record as LiveObjects.material gives it: the shader by name
+const mat = (name, shader = "Sprites/Default") => ({ material: name, shader, keywords: [], floats: { _Z: 1 }, colors: {} });
 const sprite = (name) => ({ sprite: name, texture: { texture: `textures/${name}.png` }, rect: { x: 0, y: 0, width: 4, height: 4 } });
-// a head prefab: root (view script) with a main and a mark renderer
-const head = (name, main, mark) => ({ nodes: [
-  { path: name, name, active: true, ...TRS, components: [{ type: "MonoBehaviour", class: "LiveNoteView",
-    _mainSpriteRenderer: { gameObject: `${name}/main` }, _markSpriteRenderer: { gameObject: `${name}/mark` } }] },
+// references in prefab.json fields, resolved by the store stub below by their name
+const mref = (name) => ({ $ref: { file: "materials", pathId: name } });
+const sref = (name) => ({ $ref: { file: "sprites", pathId: name } });
+const srFields = (m, enabled = 1) => ({ m_Enabled: enabled, m_Materials: [mref(m)], m_Sprite: null, m_Size: { x: 1, y: 1 },
+                                        m_Color: { r: 1, g: 1, b: 1, a: 1 }, m_SortingOrder: 0, m_SortingLayer: 0, m_DrawMode: 0 });
+const sr = (m, enabled = 1) => ({ type: "SpriteRenderer", fields: srFields(m, enabled) });
+// a head prefab (prefab.json/2): root (view script) with a main and a mark renderer
+const head = (name, main, mark) => ({ name, nodes: [
+  { path: name, name, active: true, ...TRS, components: [{ type: "MonoBehaviour", script: "Assembly-CSharp|Live|LiveNoteView",
+    fields: { _mainSpriteRenderer: { gameObject: `${name}/main` }, _markSpriteRenderer: { gameObject: `${name}/mark` } } }] },
   { path: `${name}/main`, name: "main", active: true, ...TRS, components: [sr(main)] },
   { path: `${name}/mark`, name: "mark", active: true, ...TRS, components: [sr(mark)] },
 ] });
 const M = Object.fromEntries(["tap", "tapMark", "slide", "slideMark", "conn", "connMark", "end", "endMark", "flick",
                               "flickMark", "pair", "body"].map((k) => [k, mat(k)]));
-const ln = {
-  prefabs: {
-    tap_note_view: head("tap_note_view", M.tap, M.tapMark),
-    slide_note_view: head("slide_note_view", M.slide, M.slideMark),
-    connection_note_view: head("connection_note_view", M.conn, M.connMark),
-    slide_end_note_view: head("slide_end_note_view", M.end, M.endMark),
-    flick_note_view: head("flick_note_view", M.flick, M.flickMark),
-    guide_note_view: { nodes: [{ path: "guide_note_view", name: "guide_note_view", active: true, ...TRS, components: [] }] },
-    pair_note_line: { nodes: [{ path: "pair_note_line", name: "pair_note_line", active: true, ...TRS,
-                                components: [{ ...sr(M.pair), m_Sprite: sprite("pair") }] }] },
-  },
-  noteSkin: {                                   // the tap and connection skins have no centre mark: no mark drawn
-    TapNoteAsset: { _mainSprite: sprite("tap"), _centerMarkSprite: null },
-    SlideNoteAsset: { _mainSprite: sprite("slide"), _centerMarkSprite: sprite("slide_mark") },
-    SlideConnectNoteAsset: { _mainSprite: sprite("conn"), _centerMarkSprite: null },
-    SlideEndNoteAsset: { _mainSprite: sprite("end"), _centerMarkSprite: sprite("end_mark") },
-    FlickNoteAsset: { _mainSprite: sprite("flick"), _centerMarkSprite: sprite("flick_mark") },
-  },
+const PREFABS = {
+  tap_note_view: head("tap_note_view", "tap", "tapMark"),
+  slide_note_view: head("slide_note_view", "slide", "slideMark"),
+  connection_note_view: head("connection_note_view", "conn", "connMark"),
+  slide_end_note_view: head("slide_end_note_view", "end", "endMark"),
+  flick_note_view: head("flick_note_view", "flick", "flickMark"),
+  guide_note_view: { name: "guide_note_view", nodes: [{ path: "guide_note_view", name: "guide_note_view", active: true, ...TRS, components: [] }] },
+  pair_note_line: { name: "pair_note_line", nodes: [{ path: "pair_note_line", name: "pair_note_line", active: true, ...TRS,
+                                                     components: [{ type: "SpriteRenderer", fields: { ...srFields("pair"), m_Sprite: sref("pair") } }] }] },
+};
+// the objects the read set reads: prefab documents by id, materials and sprites by reference
+const store = {
+  assets: { prefab: (id) => PREFABS[id] },
+  material: (v) => M[v.$ref.pathId],
+  sprite: (v) => sprite(v.$ref.pathId),
+};
+const ln = { prefabs: Object.fromEntries(Object.keys(PREFABS).map((name) => [name, name])) };
+// the note skin's units, resolved (sprites in place of their references)
+const SKIN = {                                  // the tap and connection skins have no centre mark: no mark drawn
+  TapNoteAsset: { _mainSprite: sprite("tap"), _centerMarkSprite: null },
+  SlideNoteAsset: { _mainSprite: sprite("slide"), _centerMarkSprite: sprite("slide_mark") },
+  SlideConnectNoteAsset: { _mainSprite: sprite("conn"), _centerMarkSprite: null },
+  SlideEndNoteAsset: { _mainSprite: sprite("end"), _centerMarkSprite: sprite("end_mark") },
+  FlickNoteAsset: { _mainSprite: sprite("flick"), _centerMarkSprite: sprite("flick_mark") },
 };
 const note = (id, op, extra = {}) => ({ id, op, timeMs: 1000 * id, laneStart: 2, laneEnd: 4, laneStartFloat: 2, laneEndFloat: 4,
                                         width: 3, critical: false, direction: "Normal", pairNoteId: 0, lineIds: [], ...extra });
@@ -57,7 +69,8 @@ const GEO = new NoteGeo({ laneCount: 24, laneSize: [1912, 1000], laneTopRange: 0
                           judgementScreenBottomPosition: 2.24 });
 const planned = (notes, { showPairLines = true } = {}) => {
   const owner = Object.assign(Object.create(LiveNotes.prototype), {
-    ln, score: { notes }, geo: GEO, showPairLines, notes: new Map(notes.map((n) => [n.id, n])), material: M.body,
+    objects: store, ln, skin: SKIN, score: { notes }, geo: GEO, showPairLines, notes: new Map(notes.map((n) => [n.id, n])),
+    material: M.body,
     _clips: new Map(),
   });
   return LiveNotes.prototype.plannedMaterials.call(owner).map((m) => m.material).sort();
@@ -125,18 +138,16 @@ test("read-set --serve answers each request line in order, one JSON line each, u
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-// a live directory whose session gets as far as the Live options: live.json, empty scene and note asset files, an
-// audio file with the music's sound, no score (a load with accepted settings fails at the score)
+// a live directory whose session gets as far as the Live options: the synthetic chart of live-legacy-fixture.mjs
+// without its score (a load with accepted settings fails at the score)
 const settingsDir = () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ournotes-settings-"));
-  fs.writeFileSync(path.join(dir, "live.json"), JSON.stringify({
-    musicId: 1, difficulty: "expert", scene: "livescene/scene.json", noteAssets: "livenotes/notes.json",
-    liveAudio: "audio.json", notes: "score.json" }));
-  for (const d of ["livescene", "livenotes"]) {
-    fs.mkdirSync(path.join(dir, d));
-    fs.writeFileSync(path.join(dir, d, d === "livescene" ? "scene.json" : "notes.json"), "{}");
+  const { text, bytes } = chartFiles({ musicId: 1, notes: "score.json", notesMirror: undefined });
+  for (const [p, body] of [...Object.entries(text), ...Object.entries(bytes)]) {
+    if (p.startsWith("score/")) continue;
+    fs.mkdirSync(path.dirname(path.join(dir, p)), { recursive: true });
+    fs.writeFileSync(path.join(dir, p), body);
   }
-  fs.writeFileSync(path.join(dir, "audio.json"), JSON.stringify({ music: { soundId: 1 }, sounds: { 1: { layers: [] } } }));
   return dir;
 };
 
