@@ -8,7 +8,7 @@
   "additionalProperties": false,
   "properties": {
     "schema": { "const": "nnnotes.product/1" },
-    "product": { "type": "string", "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9-]*)+$" },
+    "product": { "type": "string", "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9-]*)*$" },
     "subject": { "type": "string", "minLength": 1 },
     "files": {
       "description": "The product's own files by logical path.",

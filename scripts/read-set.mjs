@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Read set of the player: the logical paths (live.json, livescene/..., audio/..., ...) a chart session reads over a
-// whole chart. The session runs headless (scripts/lib/headless.mjs).
+// Read set of the player: the files a chart session reads over a whole chart: the logical paths of the store
+// (lives/<id>/live.json, scenes/default/scene.json, sounds/default/audio/..., ...; a chart of the site layout: live.json,
+// livescene/..., ...) and the objects' files as "<object id>#<role>". The session runs headless (scripts/lib/headless.mjs).
 //
 // Full mode (the default, the reference): the session is loaded, started and stepped at 60 fps to the end of the chart
 // with every frame drawn (so every lazily loaded texture and shader is requested), music on the game clock.
@@ -28,7 +29,8 @@
 //                             [--settings=<json object>]
 //   node scripts/read-set.mjs --serve
 //   node scripts/read-set.mjs --features
-//     <chart>     a chart manifest (site/charts/<musicId>_<difficulty>.json) or a directory holding live.json
+//     <chart>     a live manifest (lives/<musicId>_<difficulty>.json of a product layout), a chart manifest
+//                 (site/charts/<musicId>_<difficulty>.json) or a directory holding live.json
 //     --plan      plan mode (above)
 //     --files     compare with a list of paths: exit 1 when the session read a path outside it (missing) or the list
 //                 holds a path it never read (extra)
@@ -52,7 +54,7 @@ import { LiveSettingsError } from "../src/live/settings.js";
 import { HeadlessAudioContext, headlessGL, openChart } from "./lib/headless.mjs";
 
 const FEATURES = ["plan", "serve", "settings"];
-const USAGE = "usage: node scripts/read-set.mjs <chart manifest | live dir> [--plan] [--files=<json>] [--keys] [--frames=<n>] " +
+const USAGE = "usage: node scripts/read-set.mjs <live manifest | chart manifest | live dir> [--plan] [--files=<json>] [--keys] [--frames=<n>] " +
               "[--quality=<n>] [--settings=<json object>] | --serve | --features";
 
 class UsageError extends Error {}
@@ -79,6 +81,11 @@ const readSet = async (where, opt) => {
   const reads = new Set(), keyReads = new Set();
   const recorded = (name) => { const f = assets[name].bind(assets); assets[name] = (p, ...a) => { reads.add(p); return f(p, ...a); }; };
   for (const m of ["text", "bytes", "arrayBuffer", "image"]) recorded(m);
+  // an object's file, "<id>#<role>" (objectJson reads through objectText)
+  for (const m of ["objectText", "objectBytes", "objectImage"]) {
+    const f = assets[m].bind(assets);
+    assets[m] = (id, role = "image", ...a) => { reads.add(`${id}#${role}`); return f(id, role, ...a); };
+  }
   const json = assets.json.bind(assets);
   assets.json = (p) => {
     const v = json(p);

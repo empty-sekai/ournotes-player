@@ -9,7 +9,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { DATA, SKIP, pickCharts, siteCharts } from "./harness.mjs";
+import { DATA, SKIP, manifestOf, pickCharts, siteCharts } from "./harness.mjs";
 
 const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "scripts", "read-set.mjs");
 const charts = process.env.OURNOTES_READSET_CHARTS === "all" ? (DATA ? siteCharts() : [])
@@ -17,7 +17,7 @@ const charts = process.env.OURNOTES_READSET_CHARTS === "all" ? (DATA ? siteChart
 const jobs = Math.max(1, Number(process.env.OURNOTES_JOBS || 1));
 
 const readSet = (id, ...args) => new Promise((resolve, reject) => {
-  execFile(process.execPath, [script, path.join(DATA, "charts", `${id}.json`), ...args], { maxBuffer: 1 << 26 },
+  execFile(process.execPath, [script, manifestOf(id), ...args], { maxBuffer: 1 << 26 },
            (err, stdout, stderr) => (err ? reject(new Error(`${id} ${args.join(" ")}: ${stderr || err.message}`)) : resolve(JSON.parse(stdout))));
 });
 
@@ -70,7 +70,7 @@ test(`read sets served by one process equal those of one process per chart (${ch
     for (let r; (r = requests.shift()) !== undefined;) {
       const [id, mode] = r, want = own.get(`${id} ${mode}`);
       if (!want) { bad.push({ id, mode, error: "no answer of its own process" }); continue; }
-      const a = await srv.ask({ chart: path.join(DATA, "charts", `${id}.json`), plan: mode === "plan" });
+      const a = await srv.ask({ chart: manifestOf(id), plan: mode === "plan" });
       if (!a.ok) bad.push({ id, mode, error: a.error.slice(0, 500) });
       else if (JSON.stringify([a.result.state, a.result.frames, a.result.files]) !==
                JSON.stringify([want.state, want.frames, want.files])) bad.push({ id, mode, served: a.result.files.length });

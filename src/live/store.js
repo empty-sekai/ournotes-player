@@ -78,8 +78,17 @@ export const loadLiveStore = async (url, { variants = [], fetch = globalThis.fet
       throw new Error(`${u}: not a manifest of ${products.join(" or ")}`);
     return [productDir(p), m];
   }));
+  return AssetStore.fromManifest(href, { ...opts, fetch: serve(liveManifest([[liveDir, man], ...loaded])),
+                                        base: root.href, onProgress });
+};
+
+// The manifest of a live's store from the manifests of its products, [[directory, manifest], ...] with the live's
+// first: the live manifest without its file lists, `dir` and `products` (as the store's `info` of loadLiveStore), every
+// product's files under its directory and the objects of all of them in one table (an object in several manifests
+// must be the same in each).
+export const liveManifest = (loaded) => {
   const files = {}, objects = {}, products = {};
-  for (const [dir, m] of [[liveDir, man], ...loaded]) {
+  for (const [dir, m] of loaded) {
     const subjects = (products[m.product] ||= {});
     if (m.subject in subjects) {
       if (subjects[m.subject] !== dir) throw new Error(`${m.product} ${m.subject}: two manifests (${subjects[m.subject]}, ${dir})`);
@@ -93,7 +102,7 @@ export const loadLiveStore = async (url, { variants = [], fetch = globalThis.fet
       objects[id] = o;
     }
   }
+  const [liveDir, man] = loaded[0];
   const { files: _f, objects: _o, ...info } = man;
-  const merged = { ...info, dir: liveDir, products, files, objects };
-  return AssetStore.fromManifest(href, { ...opts, fetch: serve(merged), base: root.href, onProgress });
+  return { ...info, dir: liveDir, products, files, objects };
 };

@@ -1,20 +1,77 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/empty-sekai/ournotes-player/main/schema/live.schema.json",
-  "title": "Live index (live.json)",
-  "description": "The entry file of a chart: the paths of the logical files the player reads. See docs/data-format.md.",
+  "title": "Live (live.json of a live product)",
+  "description": "The document of the product live: the chart's score files, the band and the jacket, and the manifest paths of the products the live plays with. Only the keys the player reads are described. See docs/data-format.md.",
   "type": "object",
-  "required": ["scene", "notes", "noteAssets", "liveAudio"],
+  "required": [
+    "format",
+    "musicId",
+    "difficulty",
+    "band",
+    "jacket",
+    "notes",
+    "parts"
+  ],
   "properties": {
-    "musicId": { "type": "integer" },
-    "difficulty": { "type": "string" },
-    "scene": { "$ref": "#/$defs/path", "description": "Live scene (usually livescene/scene.json)." },
-    "notes": { "$ref": "#/$defs/path", "description": "Score notes of the chart (e.g. score/0001_03.notes.json)." },
-    "notesMirror": { "$ref": "#/$defs/path", "description": "Optional: the score converted mirrored (the MirrorChart option), same format as notes." },
-    "noteAssets": { "$ref": "#/$defs/path", "description": "Note, effect and UI assets (usually livenotes/notes.json)." },
-    "liveAudio": { "$ref": "#/$defs/path", "description": "Sound definitions (usually audio/live-audio.json)." }
+    "format": {
+      "const": 1
+    },
+    "musicId": {
+      "type": "integer"
+    },
+    "difficulty": {
+      "type": "string"
+    },
+    "band": {
+      "type": "object",
+      "required": [
+        "band"
+      ],
+      "properties": {
+        "band": {
+          "type": "integer",
+          "description": "The band whose start timeline and background the live plays (a key of scene.json bands)."
+        }
+      }
+    },
+    "jacket": {
+      "$ref": "#/$defs/objectId",
+      "description": "The jacket Sprite."
+    },
+    "notes": {
+      "$ref": "#/$defs/file",
+      "description": "The score, a file of the live."
+    },
+    "notesMirror": {
+      "$ref": "#/$defs/file",
+      "description": "Optional: the score converted with the MirrorChart option."
+    },
+    "parts": {
+      "type": "object",
+      "required": [
+        "scene",
+        "notes",
+        "noteskin",
+        "noteeffect",
+        "sounds",
+        "music"
+      ],
+      "description": "Part -> the manifest path of the product, relative to the layout root.",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[^/\\\\]+/[^/\\\\]+\\.json$"
+      }
+    }
   },
   "$defs": {
-    "path": { "type": "string", "pattern": "^[A-Za-z0-9_][^\\\\]*\\.json$" }
+    "objectId": {
+      "type": "string",
+      "pattern": "^.+:-?[0-9]+$"
+    },
+    "file": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_][^\\\\]*\\.json$"
+    }
   }
 }

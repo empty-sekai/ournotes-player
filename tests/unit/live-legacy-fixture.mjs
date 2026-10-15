@@ -4,7 +4,8 @@
 // (one of a shader the chart does not pack), sprites, textures with and without their image, a mesh, MonoBehaviour
 // assets, a timeline whose track binds an Animator, clips and controllers of the note assets by key, the note skin
 // with a flick arrow clip, the lane and note effect sets, the live UI sprite assets.
-// chartFiles(extra) -> {text: {path: text}, bytes: {path: Uint8Array}}; `extra` is merged into live.json.
+// chartFiles(extra, overrides) -> {text: {path: text}, bytes: {path: Uint8Array}}; `extra` is merged into live.json, the
+// overrides replace documents (see chartFiles).
 
 const V0 = { x: 0, y: 0, z: 0 }, Q = { x: 0, y: 0, z: 0, w: 1 }, V1 = { x: 1, y: 1, z: 1 };
 const node = (path, components = []) => ({ path, name: path.split("/").pop(), active: true, layer: 0, tag: "Untagged",
@@ -107,23 +108,35 @@ const layer = (file) => ({ file, sampleRate: 48000, channels: 2, samples: 4800, 
 const cue = (sheet, file, categories) => ({ sheet, cue: sheet, category: 1, categories, volume: 1,
                                            row: { _isRandomPitch: false }, layers: [layer(file)] });
 
-export const chartFiles = (extra = {}) => ({
+export { cue, layer, json, node, clip, material, sr };
+// the default documents of chartFiles: the score files, live-audio.json, the scene and notes, the GLSL variant
+export const SCORE = { notes: [1] }, MIRROR = { notes: [2] };
+export const AUDIO = {
+  sounds: { 1: cue("bgm_7", "audio/bgm_7/bgm_7.m4a", ["LiveBgm"]), 10: cue("se1", "audio/se1/a.flac", ["LiveSe"]) },
+  categories: { LiveBgm: 1, LiveSe: 1 }, react: [], music: { soundId: 1 }, noteSe: { types: { 1: 10 } }, liveSe: {},
+  timeline: { startCheerDelaySec: 1 } };
+export const GLSL = "#version 300 es\n";
+// the default bytes of chartFiles (a placeholder m4a, flac and PNG header: not valid media)
+const BYTES = { "audio/bgm_7/bgm_7.m4a": new Uint8Array([7]), "audio/se1/a.flac": new Uint8Array([1]),
+                "livescene/textures/judge.png": new Uint8Array([0x89, 0x50, 0x4e, 0x47]) };
+
+// chartFiles(extra, {scene, notes, audio, glsl, score, mirror, bytes}): `extra` is merged into live.json; each override
+// replaces the default document (scene and notes as objects, serialized as the defaults are; `glsl` is the variant's
+// text; `bytes` is merged over the default bytes). Without overrides the output is the default chart.
+export const chartFiles = (extra = {}, { scene = SCENE, notes = NOTES, audio = AUDIO, glsl = GLSL, score = SCORE,
+                                          mirror = MIRROR, bytes = {} } = {}) => ({
   text: {
     "live.json": JSON.stringify({ musicId: 7, difficulty: "expert", scene: "livescene/scene.json",
                                   notes: "score/m7_03.notes.json", notesMirror: "score/m7_03.mirror.notes.json",
                                   noteAssets: "livenotes/notes.json", liveAudio: "audio/live-audio.json", ...extra }),
-    "score/m7_03.notes.json": JSON.stringify({ notes: [1] }), "score/m7_03.mirror.notes.json": JSON.stringify({ notes: [2] }),
-    "audio/live-audio.json": JSON.stringify({
-      sounds: { 1: cue("bgm_7", "audio/bgm_7/bgm_7.m4a", ["LiveBgm"]), 10: cue("se1", "audio/se1/a.flac", ["LiveSe"]) },
-      categories: { LiveBgm: 1, LiveSe: 1 }, react: [], music: { soundId: 1 }, noteSe: { types: { 1: 10 } }, liveSe: {},
-      timeline: { startCheerDelaySec: 1 } }),
-    "livescene/scene.json": json(SCENE), "livenotes/notes.json": json(NOTES),
+    "score/m7_03.notes.json": JSON.stringify(score), "score/m7_03.mirror.notes.json": JSON.stringify(mirror),
+    "audio/live-audio.json": JSON.stringify(audio),
+    "livescene/scene.json": json(scene), "livenotes/notes.json": json(notes),
     "livescene/shaders/shaders.json": JSON.stringify([{ name: SHADER, parsed: "Sprites_Default.json", variants: [
       { file: "Sprites_Default/gles3/v0.glsl", platform: "gles3", type: "GLES3", subShader: 0, pass: 0, keywords: [] }] }]),
     "livescene/shaders/Sprites_Default.json": JSON.stringify({ name: SHADER, properties: [], subShaders: [] }),
-    "livescene/shaders/Sprites_Default/gles3/v0.glsl": "#version 300 es\n",
+    "livescene/shaders/Sprites_Default/gles3/v0.glsl": glsl,
     "livenotes/shaders/shaders.json": "[]",
   },
-  bytes: { "audio/bgm_7/bgm_7.m4a": new Uint8Array([7]), "audio/se1/a.flac": new Uint8Array([1]),
-           "livescene/textures/judge.png": new Uint8Array([0x89, 0x50, 0x4e, 0x47]) },
+  bytes: { ...BYTES, ...bytes },
 });
