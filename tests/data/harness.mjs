@@ -3,7 +3,9 @@
 // sound is played (scripts/lib/headless.mjs provides a no-op WebGL2 context and a no-op AudioContext), but the whole
 // session runs: simulation, note views, effects, live UI and every draw call.
 //
-//   OURNOTES_DATA=<site dir>           the site (charts.json, charts/, assets/); the tests are skipped without it
+//   OURNOTES_DATA=<site dir>           the data: a product layout (lives/, scenes/, notes/, ..., assets/) and / or a
+//                                      chart site (charts.json, charts/, assets/); the tests are skipped without it.
+//                                      A chart id names lives/<id>.json, else charts/<id>.json
 //   OURNOTES_CHARTS=<id>,<id>,...      charts for the full-run test (default: 100001_expert and 100040_expert when
 //                                      present, else the first chart of the site)
 //   OURNOTES_SEEK_CHART=<id>           chart for the seek / speed / stall test and the settings test (default:
@@ -17,12 +19,22 @@ import { ChartSession } from "../../src/live/session.js";
 import { HeadlessAudioContext, headlessGL, openChart } from "../../scripts/lib/headless.mjs";
 
 export const DATA = process.env.OURNOTES_DATA || "";
-export const SKIP = DATA ? false : "OURNOTES_DATA is not set (path of a chart site)";
+export const SKIP = DATA ? false : "OURNOTES_DATA is not set (path of a product layout or a chart site)";
 
+const ids = (dir) => (fs.existsSync(path.join(DATA, dir))
+  ? fs.readdirSync(path.join(DATA, dir)).filter((f) => f.endsWith(".json")).map((f) => f.slice(0, -5)).sort() : []);
+
+// the ids of the data's lives (lives/<id>.json) and charts (charts.json, else charts/<id>.json)
 export const siteCharts = () => {
   const index = path.join(DATA, "charts.json");
-  if (fs.existsSync(index)) return JSON.parse(fs.readFileSync(index, "utf8")).charts.map((c) => c.id);
-  return fs.readdirSync(path.join(DATA, "charts")).filter((f) => f.endsWith(".json")).map((f) => f.slice(0, -5)).sort();
+  const charts = fs.existsSync(index) ? JSON.parse(fs.readFileSync(index, "utf8")).charts.map((c) => c.id) : ids("charts");
+  return [...new Set([...ids("lives"), ...charts])];
+};
+
+// the manifest of a chart id: the live manifest lives/<id>.json, else the chart manifest charts/<id>.json
+export const manifestOf = (id) => {
+  const live = path.join(DATA, "lives", `${id}.json`);
+  return fs.existsSync(live) ? live : path.join(DATA, "charts", `${id}.json`);
 };
 
 // the chart ids named by `env`, else the defaults the site has, else its first chart
@@ -36,7 +48,7 @@ export const pickCharts = (env, defaults) => {
 // A session at the start of the chart, playing, on the music-off clock (the chart clock advances by the game time of
 // each step, so runs are reproducible); `settings`: the Live options it boots with. Returns { session, audioContext }.
 export const openSession = async (id, { speed = 1, seed = 1, settings = null } = {}) => {
-  const assets = await openChart(path.join(DATA, "charts", `${id}.json`));
+  const assets = await openChart(manifestOf(id));
   const audioContext = new HeadlessAudioContext();
   const session = await ChartSession.create({ gl: headlessGL(), assets, audioContext, seed, width: 320, height: 180,
                                               settings });

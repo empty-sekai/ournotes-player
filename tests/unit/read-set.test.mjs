@@ -44,13 +44,15 @@ const PREFABS = {
   connection_note_view: head("connection_note_view", "conn", "connMark"),
   slide_end_note_view: head("slide_end_note_view", "end", "endMark"),
   flick_note_view: head("flick_note_view", "flick", "flickMark"),
-  guide_note_view: { name: "guide_note_view", nodes: [{ path: "guide_note_view", name: "guide_note_view", active: true, ...TRS, components: [] }] },
+  ...Object.fromEntries(["guide_note_view", "none_note_view", "slide_line_view", "guide_line_view"].map((name) =>
+    [name, { name, nodes: [{ path: name, name, active: true, ...TRS, components: [] }] }])),
   pair_note_line: { name: "pair_note_line", nodes: [{ path: "pair_note_line", name: "pair_note_line", active: true, ...TRS,
                                                      components: [{ type: "SpriteRenderer", fields: { ...srFields("pair"), m_Sprite: sref("pair") } }] }] },
 };
 // the objects the read set reads: prefab documents by id, materials and sprites by reference
+const prefabsRead = new Set();
 const store = {
-  assets: { prefab: (id) => PREFABS[id] },
+  assets: { prefab: (id) => { prefabsRead.add(id); return PREFABS[id]; } },
   material: (v) => M[v.$ref.pathId],
   sprite: (v) => sprite(v.$ref.pathId),
 };
@@ -68,6 +70,7 @@ const note = (id, op, extra = {}) => ({ id, op, timeMs: 1000 * id, laneStart: 2,
 const GEO = new NoteGeo({ laneCount: 24, laneSize: [1912, 1000], laneTopRange: 0.3, laneBottomRange: 1, laneTopPosition: 0,
                           judgementScreenBottomPosition: 2.24 });
 const planned = (notes, { showPairLines = true } = {}) => {
+  prefabsRead.clear();
   const owner = Object.assign(Object.create(LiveNotes.prototype), {
     objects: store, ln, skin: SKIN, score: { notes }, geo: GEO, showPairLines, notes: new Map(notes.map((n) => [n.id, n])),
     material: M.body,
@@ -85,8 +88,14 @@ test("plan: the head renderers of the note kinds in the score, the pair line and
   assert.deepEqual(planned(score), ["body", "conn", "end", "endMark", "pair", "slide", "slideMark", "tap"]);
   // no flick in the score: the flick view is never drawn; pair lines off: no pair line
   assert.deepEqual(planned(score, { showPairLines: false }), ["body", "conn", "end", "endMark", "slide", "slideMark", "tap"]);
+  // the views' prefabs are read as the spawns read them: the heads, the None view a released line begin rides on, the
+  // slide line view
+  planned(score);
+  assert.deepEqual([...prefabsRead].sort(), ["connection_note_view", "none_note_view", "pair_note_line", "slide_end_note_view",
+                                             "slide_line_view", "slide_note_view", "tap_note_view"]);
   // a guide line (its begin note has a view without renderers) still draws the line body
   assert.deepEqual(planned([note(1, 100, { lineIds: [2] }), note(2, 103, { lineIds: [2] })]), ["body"]);
+  assert.ok(prefabsRead.has("guide_line_view") && !prefabsRead.has("slide_line_view"));
   // no line, a pair whose note is not in the score
   assert.deepEqual(planned([note(1, 1, { pairNoteId: 9 }), note(2, 40)]), ["flick", "flickMark", "tap"]);
 });

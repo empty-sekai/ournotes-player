@@ -49,7 +49,7 @@ Contents:
   assets/<sha256>.<ext>[.gz|.br]   file contents, content-addressed, shared with the charts and models
 ```
 
-- Assets follow the rules of the chart site ([Site layout](data-format.md#site-layout)): `<sha256>` is the lowercase
+- Assets follow the rules of the products ([Products](data-format.md#products)): `<sha256>` is the lowercase
   hex SHA-256 of the (decoded) bytes, `<ext>` the extension of the logical file, identical contents are stored once,
   and an asset may be stored gzip- or brotli-encoded. Stories share the shaders, stage textures, cue sheets, UI
   textures and glyph pages they have in common, and the model manifests of the models they use.
@@ -329,7 +329,7 @@ Other keys are not read.
 | Key | Meaning |
 |---|---|
 | `file` | The waveform file, relative to the sheet's directory: AAC in MP4 (`.m4a`) or FLAC, as the manifest's `audioFormat`. |
-| `sampleRate`, `channels`, `samples` | As in a live's [sound layers](data-format.md#sounds-audiolive-audiojson): `samples` counts frames at `sampleRate`, without encoder padding. |
+| `sampleRate`, `channels`, `samples` | As in a live's [sound layers](data-format.md#sounds-soundsjson-musicjson): `samples` counts frames at `sampleRate`, without encoder padding. |
 | `loopStart`, `loopEnd` | Optional: loop points in sample frames. |
 | `encoderDelay` | Optional, AAC only: the priming samples at the start of the stream, handled as for a live's layers. |
 | `categories` | Optional: the CRI category names the cue plays in, from its cue sheet (`["Voice", "VoiceConfig"]`). The cue plays on the bus of the first of `Bgm`, `Se` and `Voice` among them; without it, on the bus of its `-Sound` row's `_category`. The row's `_category` still decides which sounds a stop of a category and a BGM crossfade reach. |

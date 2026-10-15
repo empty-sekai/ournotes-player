@@ -90,7 +90,7 @@ Serving notes:
 - **CORS.** A page on another origin than the site needs `Access-Control-Allow-Origin` (for example `*`) on the
   manifests and the assets. No credentials are sent, and the requests are simple GETs (no preflight).
 - **Encoded assets.** The JSON, GLSL and moc3 assets (and the other kinds listed in
-  [data-format.md](data-format.md#site-layout)) are stored encoded where that makes them smaller: `.gz`, or `.br` in a
+  [data-format.md](data-format.md#products)) are stored encoded where that makes them smaller: `.gz`, or `.br` in a
   site built with brotli. The manifest gives each one's stored and decoded byte counts. Served as plain files, they
   are decoded by the player with the browser's `DecompressionStream`: gzip in current browsers, brotli where
   `DecompressionStream("brotli")` exists (Firefox and Safari; not Chromium-based browsers). The server may instead

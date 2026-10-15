@@ -391,6 +391,13 @@ export class PairLineView {
   }
 };
 
+// ConvertToLiveNoteLineViewType: the line view kind of a line's begin op
+const lineKindOf = (op, lineId = null) => {
+  const kind = [20, 41, 61, 80, 82].includes(op) ? "slide" : (op >= 100 && op <= 105) ? "guide" : null;
+  if (!kind) throw new Error(`line${lineId === null ? "" : ` ${lineId}`}: begin op ${op} has no line view type`);
+  return kind;
+};
+
 // ------------------------------------------------------------------ body view (LiveSlideNoteLineView / LiveGuideNoteLineView)
 export class NoteLineView {
   constructor(owner, kind) {
@@ -703,9 +710,11 @@ export class LiveNotes {
   // stepped and the views' state is not touched). update() spawns every note of a view type other than Undefined and
   // None once it approaches (TrySpawnNote) and submit() draws it while it is spawned, so: the head renderers of every
   // such note (its setup width decides which part and arrow sprites it has), the pair line when pair lines are shown
-  // and such a note has a pair note, and the line body material when such a note begins a line.
+  // and such a note has a pair note, and the line body material when such a note begins a line. The views are built
+  // as the spawns build them, so their prefabs are read: the head views, and for the lines the None view a released
+  // line begin rides on (TryReleaseNote) and the line view of each line kind (TrySpawnNoteLine).
   plannedMaterials() {
-    const T = NoteViewType, G = NoteGeo, out = new Set();
+    const T = NoteViewType, G = NoteGeo, out = new Set(), lineKinds = new Set();
     let pair = false, body = false;
     for (const note of this.score.notes) {
       const vt = T.of(note);
@@ -718,13 +727,20 @@ export class LiveNotes {
       view.updateView();
       for (const n of view.renderers()) out.add(n.material || n.materials[0]);
       if (this.showPairLines && note.pairNoteId && this.notes.has(note.pairNoteId)) pair = true;
-      if (T.isLineBegin(note.op) && note.lineIds.length) body = true;
+      if (T.isLineBegin(note.op) && note.lineIds.length) {
+        body = true;
+        lineKinds.add(lineKindOf(note.op));
+      }
     }
     if (pair) {
       const pl = new PairLineView(this);
       if (pl.r.enabled && pl.r.active) out.add(pl.r.materials[0]);
     }
-    if (body) out.add(this.material);
+    if (body) {
+      new NoteHeadView(this, 1);
+      for (const kind of lineKinds) new NoteLineView(this, kind);
+      out.add(this.material);
+    }
     if (this.barLines && this.barLines.times.length) out.add(this.barLines.material);
     return [...out];
   }
@@ -898,10 +914,7 @@ export class LiveNotes {
     const ease = (s) => { if (!(s in EASE)) throw new Error(`line ease ${s}`); return EASE[s]; };
     const units = st.units.map((cu) => ({ Tb: cu.start.timeMs, Te: cu.end.timeMs, l0: cu.startCenter, l1: cu.endCenter,
                                           w0: cu.startWidth, w1: cu.endWidth, eL: ease(cu.start.lineEase), eR: ease(cu.start.lineEaseR) }));
-    const op = st.startNote.op;                                       // ConvertToLiveNoteLineViewType
-    const kind = [20, 41, 61, 80, 82].includes(op) ? "slide" : (op >= 100 && op <= 105) ? "guide" : null;
-    if (!kind) throw new Error(`line ${st.lineId}: begin op ${op} has no line view type`);
-    const lv = new NoteLineView(this, kind);
+    const kind = lineKindOf(st.startNote.op, st.lineId), lv = new NoteLineView(this, kind);
     lv.apply(st.lineId, units, this.lineKinds[kind].alpha);
     this.lineViews.set(st.lineId, lv);
   }
