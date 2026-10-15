@@ -8,7 +8,8 @@ export type { FromManifestOptions, ManifestInfo };
 /** Game time per step: the ADV's 30 frames per second. */
 export const MODEL_FRAME_RATE: 30;
 
-/** A model manifest (a product manifest of live2d.model) without its `files` and `objects`. */
+/** A model manifest (a product manifest of live2d.model) without its `files` and `objects`; for a model manifest of
+ *  format 2, that form with its key as `subject`. */
 export interface ModelInfo {
   schema?: "nnnotes.product/1";
   product?: "live2d.model";
@@ -47,7 +48,7 @@ export type ModelMotionCallback = (type: "motionstart" | "motionend", detail: Mo
 export interface ModelSessionOptions {
   /** The context to draw into; used by this session alone while it lives. */
   gl: WebGL2RenderingContext;
-  /** The model's files: model.json and the files it names. */
+  /** The model's files: model.json and the objects it names, or the files of a model manifest of format 2. */
   assets: AssetStore;
   /** Motion shown first (default: the model's default motion). */
   motion?: string;
@@ -118,7 +119,7 @@ export class ModelSession {
 }
 
 export interface ModelPlayerOptions {
-  /** URL of a model manifest (models/<id>.json). */
+  /** URL of a model manifest (models/<id>.json): a product manifest of live2d.model or a model manifest of format 2. */
   src?: string | URL;
   /** A loaded AssetStore instead of `src`. */
   assets?: AssetStore;

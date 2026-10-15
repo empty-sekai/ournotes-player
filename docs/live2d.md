@@ -81,10 +81,11 @@ its shadow root; the div fills the host, and a host without a height gets a box 
 its width. It resolves once the model is shown, after the `ready` event, and rejects when loading fails (after an
 `error` event).
 
-Options: `src` (a model manifest URL) or `assets` (an `AssetStore`); `motion`, `expression`, `loop`, `physics`,
-`breath`, `seed` as for `ModelSession`; `paused` (start paused); `pixelRatio` (device pixels per CSS pixel, default
-`devicePixelRatio`); `signal` (an `AbortSignal` that cancels the loading); `on` (`{type: listener}` added before
-loading starts).
+Options: `src` (a model manifest URL: a product manifest of `live2d.model` or a
+[model manifest of format 2](data-format.md#model-manifests-of-format-2)) or `assets` (an `AssetStore`); `motion`,
+`expression`, `loop`, `physics`, `breath`, `seed` as for `ModelSession`; `paused` (start paused); `pixelRatio` (device
+pixels per CSS pixel, default `devicePixelRatio`); `signal` (an `AbortSignal` that cancels the loading); `on`
+(`{type: listener}` added before loading starts).
 
 | | |
 |---|---|
@@ -101,7 +102,7 @@ loading starts).
 | `physics`, `breath` | Read / write. |
 | `hasPhysics` | The model has physics (a `CubismPhysicsController`); without it `physics` stays `false`. |
 | `play()`, `pause()`, `paused` | While paused no frame advances; the last frame stays shown. |
-| `info` | The manifest without `files`. |
+| `info` | The manifest without `files` and `objects`: `{ schema, product, subject }` (for a [model manifest of format 2](data-format.md#model-manifests-of-format-2), that form with its key as `subject`). |
 | `session`, `root`, `canvas` | The `ModelSession`, the appended div and the canvas. |
 | `dispose()` | Stops the player, releases the WebGL context and the model and removes the div. |
 

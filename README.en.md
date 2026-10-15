@@ -197,7 +197,8 @@ nnnotes builds such a site from the user's own game files, for example:
 nnnotes web out/site --all --all-live2d --all-stories --player <ournotes-player dir>
 ```
 
-- The player also reads assets stored as they are (not encoded).
+- The player also reads assets stored as they are (not encoded), and the model viewer model manifests of format 2
+  ([docs/data-format.md](docs/data-format.md#model-manifests-of-format-2)).
 - Hosting (paths, CORS, encoded assets, caching): [docs/embedding.md](docs/embedding.md#hosting-the-data). A site
   encoded with brotli plays in Chromium-based browsers only when its `.br` assets are served with
   `Content-Encoding: br`.
