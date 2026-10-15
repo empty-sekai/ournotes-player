@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/empty-sekai/ournotes-player/main/schema/live-noteskin.schema.json",
+  "title": "Note skin (noteskin.json of live.noteskin)",
+  "description": "The document of the product live.noteskin: the skin's name, its LiveNoteSkinAsset, the bindings and shader tables. See docs/data-format.md.",
+  "type": "object",
+  "required": [
+    "format",
+    "name",
+    "skin",
+    "bindings",
+    "shaders"
+  ],
+  "properties": {
+    "format": {
+      "const": 1
+    },
+    "name": {
+      "type": "string"
+    },
+    "skin": {
+      "$ref": "#/$defs/objectId"
+    },
+    "bindings": {
+      "$ref": "#/$defs/bindings"
+    },
+    "shaders": {
+      "$ref": "#/$defs/shaders"
+    }
+  },
+  "$defs": {
+    "objectId": {
+      "type": "string",
+      "pattern": "^.+:-?[0-9]+$"
+    },
+    "objectIdText": {
+      "pattern": "^.+:-?[0-9]+$"
+    },
+    "bindings": {
+      "description": "Prefab GameObject id -> node path of an Animator -> AnimationClip id -> per binding of the clip, the path and attribute it animates in the prefab (path null: it animates nothing).",
+      "type": "object",
+      "propertyNames": {
+        "$ref": "#/$defs/objectIdText"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/objectIdText"
+          },
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "path",
+                "attribute"
+              ],
+              "properties": {
+                "path": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "attribute": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "shaders": {
+      "description": "Unity shader name -> the Shader object a lookup by name finds.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/objectId"
+      }
+    }
+  }
+}

@@ -35,10 +35,11 @@ schemas.
 - `tests/unit/`: `node --test`, synthetic inputs only. Test behaviour the code documents: an expected value should come
   from the definition the module states (an easing formula, Unity's matrix convention, a documented algorithm), not
   from the current output of the code.
-- `tests/data/` (opt-in): runs the player in Node with a no-op WebGL2 context and a no-op AudioContext over a real
-  chart site, and checks that charts play to the end, that seeking, speed changes, pause and late frames keep the
-  chart state exact, and that a Live settings change during a chart gives the state of a session started with the
-  settings. It is skipped unless `OURNOTES_DATA` names a site directory:
+- `tests/data/` (opt-in): runs the player in Node with a no-op WebGL2 context and a no-op AudioContext over real
+  data, the lives of a product layout and the charts of a chart site, and checks that charts play to the end, that
+  seeking, speed changes, pause and late frames keep the chart state exact, and that a Live settings change during a
+  chart gives the state of a session started with the settings. It is skipped unless `OURNOTES_DATA` names the data's
+  directory (a chart id names `lives/<id>.json`, else `charts/<id>.json`):
 
   ```sh
   OURNOTES_DATA=/path/to/site npm run test:data
@@ -50,8 +51,8 @@ schemas.
   process for many charts) answers every chart in both modes as the chart's own process does;
   `OURNOTES_READSET_CHARTS=all OURNOTES_JOBS=<n>` checks every chart of the site, `n` at a time.
 
-- `npm run validate-data -- <site dir> [chart id ...]` checks a site against the data format and the schemas in
-  `schema/`.
+- `npm run validate-data -- <site dir> [live id | chart id | model id ...]` checks a directory of products and chart
+  sites against the data format and the schemas in `schema/`.
 
 Rendering changes cannot be verified by the tests alone; describe how you checked them in the pull request.
 
