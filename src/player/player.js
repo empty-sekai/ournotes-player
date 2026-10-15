@@ -1,6 +1,6 @@
-import { AssetStore } from "../data/assets.js";
 import { ChartSession } from "../live/session.js";
 import { liveSettingsChanges } from "../live/settings.js";
+import { loadLiveStore } from "../live/store.js";
 import { ChartControls, PLAYER_CSS } from "./controls.js";
 import { formatString, playerStrings } from "./strings.js";
 
@@ -26,8 +26,11 @@ const MAX_STEPS = 4;              // steps per animation frame at most (a late f
 
 export class ChartPlayer extends EventTarget {
   // host: an Element or a ShadowRoot. opts:
-  //   src          URL of a chart manifest (charts/<id>.json), or
-  //   assets       an AssetStore
+  //   src          URL of a live manifest (lives/<musicId>_<difficulty>.json) or of a chart manifest (charts/<id>.json),
+  //                or
+  //   assets       an AssetStore (loadLiveStore's, or a chart manifest's)
+  //   variants     with `src`: manifest paths of further note skins, note effect sets and note sound sets the player
+  //                offers (loadLiveStore)
   //   controls     show the control bar (default true)
   //   autoplay     start playing once loaded (default false); a browser that blocks audio without a user gesture
   //                keeps the player paused until play() is called from a gesture
@@ -84,7 +87,8 @@ export class ChartPlayer extends EventTarget {
     const o = this.opts, signal = o.signal ? anySignal([o.signal, this._abort.signal]) : this._abort.signal;
     this._status(this.strings.loading);
     const mb = (n) => (n / 1048576).toFixed(1);
-    const assets = o.assets || await AssetStore.fromManifest(o.src, {
+    const assets = o.assets || await loadLiveStore(o.src, {
+      variants: o.variants || [],
       signal,
       onProgress: (loaded, total) => {
         this._status(formatString(this.strings.loadingMB, { loaded: mb(loaded), total: mb(total) }));

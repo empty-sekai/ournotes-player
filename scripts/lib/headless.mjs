@@ -263,11 +263,12 @@ export const openStory = async (where, { lang = null } = {}) => {
   return headlessImages(await loadStoryStore(pathToFileURL(p).href, { fetch: fileFetch, lang, decode: nodeDecode }));
 };
 
-// a chart manifest file (site/charts/<id>.json, assets under site/assets) or a directory holding live.json (its files
-// read on demand)
-export const openChart = async (where) => {
+// a live manifest file (lives/<musicId>_<difficulty>.json of a product layout; `variants` as loadLiveStore), a chart
+// manifest file (site/charts/<id>.json, assets under site/assets) or a directory holding live.json (its files read on
+// demand)
+export const openChart = async (where, { variants = [] } = {}) => {
   const p = path.resolve(where);
-  const store = fs.statSync(p).isDirectory() ? new DirStore(p)
-    : await AssetStore.fromManifest(pathToFileURL(p).href, { fetch: fileFetch, decode: nodeDecode });
-  return headlessImages(store);
+  if (fs.statSync(p).isDirectory()) return headlessImages(new DirStore(p));
+  const { loadLiveStore } = await import("../../src/live/store.js");
+  return headlessImages(await loadLiveStore(pathToFileURL(p).href, { variants, fetch: fileFetch, decode: nodeDecode }));
 };

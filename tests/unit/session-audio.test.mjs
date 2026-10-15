@@ -139,9 +139,9 @@ test("the headless AudioContext decodes into its own sample rate", async () => {
 test("ChartSession accepts an AudioContext at any sample rate", async () => {
   for (const rate of [44100, 48000, 96000]) {
     const ctx = new FakeAudioContext(rate, PRIMED);
-    // an empty store: the session fails on its first file, not on the context
+    // an empty store: the session fails on its data, not on the context
     await assert.rejects(ChartSession.create({ gl: headlessGL(), assets: new AssetStore(), audioContext: ctx }),
-                         /asset not found: live\.json/);
+                         /not the store of a live/);
   }
 });
 
