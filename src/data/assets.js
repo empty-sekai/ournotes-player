@@ -38,6 +38,15 @@ export const refId = (v) => {
   return `${r.file}:${r.pathId}`;
 };
 
+// A byte array as an object stores it ({"$hex": "<two hex digits per byte>"}) -> Uint8Array.
+export const hexBytes = (v) => {
+  const h = v && v.$hex;
+  if (typeof h !== "string" || h.length % 2 || /[^0-9a-f]/i.test(h)) throw new Error(`not a byte array: ${JSON.stringify(v)}`);
+  const out = new Uint8Array(h.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(h.slice(i * 2, i * 2 + 2), 16);
+  return out;
+};
+
 // the content encoding of an asset by its name: "gzip" (.gz), "br" (.br), or null (stored as it is)
 export const assetEncoding = (asset) => {
   const m = /\.(gz|br)$/.exec(String(asset));
@@ -79,6 +88,9 @@ export class AssetStore {
       this._objects.set(id, { class: o.class, name: o.name ?? null, files });
     }
     this._parsed = new Map();          // "<id>#<role>" -> the parsed JSON of an object's file
+    this._sprites = new Map();         // id -> sprite()
+    this._meshes = new Map();          // id -> mesh()
+    this._contained = new Map();       // serialized file -> pathId -> contained()
     this.info = info;
   }
 
@@ -308,6 +320,72 @@ export class AssetStore {
     const t = this.objectJson(id);
     return { id, name: t.m_Name, width: t.m_Width, height: t.m_Height, mipCount: t.m_MipCount,
              colorSpace: t.m_ColorSpace, settings: t.m_TextureSettings };
+  }
+
+  // A Sprite as it is drawn from its render data (sprite.json: the typetree `sprite`, its render mesh `mesh`, the
+  // render data `renderData`): {id, name, texture (texture() of the page it is drawn from), rect, pivot, border,
+  // pixelsToUnits, offset, textureRect, textureRectOffset, atlasRectOffset, downscaleMultiplier, settingsRaw,
+  // uvTransform, vertices, uv, indices}. The texture coordinates of a vertex p are ((p.x * uvTransform.x +
+  // uvTransform.y) / width, (p.y * uvTransform.z + uvTransform.w) / height) of the page, in float32; vertices, uv and
+  // indices are null for a sprite without a render mesh. Made once and shared: callers do not modify it.
+  sprite(id) {
+    this.object(id, "Sprite");
+    let s = this._sprites.get(id);
+    if (s) return s;
+    const j = this.objectJson(id), t = j.sprite, rd = j.renderData, ut = rd.uvTransform;
+    const tex = this.texture(this.ref(rd.texture, "Texture2D")), f = Math.fround;
+    const m = j.mesh;
+    if (m && m.submeshes.length !== 1) throw new Error(`sprite ${id} (${t.m_Name}): ${m.submeshes.length} submeshes`);
+    s = { id, name: t.m_Name, texture: tex, rect: t.m_Rect, pivot: t.m_Pivot, border: t.m_Border,
+          pixelsToUnits: t.m_PixelsToUnits, offset: t.m_Offset, textureRect: rd.textureRect,
+          textureRectOffset: rd.textureRectOffset, atlasRectOffset: rd.atlasRectOffset,
+          downscaleMultiplier: rd.downscaleMultiplier, settingsRaw: rd.settingsRaw, uvTransform: ut,
+          vertices: m ? m.positions : null,
+          uv: m ? m.positions.map((p) => [f(f(f(p[0] * ut.x) + ut.y) / tex.width), f(f(f(p[1] * ut.z) + ut.w) / tex.height)]) : null,
+          indices: m ? m.submeshes[0].flat() : null };
+    this._sprites.set(id, s);
+    return s;
+  }
+
+  // A Mesh in Unity's space, from its `arrays` file: {id, name, vertices, normals, tangents, colors, uv0 .. uv7 (each
+  // [[...]] per vertex, absent channels null), submeshes (the triangle indices of each submesh, flat), skin ({joints,
+  // weights}: four per vertex, or null), bindPoses (the typetree's m_BindPose)}. Made once and shared.
+  mesh(id) {
+    const o = this.object(id, "Mesh");
+    let m = this._meshes.get(id);
+    if (m) return m;
+    const a = this.objectJson(id, "arrays"), t = this.objectJson(id);
+    m = { id, name: o.name, vertices: a.positions, submeshes: a.submeshes.map((s) => s.flat()),
+          skin: a.joints ? { joints: a.joints, weights: a.weights } : null, bindPoses: t.m_BindPose || [] };
+    for (const k of ["normals", "tangents", "colors", "uv0", "uv1", "uv2", "uv3", "uv4", "uv5", "uv6", "uv7"]) m[k] = a[k] ?? null;
+    this._meshes.set(id, m);
+    return m;
+  }
+
+  // controller.json: the AnimatorController's layers, state machines and parameters; `clips` are references
+  controller(id) { this.object(id, "AnimatorController"); return this.objectJson(id); }
+
+  // The node of a prefab that a reference names when it is not an object of the store: a GameObject or a component
+  // inside a root GameObject's prefab.json of the same serialized file: {prefab (the root GameObject id), path (the
+  // node's path), component (the prefab.json component, null for a GameObject)}.
+  contained(v) {
+    const r = v && v.$ref;
+    if (!r || typeof r.file !== "string" || typeof r.pathId !== "string") throw new Error(`not a reference: ${JSON.stringify(v)}`);
+    let byId = this._contained.get(r.file);
+    if (!byId) {
+      byId = new Map();
+      for (const [id, o] of this._objects) {
+        if (o.class !== "GameObject" || !id.startsWith(`${r.file}:`)) continue;
+        for (const n of this.prefab(id).nodes) {
+          byId.set(n.pathId, { prefab: id, path: n.path, component: null });
+          for (const c of n.components) byId.set(c.pathId, { prefab: id, path: n.path, component: c });
+        }
+      }
+      this._contained.set(r.file, byId);
+    }
+    const hit = byId.get(r.pathId);
+    if (!hit) throw new Error(`${r.file}:${r.pathId}: in no prefab of the store`);
+    return hit;
   }
 }
 

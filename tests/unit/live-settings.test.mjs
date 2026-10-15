@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { F } from "../../src/engine/core.js";
 import { PlayerLoop } from "../../src/engine/loop.js";
-import { LIVE_LANE_EFFECT_SET, LiveLaneEffects } from "../../src/live/fx-effects.js";
+import { LiveLaneEffects } from "../../src/live/fx-effects.js";
 import { LiveJudgementViewCenter } from "../../src/live/fx-ui.js";
 import { NoteGeo } from "../../src/live/notegeo.js";
 import { ArrowGradient, LiveBarLines, LiveNotes, NoteHeadView, musicScorePosition } from "../../src/live/noteview.js";
@@ -34,9 +34,9 @@ const notesJson = (extra = {}) => ({
               optionRanges: { NoteSpeed: [100, 1200], SlideOpacity: [10, 100], GuideOpacity: [10, 100] },
               liveSettings: LIVE_SETTINGS, noteDisplayTimeMs: D5, effect: "effect001", ...extra },
 });
-const sceneJson = () => ({ master: { optionDefaultsPreset1: {
-  JudgePosition: { value: "0" }, BackgroundBrightness: { value: "70" }, LaneOpacity: { value: "80" },
-  GuidelineOpacity: { value: "25" }, GuidelineCount: { value: "2" }, JudgePositionDisplay: { value: "FALSE" } } } });
+const sceneJson = (extra = {}) => ({ settings: { optionDefaults: {
+  JudgePosition: "0", BackgroundBrightness: "70", LaneOpacity: "80", GuidelineOpacity: "25", GuidelineCount: "2",
+  JudgePositionDisplay: "FALSE" } }, ...extra });
 const audioJson = (extra = {}) => ({
   // the fresh-profile values of the game's local sound config (AppConfigDefaultData: 1 each)
   categories: { LiveBgm: 1, LiveBgmConfig: 1, LiveSe: 1, LiveSeConfig: 1, LiveVoiceConfig: 1, LiveNotesSeConfig: 1 },
@@ -44,8 +44,9 @@ const audioJson = (extra = {}) => ({
             volumes: Object.fromEntries(Array.from({ length: 14 }, (_, i) => [i + 1, 1])),
             mutes: Object.fromEntries(Array.from({ length: 14 }, (_, i) => [i + 1, false])), ...extra },
 });
-const context = (o = {}) => new LiveOptionContext({ live: o.live || {}, scene: sceneJson(), notes: o.notes || notesJson(),
-                                                    audio: o.audio || audioJson(), info: o.info || { quality: 1 } });
+const context = (o = {}) => new LiveOptionContext({ live: o.live || {}, scene: o.scene || sceneJson(), notes: o.notes || notesJson(),
+                                                    audio: o.audio || audioJson(), info: o.info || { quality: 1 },
+                                                    skins: o.skins || [], effects: o.effects || [] });
 
 test("option math: note timing and chart position in ms (float32 product, banker's rounding, clamp)", () => {
   assert.equal(M.roundEven(2.5), 2); assert.equal(M.roundEven(3.5), 4); assert.equal(M.roundEven(-2.5), -2);
@@ -63,7 +64,7 @@ test("option math: note timing and chart position in ms (float32 product, banker
   assert.equal(M.unit01(80), F(0.8)); assert.equal(M.unit01(150), 1);
 });
 
-test("defaults come from the chart data; the derived values at the defaults are the player's former constants", () => {
+test("defaults come from the chart data; the derived values at the defaults are the fixed constants", () => {
   const ctx = context(), s = ctx.resolve({});
   assert.equal(s.NoteSpeed, 5); assert.equal(s.NoteTiming, 0); assert.equal(s.ChartPosition, 0);
   assert.equal(s.LaneOpacity, 80); assert.equal(s.GuidelineCount, 2); assert.equal(s.BackgroundBrightness, 70);
@@ -72,6 +73,7 @@ test("defaults come from the chart data; the derived values at the defaults are 
   // values while all of them are at their defaults
   assert.equal(s.LiveMusicVolume, 100); assert.equal(s.LiveSeVolume, 50); assert.equal(s.LiveVoiceVolume, 80);
   assert.equal(s.LiveNoteSeVolume, 70);
+  assert.equal(context({ scene: sceneJson({ settings: { optionDefaults: { LaneOpacity: "35" } } }) }).defaults.LaneOpacity, 35);
   assert.deepEqual(liveDerived(ctx, s), { noteSpeed: 5, timingAdjustmentMs: 0, chartPositionMs: 0, viewProgressOffset: 0 });
   assert.equal(liveNoteSeMaps(ctx, s), null);
   assert.deepEqual(liveCategoryVolumes(ctx, s), { LiveBgmConfig: 1, LiveSeConfig: 1, LiveVoiceConfig: 1, LiveNotesSeConfig: 1 });
@@ -98,49 +100,54 @@ test("validation: names, types, ranges, the values the chart offers, options not
   assert.equal(s.NoteSpeed, F(8.25));
   // floats are float32
   assert.equal(ctx.resolve({ NoteTiming: 0.1 }).NoteTiming, F(0.1));
-  // offered with the data: a mirrored score, skins, effect sets, note SE groups
-  const rich = context({ live: { notesMirror: "score/x.mirror.notes.json" },
-                         notes: notesJson({ skins: { 1: "skin001", 2: "skin002" }, effects: { 1: "effect001", 2: "effect001Simple" } }),
-                         audio: audioJson({ groups: { 1: { 2: 102 }, 2: { 2: 202 } } }) });
-  // a skin id offered only with its record
+  // offered with the data: a mirrored score, note skins and effect sets loaded with the live, note SE groups
+  const richOf = (effects) => context({ live: { notesMirror: "score/x.mirror.notes.json" },
+                                        notes: notesJson({ skins: { 1: "skin001", 2: "skin002" }, effects: { 1: "effect001", 2: "effect001Simple" } }),
+                                        audio: audioJson({ groups: { 1: { 2: 102 }, 2: { 2: 202 } } }), skins: ["skin001"], effects });
+  const rich = richOf(["effect001", "effect001Simple"]);
+  // a skin id offered only with its skin loaded
   assert.throws(() => rich.resolve({ NoteDesignId: 2 }), /offers 1/);
   const r = rich.resolve({ MirrorChart: true, NoteEffectId: 2, NoteSePatternId: 2, UseIndividualNoteSe: true });
   assert.equal(r.MirrorChart, true);
   assert.equal(liveNoteEffectName(rich, r), "effect001Simple");
-  // LiveQuality Low: the Light variant only where the data has it (ExistsAsset), else the set itself
+  // LiveQuality Low: the Light variant only where the loaded effect sets have it, else the set itself
   assert.equal(liveNoteEffectName(rich, { ...r, LiveQuality: 2 }), "effect001Simple");
-  rich.notes.assets = { "Effect/Live/NoteEffect/effect001Light/LiveNoteEffectAssetSettings": {} };
-  assert.equal(liveNoteEffectName(rich, { ...r, LiveQuality: 2 }), "effect001Simple");
-  assert.equal(liveNoteEffectName(rich, { ...r, NoteEffectId: 1, LiveQuality: 2 }), "effect001Light");
-  rich.notes.assets["Effect/Live/NoteEffect/effect001SimpleLight/LiveNoteEffectAssetSettings"] = {};
-  assert.equal(liveNoteEffectName(rich, { ...r, LiveQuality: 2 }), "effect001SimpleLight");
+  assert.equal(liveNoteEffectName(richOf(["effect001", "effect001Simple", "effect001SimpleLight"]), { ...r, LiveQuality: 2 }),
+               "effect001SimpleLight");
+  assert.equal(liveNoteEffectName(richOf(["effect001", "effect001Light"]), { ...r, NoteEffectId: 1, LiveQuality: 2 }), "effect001Light");
+  assert.equal(liveNoteEffectName(rich, { ...r, NoteEffectId: 1, LiveQuality: 2 }), "effect001");
   // without an effects table: the default set by the data's name
-  const plain = context({ info: { quality: 1, options: { LiveQuality: [1, 2] } },
-                          notes: { ...notesJson(), assets: { "Effect/Live/NoteEffect/effect001Light/LiveNoteEffectAssetSettings": {} } } });
+  const plain = context({ info: { quality: 1, options: { LiveQuality: [1, 2] } }, effects: ["effect001", "effect001Light"] });
   assert.equal(liveNoteEffectName(plain, plain.resolve({ LiveQuality: 2 })), "effect001Light");
 });
 
-test("note designs: offered with their records in notes.json noteSkins (top level)", () => {
-  const skins = { 1: "skin001", 2: "skin002", 3: "skin003" };
-  const top = context({ notes: { ...notesJson({ skins }), noteSkins: { skin002: {}, skin003: {} } } });
-  assert.deepEqual(top.values(LIVE_OPTIONS.find((o) => o.name === "NoteDesignId")), [1, 2, 3]);
-  assert.equal(top.resolve({ NoteDesignId: 3 }).NoteDesignId, 3);
-  // records under settings are not the data format's place
-  const misplaced = context({ notes: notesJson({ skins, noteSkins: { skin002: {} } }) });
-  assert.deepEqual(misplaced.values(LIVE_OPTIONS.find((o) => o.name === "NoteDesignId")), [1]);
+test("note designs: offered when their skin is loaded with the live (settings.skins names)", () => {
+  const skins = { 1: "skin001", 2: "skin002", 3: "skin003" }, item = LIVE_OPTIONS.find((o) => o.name === "NoteDesignId");
+  const all = context({ notes: notesJson({ skins }), skins: ["skin002", "skin003"] });
+  assert.deepEqual(all.values(item), [1, 2, 3]);
+  assert.equal(all.resolve({ NoteDesignId: 3 }).NoteDesignId, 3);
+  // a design whose skin is not loaded is not offered
+  const some = context({ notes: notesJson({ skins }), skins: ["skin002"] });
+  assert.deepEqual(some.values(item), [1, 2]);
+  assert.throws(() => some.resolve({ NoteDesignId: 3 }), /offers 1, 2/);
+  // no skin loaded: the default design only
+  assert.deepEqual(context({ notes: notesJson({ skins }) }).values(item), [1]);
 });
 
-test("lane effects: always the effect001 set (LaneEffectLoadStep.GetAssetPath), whatever the note effect set", () => {
-  assert.equal(LIVE_LANE_EFFECT_SET, "effect001");
-  const notes = { settings: { effect: "effect001Simple" },
-                  assets: { "Effect/Live/LaneEffect/effect001/LiveLaneEffectAssetSettings": {} } };
-  const lane = new LiveLaneEffects(null, { notes, score: { laneCount: 24, notes: [] },
-                                           sceneInfo: { laneWidth: 19.12, laneContainers: [] }, effect: "effect001SimpleLight" });
+test("lane effects: the lane set is notes.settings.laneEffect (effect001), whatever the note effect set", () => {
+  const notes = { laneEffect: "lane-settings", settings: { effect: "effect001Simple", laneEffect: "effect001" } };
+  const looked = [];
+  const objects = { mono: (id) => { looked.push(id); return {}; } };
+  const lanes = (laneContainers) => new LiveLaneEffects(null, { objects, notes, score: { laneCount: 24, notes: [] },
+                                                              sceneInfo: { laneWidth: 19.12, laneContainers } });
+  const lane = lanes([]);
+  assert.deepEqual(looked, ["lane-settings"]);                    // the settings object is notes.laneEffect
   assert.equal(lane.views.size, 0);
-  delete notes.assets["Effect/Live/LaneEffect/effect001/LiveLaneEffectAssetSettings"];
-  assert.throws(() => new LiveLaneEffects(null, { notes, score: { laneCount: 24, notes: [] },
-                                                  sceneInfo: { laneWidth: 19.12, laneContainers: [] } }),
-                /LaneEffect\/effect001\/LiveLaneEffectAssetSettings not exported/);
+  assert.throws(() => lanes([{ name: "x", type: 1, field: "_missing" }]), /effect001: _missing missing/);
+  // the settings object must be in the store (a stub with AssetStore.object's error)
+  const absent = { mono: (id) => { throw new Error(`object not found: ${id}`); } };
+  assert.throws(() => new LiveLaneEffects(null, { objects: absent, notes, score: { laneCount: 24, notes: [] },
+                                                  sceneInfo: { laneWidth: 19.12, laneContainers: [] } }), /object not found: lane-settings/);
 });
 
 // ---- note skins: flick arrows (LiveFlickNoteView / LiveDirectionFlickNoteView, ArrowGradientAnimator)
@@ -149,7 +156,7 @@ const arrowSprite = (name, us) => ({ sprite: name, rect: { width: 20, height: 10
 const flickHead = (unit) => {
   const v = Object.create(NoteHeadView.prototype);
   const geo = Object.assign(Object.create(NoteGeo.prototype), { unit: F(0.5), headPlacement: () => ({ x: 0, y: 0 }) });
-  Object.assign(v, { owner: { geo, clip: (id) => ({ id }) }, unit, main: null, mark: null, left: null, right: null, subArrow: null,
+  Object.assign(v, { owner: { geo, arrowClip: (view, loop) => ({ id: loop.clip }) }, unit, main: null, mark: null, left: null, right: null, subArrow: null,
                      parts: null, p: { root: { t: {} } }, arrow: { sprite: null, size: { x: -1, y: -1 }, order: 0 } });
   return v;
 };
@@ -233,19 +240,23 @@ test("music score position: bars from the last BPM / bar change in float32; zero
                    { bar: 0, rhythm: 0, rhythmicUnit: 0, barProgress: 0, timeMs: 0 });
 });
 
-const barLinePrefab = () => ({ key: "bar_line_view", nodes: [{
+const barLinePrefab = () => ({ name: "LiveBarLineView", nodes: [{
   path: "LiveBarLineView", name: "LiveBarLineView", active: true, layer: 25,
   localPosition: { x: 0, y: 0, z: 0 }, localRotation: { x: 0, y: 0, z: 0, w: 1 }, localScale: { x: 1, y: 1, z: 1 },
-  components: [{ type: "MonoBehaviour", class: "LiveBarLineView", _viewProgress: 0, _renderer: { gameObject: "LiveBarLineView" } },
-               { type: "SpriteRenderer", m_Enabled: 1, m_Sprite: { sprite: "bar", texture: { texture: "t" } }, m_Materials: [{ material: "m" }],
-                 m_Size: { x: 1, y: F(0.04) }, m_SortingOrder: 4999, m_Color: { r: 1, g: 1, b: 1, a: 1 } }] }] });
+  components: [{ type: "MonoBehaviour", pathId: "1", script: "Assembly-CSharp|Live|LiveBarLineView",
+                 fields: { _viewProgress: 0, _renderer: { gameObject: "LiveBarLineView" } } },
+               { type: "SpriteRenderer", pathId: "2",
+                 fields: { m_Enabled: 1, m_Sprite: { sprite: "bar", texture: { texture: "t" } }, m_Materials: [{ material: "m" }],
+                           m_Size: { x: 1, y: F(0.04) }, m_SortingOrder: 4999, m_Color: { r: 1, g: 1, b: 1, a: 1 } } }] }] });
 
 test("bar lines: the bar lines after the position's bar within the display offset, views reused in order", () => {
   const geo = Object.assign(Object.create(NoteGeo.prototype), { laneCount: 24, unit: F(0.5), headPlacement: (c, t) => ({ x: 7, y: F(10 * t) }) });
   const score = { barLineTimeMs: [0, 1000, 2000, 3000, 4000, 5000], bpmChanges: [{ bpm: 240, bar: 0, barProgress: 0, timeMs: 0 }],
                   barChanges: [{ beatsPerBar: 4, bar: 0, barProgress: 0, timeMs: 0 }] };             // one bar per second
-  const owner = { score, geo, displayOffsetMs: 1500 };
-  const bl = new LiveBarLines(owner, barLinePrefab(), null);
+  // the view prefab's stand-in store: the prefab by id, its sprite and material by the references given
+  const objects = { assets: { prefab: () => barLinePrefab() }, sprite: (v) => v, material: (v) => v };
+  const owner = { score, geo, objects, displayOffsetMs: 1500 };
+  const bl = new LiveBarLines(owner, "bar_line_view", null);
   bl.update({ timeMs: 1200 });                        // bar 1: lines 2 (2000) within 1200 + 1500; 3 (3000) not
   assert.equal(bl.active.length, 1);
   const v = bl.active[0];
@@ -269,18 +280,22 @@ test("bar lines: the container's element root relative to screen_root; offered o
   const node = (path, pos = { x: 0, y: 0, z: 0 }, components = []) => ({ path, name: path.split("/").pop(), active: true, layer: 0,
     localPosition: pos, localRotation: { x: 0, y: 0, z: 0, w: 1 }, localScale: { x: 1, y: 1, z: 1 }, components });
   const base = "LiveGameView/LiveGameCamera/screen_root/LiveGameAllNoteView";
+  const script = (cls) => `Assembly-CSharp|Live|${cls}`;
   const scene = new Prefab({ key: "scene", nodes: [
     node("LiveGameView"), node("LiveGameView/LiveGameCamera"), node("LiveGameView/LiveGameCamera/screen_root", { x: 0, y: 0, z: 10 }),
-    node(base, { x: 0, y: 0, z: 0 }, [{ type: "MonoBehaviour", class: "LiveAllNoteView", _barLineView: { gameObject: `${base}/LiveAllBarLineView` } }]),
-    node(`${base}/LiveAllBarLineView`, { x: 0, y: 1, z: 0 }, [{ type: "MonoBehaviour", class: "LiveAllBarLineView", _container: { gameObject: `${base}/LiveAllBarLineView/container` } }]),
-    node(`${base}/LiveAllBarLineView/container`, { x: 0, y: 0, z: 2 }, [{ type: "MonoBehaviour", class: "LiveBarLineViewContainer",
-      _elementRoot: { transform: `${base}/LiveAllBarLineView/container` }, _elementPrefab: { gameObject: "LiveBarLineView" } }]) ] });
+    node(base, { x: 0, y: 0, z: 0 }, [{ type: "MonoBehaviour", script: script("LiveAllNoteView"),
+                                        fields: { _barLineView: { gameObject: `${base}/LiveAllBarLineView` } } }]),
+    node(`${base}/LiveAllBarLineView`, { x: 0, y: 1, z: 0 }, [{ type: "MonoBehaviour", script: script("LiveAllBarLineView"),
+                                                               fields: { _container: { gameObject: `${base}/LiveAllBarLineView/container` } } }]),
+    node(`${base}/LiveAllBarLineView/container`, { x: 0, y: 0, z: 2 }, [{ type: "MonoBehaviour", script: script("LiveBarLineViewContainer"),
+      fields: { _elementRoot: { transform: `${base}/LiveAllBarLineView/container` }, _elementPrefab: { gameObject: "LiveBarLineView" } } }]) ] });
   const m = LiveBarLines.elementRoot(scene);
   assert.deepEqual([m[12], m[13], m[14]], [0, 1, 2]);             // screen_root's own z not included
   const item = LIVE_OPTIONS.find((o) => o.name === "MeasureLineDisplay");
   assert.deepEqual(context().values(item), [false]);
   assert.throws(() => context().resolve({ MeasureLineDisplay: true }), /this chart offers false/);
-  const withPrefab = context({ notes: { ...notesJson(), prefabs: { bar_line_view: barLinePrefab() } } });
+  // the scene's bar line view prefab (scene.json prefabs.barLineView) offers the bar lines
+  const withPrefab = context({ scene: sceneJson({ prefabs: { barLineView: "bar_line_view" } }) });
   assert.deepEqual(withPrefab.values(item), [false, true]);
   assert.equal(withPrefab.resolve({ MeasureLineDisplay: true }).MeasureLineDisplay, true);
   assert.deepEqual(liveSettingsChanges(withPrefab.resolve({}), withPrefab.resolve({ MeasureLineDisplay: true })).boot, ["MeasureLineDisplay"]);

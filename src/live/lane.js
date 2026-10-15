@@ -1,8 +1,7 @@
 import { F } from "../engine/core.js";
 import { applyState } from "../engine/glsl.js";
 import { mat4 } from "../engine/math.js";
-import { Prefab } from "../engine/prefab.js";
-import { GLTex } from "../engine/texture.js";
+import { componentClass } from "../engine/prefab.js";
 import { liveFitSheets, liveMaterialSheets } from "./renderer.js";
 
 // LiveLane: the 3D lane of the live screen (LiveLaneLayout, LiveGeom, render order helpers): LiveLaneView / LiveLaneLineView / LiveLaneLine with the
@@ -98,24 +97,34 @@ export const LiveLaneLayout = {
   SPLIT_MAIN: [0, 4, 6, 8, 12],             // constant table of the game code, by LiveLaneSplitCountType
   SPLIT_SUB: [12, 12, 12, 0, 0],            // constant table of the game code
 
+  // the preset-1 value of an option (MasterOptionDefault, scene.json settings.optionDefaults: a string)
   option(scene, name) {
-    const o = scene.master.optionDefaultsPreset1[name];
-    if (!o) throw new Error(`option ${name} missing`);
-    return o.value;
+    const o = scene.settings.optionDefaults[name];
+    if (o === undefined) throw new Error(`option ${name} missing`);
+    return o;
   },
 
-  build(scene, prefab, settings = null) {
+  // the lane skin's sprites (scene.json laneSkins[settings.laneSkin]: lane_base, lane_tap_area, out_side_line) as
+  // LiveObjects sprites
+  skin(objects, scene) {
+    const ids = scene.laneSkins[scene.settings.laneSkin];
+    if (!ids) throw new Error(`lane skin ${scene.settings.laneSkin} missing`);
+    return Object.fromEntries(["lane_base", "lane_tap_area", "out_side_line"].map((k) => [k, objects.sprite(ids[k])]));
+  },
+
+  // skin: LiveLaneLayout.skin
+  build(scene, prefab, skin, settings = null) {
     const L = LiveLaneLayout, n = L.LANE_COUNT;
     const opt = (k) => (settings && settings[k] !== undefined ? settings[k] : Number(L.option(scene, k)));
     const unit01 = (v) => { const x = F(v / 100); return x < 0 ? 0 : x > 1 ? 1 : x; };
-    const view = prefab.component("LiveGameView/root/LiveGameLane/lines", "LiveLaneLineView");
+    const view = prefab.fields("LiveGameView/root/LiveGameLane/lines", "LiveLaneLineView");
     const width = F(view._laneWidth), length = F(view._lineLength), spaceLen = F(view._spaceLineLength);
     const judgementZ = F(prefab.transform("LiveGameView/root/LiveGameLane/judgement_root").localPosition.z);
     const split = opt("GuidelineCount");
     const lineAlpha = unit01(opt("GuidelineOpacity"));
     const main = L.SPLIT_MAIN[split], sub = L.SPLIT_SUB[split];
     // TrySetupSettingDictionary: OutSide widths = out_side_line texture height / 100
-    const outW = F(scene.laneSkin.out_side_line.texture.height / 100);
+    const outW = F(skin.out_side_line.texture.height / 100);
     const lineSettings = new Map(view._settings.map((s) => [s.LineType,
       s.LineType === 1 ? { ...s, LineWidthFrom: outW, LineWidthTo: outW } : s]));
     const lines = [];
@@ -181,23 +190,25 @@ export class LiveLane {
   // renderer.settings: the live settings (settings.js) or undefined (the data's defaults)
   constructor(renderer, scene) {
     this.r = renderer; this.scene = scene; this.prefab = renderer.prefab;
-    const P = "LiveGameView/root/LiveGameLane";
+    const O = renderer.objects, P = "LiveGameView/root/LiveGameLane";
     this.paths = { lane: P, base: `${P}/base`, laneBase: `${P}/base/lane_base`, tapArea: `${P}/judgement_root/tap_area` };
-    this.laneBaseSR = this.prefab.component(this.paths.laneBase, "SpriteRenderer");
-    this.tapSR = this.prefab.component(this.paths.tapArea, "SpriteRenderer");
-    this.baseCanvas = this.prefab.component(this.paths.base, "Canvas");
-    this.baseScaler = this.prefab.component(this.paths.base, "CanvasScaler");
-    const lv = this.prefab.component(`${P}/lines`, "LiveLaneLineView");
-    this.outsideMat = lv._outSideLineMaterial;
-    // inner lines: instances of LiveLaneLineView._linePrefab EmbLive/Prefabs/LiveGame/lane_line (scene.assets.laneLinePrefab)
-    const lp = this.linePrefab = new Prefab(scene.assets.laneLinePrefab), lpRoot = lp.root.name;
-    const lineLR = this.lineLR = lp.component(lpRoot, "LineRenderer");
-    this.lineMat = lineLR.m_Materials[0];
+    this.laneBaseSR = this.prefab.fields(this.paths.laneBase, "SpriteRenderer");
+    this.tapSR = this.prefab.fields(this.paths.tapArea, "SpriteRenderer");
+    this.baseCanvas = this.prefab.fields(this.paths.base, "Canvas");
+    this.baseScaler = this.prefab.fields(this.paths.base, "CanvasScaler");
+    this.skin = LiveLaneLayout.skin(O, scene);
+    const lv = this.prefab.fields(`${P}/lines`, "LiveLaneLineView");
+    this.outsideMat = O.material(lv._outSideLineMaterial);
+    // inner lines: instances of LiveLaneLineView._linePrefab EmbLive/Prefabs/LiveGame/lane_line (scene.json
+    // prefabs.laneLine)
+    const lp = this.linePrefab = O.prefab(scene.prefabs.laneLine), lpRoot = lp.root.name;
+    const lineLR = this.lineLR = lp.fields(lpRoot, "LineRenderer");
+    this.lineMat = O.material(lineLR.m_Materials[0]);
     // LineRenderer parameters of the three line kinds must be what LiveGeom.lineStrip builds (world space,
     // alignment View, texture mode Stretch, no corner / cap vertices); width and colour come from the setters.
     const renderers = [[lp, lpRoot, lineLR], [this.prefab, `${P}/lines/lane_line_left`, null], [this.prefab, `${P}/lines/lane_line_right`, null]];
     for (const [pf, path, lr0] of renderers) {
-      const lr = lr0 || pf.component(path, "LineRenderer"), q = lr.m_Parameters;
+      const lr = lr0 || pf.fields(path, "LineRenderer"), q = lr.m_Parameters;
       if (!lr.m_UseWorldSpace || q.alignment !== 0 || q.textureMode !== 0 || q.numCornerVertices || q.numCapVertices ||
           q.textureScale.x !== 1 || lr.m_Loop)
         throw new Error(`${path}: LineRenderer parameters outside LiveGeom.lineStrip`);
@@ -214,7 +225,7 @@ export class LiveLane {
   // of the lane's draw, so a new value set during a live gives the lane a live started with it would have.
   configure(settings) {
     const P = "LiveGameView/root/LiveGameLane";
-    this.layout = LiveLaneLayout.build(this.scene, this.prefab, settings);
+    this.layout = LiveLaneLayout.build(this.scene, this.prefab, this.skin, settings);
     // sorting orders: LiveRendererOrderInLayerSetter of each line (LiveLane 41 + 0 -> 4100)
     const innerOrder = LiveLane.sortingOrder(this.linePrefab, this.linePrefab.root.name, this.lineLR.m_SortingOrder);
     for (const l of this.layout.lines)
@@ -226,8 +237,8 @@ export class LiveLane {
   }
 
   async load() {
-    const gl = this.r.gl, base = this.r.base, sk = this.scene.laneSkin;
-    const T = (d) => GLTex.load(gl, base, d);
+    const gl = this.r.gl, sk = this.skin;
+    const T = (t) => this.r.objects.texture(t.id);
     this.tex = { laneBase: await T(sk.lane_base.texture), tapArea: await T(sk.lane_tap_area.texture),
                  outside: await T(sk.out_side_line.texture),                 // Material.SetTexture(_MainTex, out_side_line)
                  line: await T(this.lineMat.textures._MainTex.texture) };
@@ -273,9 +284,9 @@ export class LiveLane {
   // ENGINE: Unity 6 passes the sprite colour via unity_SpriteColor (SRP-batched) or vertex colour; multiplied once.
   // unity_GUIZTestMode (a ZTest property of UI-style shaders drawn outside a canvas): 0 = no depth test.
   // ENGINE: unity_GUIZTestMode outside a canvas is native global state; 0 here, LEqual would draw the same pixels.
-  // (Nothing writes depth in the live cameras' lists.)
+  // (Nothing writes depth in the live cameras' lists.) `sr`: the SpriteRenderer's fields (its material a reference).
   static spriteItem(r, vbo, sr, mesh, M, tex, color, order) {
-    const mat = sr.m_Materials[0], shader = mat.shader.shader;
+    const mat = r.objects.material(sr.m_Materials[0]), shader = mat.shader;
     const cen = mat4.transformPoint(M, LiveLane._center(mesh.pos));
     return {
       sortingLayer: sr.m_SortingLayer || 0, sortingOrder: order, queue: LiveLane.queue(r.lib, mat), center: cen,
@@ -306,7 +317,7 @@ export class LiveLane {
 
   // one LineRenderer (world space, identity object matrix) with Sirius/Live/Sprite/Default
   _lineItem(l, camPos) {
-    const mat = l.material === "outside" ? this.outsideMat : this.lineMat, shader = mat.shader.shader;
+    const mat = l.material === "outside" ? this.outsideMat : this.lineMat, shader = mat.shader;
     const tex = l.material === "outside" ? this.tex.outside : this.tex.line;
     const an = l.controlled ? this.lines : this.sideLines;
     const c0 = [l.c0[0], l.c0[1], l.c0[2], F(l.c0[3] * an.animationStartAlpha)];
@@ -360,14 +371,14 @@ export const LIVE_UI_DEAD_INPUTS = { _ClipRect: [-32767, -32767, 32767, 32767], 
 LiveLane.QUEUE = { Background: 1000, Geometry: 2000, AlphaTest: 2450, Transparent: 3000, Overlay: 4000 };
 
 // Material.renderQueue: the material's custom queue (m_CustomRenderQueue >= 0), else the shader's "Queue" tag
-// ("Transparent", "Geometry+1", ...) of subshader 0.
+// ("Transparent", "Geometry+1", ...) of subshader 0. `mat`: a LiveObjects material.
 LiveLane.queue = (lib, mat) => {
   if (mat.renderQueue >= 0) return mat.renderQueue;
-  const tags = lib.info(mat.shader.shader).subShaders[0].tags;
+  const tags = lib.info(mat.shader).subShaders[0].tags;
   const q = ((tags && tags.tags) || []).find(([k]) => k.toUpperCase() === "QUEUE");
   if (!q) return 2000;
   const m = /^(\w+)([+-]\d+)?$/.exec(q[1]);
-  if (!m || !(m[1] in LiveLane.QUEUE)) throw new Error(`${mat.shader.shader}: queue tag ${q[1]}`);
+  if (!m || !(m[1] in LiveLane.QUEUE)) throw new Error(`${lib.nameOf(mat.shader)}: queue tag ${q[1]}`);
   return LiveLane.QUEUE[m[1]] + Number(m[2] || 0);
 };
 
@@ -377,9 +388,10 @@ export const LIVE_ORDER_IN_LAYER = { 10: 1000, 25: 2500, 26: 5700, 30: 3000, 40:
                            50: 5000, 55: 5500, 60: 6000, 100: 10000, 101: 4002, 200: 10002, 750: 9464, 751: 10000,
                            752: 2600, 753: 4050, 9100: 4600, 9101: 4699 };
 LiveLane.sortingOrder = (prefab, path, fallback) => {
-  const s = prefab.components(path).find((c) => c.class === "LiveRendererOrderInLayerSetter" ||
-                                                c.class === "LiveCanvasOrderInLayerSetter");
-  if (!s) return fallback;
+  const c = prefab.components(path).find((x) => componentClass(x) === "LiveRendererOrderInLayerSetter" ||
+                                                componentClass(x) === "LiveCanvasOrderInLayerSetter");
+  if (!c) return fallback;
+  const s = c.fields;
   const v = LIVE_ORDER_IN_LAYER[s._orderInLayer];
   if (v === undefined) throw new Error(`${path}: LiveOrderInLayer ${s._orderInLayer}`);
   return v + (s._offset || 0);

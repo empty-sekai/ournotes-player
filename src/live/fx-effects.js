@@ -1,7 +1,7 @@
-import { AnimClip, AnimController, AnimTargets, Animator } from "../engine/anim.js";
+import { AnimTargets, Animator } from "../engine/anim.js";
 import { F } from "../engine/core.js";
 import { Transform, mat4 } from "../engine/math.js";
-import { Prefab } from "../engine/prefab.js";
+import { Prefab, componentClass } from "../engine/prefab.js";
 import { FxParticleSystem, PS_STOP } from "../engine/particles.js";
 
 // Note effects, slide hold loop and lane effects of the live chart player: FxPrefab (one effect prefab instance),
@@ -22,9 +22,11 @@ import { FxParticleSystem, PS_STOP } from "../engine/particles.js";
 //     UpdateFrame; LiveGameLaneEffectBase.Initialize / SetWidth / Play /
 //     Stop / IsPlaying; Live{Renderer,Particle}OrderInLayerSetter.Awake,
 //     LiveOrderInLayerUtility.GetOrderInLayer.
-//   - Data: livenotes/notes.json (assets[...] prefab node lists with raw components, clips, controllers,
-//     LiveNoteEffectAssetSettings, LiveLaneEffectAssetSettings); score/<file>.notes.json;
-//     constants of the scene [EmbScene/Live] quoted below (as in livescene/scene.json).
+//   - Data: the live's objects (LiveObjects): the effect set's LiveNoteEffectAssetSettings (noteeffect.json
+//     settings) and the lane effects' LiveLaneEffectAssetSettings (notes.json laneEffect), each field a reference to
+//     the LiveNoteEffectAsset / LiveLaneEffectAsset of an effect prefab; the prefabs' prefab.json, controllers and
+//     clips (bindings named by the documents' bindings tables); the score; constants of the scene [EmbScene/Live]
+//     quoted below.
 //   - Engine behaviour that is native (Animator, AnimationEvent dispatch, SpriteRenderer mesh generation, GameObject
 //     activation) follows Unity's documented behaviour and is marked `// ENGINE:`.
 //
@@ -35,8 +37,9 @@ import { FxParticleSystem, PS_STOP } from "../engine/particles.js";
 export class FxEffectsError extends Error {};
 
 // ------------------------------------------------------------------------------------------ scene values
-// [EmbScene/Live] values the effect views read, taken from livescene/scene.json (parsed by the caller): the lane
-// width, the judgement root, and the effect containers in their serialized order. Which LiveNoteEffectAssetSettings /
+// [EmbScene/Live] values the effect views read, taken from the scene's hierarchy (a Prefab of the scene roots as
+// loaded, before any animation): the lane width, the judgement root, and the effect containers in their serialized
+// order. Which LiveNoteEffectAssetSettings /
 // LiveLaneEffectAssetSettings field a container type uses is code: LiveAllNoteEffectViewContainer.GetEffectAsset
 // (FX_NOTE_FIELD) and the lane settings fields per LiveLaneEffectType (FX_LANE_FIELD).
 export const FX_NOTE_FIELD = { 10: "NormalEffect", 20: "SlideEffect", 21: "SlideLoopConnectEffect", 22: "SlideLoopEffect",
@@ -44,12 +47,11 @@ export const FX_NOTE_FIELD = { 10: "NormalEffect", 20: "SlideEffect", 21: "Slide
 export const FX_LANE_FIELD = { 2: "InVainEffect", 10: "NormalEffect", 20: "SlideEffect", 30: "FlickEffect",
                      31: "FlickLeftEffect", 32: "FlickRightEffect" };
 export const FxScene = {
-  read(scene) {
-    const byPath = new Map(scene.scene.nodes.map((n) => [n.path, n]));
+  read(pf) {
     const comp = (path, cls) => {
-      const n = byPath.get(path), c = n && n.components.find((x) => (x.class || x.type) === cls);
+      const c = pf.nodes.has(path) ? pf.components(path, cls)[0] : null;
       if (!c) throw new FxEffectsError(`scene: no ${cls} on ${path}`);
-      return c;
+      return c.fields;
     };
     const field = (table, type, path) => {
       if (!(type in table)) throw new FxEffectsError(`scene: ${path}: effect type ${type} has no settings field`);
@@ -59,7 +61,6 @@ export const FxScene = {
     // LiveNoteJudgementRoot3D.Initialize, LiveAllNoteEffectViewContainer.Initialize (baseLaneWidth) and the lane effects.
     const laneWidth = comp("LiveGameView/root/LiveGameLane", "LiveLaneView")._laneWidth;
     // LiveGameView/root/LiveGameLane/judgement_root (local (0, 0, 9.62) under identity parents)
-    const pf = new Prefab({ key: "scene", nodes: scene.scene.nodes });
     const judgementRoot = pf.transform("LiveGameView/root/LiveGameLane/judgement_root").localToWorld();
     // LiveAllNoteEffectViewContainer._containers -> LiveGameNoteEffectContainer (_effectType, capacities)
     const noteContainers = comp("LiveGameView/root/LiveGameNoteEffectView/container_root", "LiveAllNoteEffectViewContainer")
@@ -119,7 +120,7 @@ export const FxLiveMath = {
 // m_Color, material = m_Materials[0] with the sprite's texture as _MainTex. A program with the per-draw sprite
 // constants (URP 2D Sprite-Unlit-Default: unity_SpriteColor, unity_SpriteProps) takes the colour and the flip there,
 // over white vertices at their unflipped positions (LiveLane.spriteItem, the stage background sprite).
-//   drawMode 0 (Simple): the sprite's own mesh (exported m_Sprite.vertices / uv / indices, units relative to the pivot).
+//   drawMode 0 (Simple): the sprite's own mesh (its render mesh vertices / uv / indices, units relative to the pivot).
 //   drawMode 1 (Sliced): a 9-slice of m_Size: outer rectangle (-pivot * size .. (1 - pivot) * size), borders
 //   (m_Sprite.border px / pixelsToUnits: x left, y bottom, z right, w top); UVs of the sprite rect in its texture.
 //   drawMode 2 (Tiled) is not used by any effect prefab and raises.
@@ -136,8 +137,9 @@ export const FxLiveMath = {
 // ENGINE: a program with the per-draw sprite constants gets white, unflipped vertices; colour and flip come per draw.
 // (unity_SpriteColor = SpriteRenderer.color, unity_SpriteProps = (flipX ? -1 : 1, flipY ? -1 : 1, 0, 0))
 export class FxSpriteRenderer {
+  // comp: the SpriteRenderer's fields; its sprite and material through `materials` (FxMaterials)
   constructor(comp, transform, { materials = null, name = "" } = {}) {
-    const sp = comp.m_Sprite;
+    const sp = materials ? materials.sprite(comp.m_Sprite) : comp.m_Sprite && { ...comp.m_Sprite, name: comp.m_Sprite.sprite };
     if (!sp) throw new FxEffectsError(`${name}: SpriteRenderer without sprite`);
     if (comp.m_DrawMode !== 0 && comp.m_DrawMode !== 1)
       throw new FxEffectsError(`${name}: SpriteRenderer drawMode ${comp.m_DrawMode} not implemented`);
@@ -149,7 +151,7 @@ export class FxSpriteRenderer {
     this.enabled = !!comp.m_Enabled;
     this.drawMode = comp.m_DrawMode;
     this.sprite = {
-      name: sp.sprite, texture: sp.texture, rect: { ...sp.rect }, border: { ...sp.border }, pivot: { ...sp.pivot },
+      name: sp.name, texture: sp.texture, rect: { ...sp.rect }, border: { ...sp.border }, pivot: { ...sp.pivot },
       ppu: F(sp.pixelsToUnits), vertices: sp.vertices, uv: sp.uv, indices: sp.indices, packed: (sp.settingsRaw & 1) === 1,
     };
     if (this.drawMode === 1 && this.sprite.packed) throw new FxEffectsError(`${name}: sliced packed sprite not implemented`);
@@ -281,11 +283,11 @@ export class FxSpriteRenderer {
 };
 
 // ------------------------------------------------------------------------------------------ prefab instance
-// One instance of an exported effect prefab (notes.json assets[key].nodes) inside its pool element: the element
+// One instance of an effect prefab (a root GameObject's prefab.json) inside its pool element: the element
 // GameObject (clone of the scene placeholder container_root/prefabs/<name>, identity, the LiveGameNoteEffectBase /
 // LiveGameLaneEffectBase host) -> placeholder child `root` (identity, _prefabAssetRoot) -> the prefab root.
-//   Components: Animator (controller from notes.controllers, clips from notes.clips, shared between instances like
-//   Unity's assets), SpriteRenderers (FxSpriteRenderer), ParticleSystems (FxParticleSystem, children filled in
+//   Components: Animator (its controller and clips through LiveObjects, shared between instances like Unity's
+//   assets), SpriteRenderers (FxSpriteRenderer), ParticleSystems (FxParticleSystem, children filled in
 //   hierarchy order), Live{Renderer,Particle}OrderInLayerSetter, LiveNoteEffectAsset / LiveLaneEffectAsset (width
 //   fitting, Play / Stop), AnimationFinishEventTrigger (event at clip.length -> onStop).
 //   GameObject activity: activeSelf per node, activeInHierarchy propagated; a change of activeInHierarchy calls
@@ -294,14 +296,14 @@ export class FxSpriteRenderer {
 // ENGINE: activation is native; OnEnable / OnDisable run immediately inside SetActive and m_IsActive writes, parent first.
 // The order among siblings has no visible effect here.
 export class FxPrefab {
-  // exported: notes.assets[key]; opts {notes (livenotes/notes.json), materials (FxMaterials | null),
-  // rng (UnityRandom), parent (Transform of the pool container), cache ({clips: Map, ctrls: Map}, shared), name}
-  constructor(exported, { notes, materials = null, rng = null, parent = null, cache = null, name = "" } = {}) {
-    this.key = exported.key;
-    this.name = name || exported.key;
-    this.notes = notes;
-    this.cache = cache || { clips: new Map(), ctrls: new Map() };
-    const pf = new Prefab(exported);
+  // id: the prefab's root GameObject; opts {objects (LiveObjects), materials (FxMaterials | null), rng (UnityRandom),
+  // parent (Transform of the pool container), name}
+  constructor(id, { objects, materials = null, rng = null, parent = null, name = "" } = {}) {
+    const pf = Prefab.fromObjects(objects.assets, [id], id);           // a hierarchy of its own per instance
+    this.id = id;
+    this.key = pf.root.name;
+    this.name = name || this.key;
+    this.objects = objects;
     this.prefab = pf;
     // element (placeholder clone) and its `root` child: identity transforms (as in the scene)
     this.element = new Transform(`${pf.root.name}(element)`, parent);
@@ -332,26 +334,25 @@ export class FxPrefab {
     this.asset = null; this.assetClass = null;
     this.animatorEntry = null; this.animatorComp = null;
     const setters = [];
-    const cls = (c) => c.class || c.type;
     for (const e of this.order) {
       const comps = e.node.components;
       for (const c of comps) {
-        const k = cls(c);
+        const k = componentClass(c);
         if (k === "ParticleSystem") {
-          const r = comps.find((x) => cls(x) === "ParticleSystemRenderer") || null;
-          e.system = new FxParticleSystem(c, r, e.transform, { rng, materials, name: `${this.key}:${e.path}` });
+          const r = comps.find((x) => componentClass(x) === "ParticleSystemRenderer") || null;
+          e.system = new FxParticleSystem(c.fields, r && r.fields, e.transform, { rng, materials, name: `${this.key}:${e.path}` });
           this.systems.push(e.system);
         } else if (k === "SpriteRenderer") {
-          e.sprite = new FxSpriteRenderer(c, e.transform, { materials, name: `${this.key}:${e.path}` });
+          e.sprite = new FxSpriteRenderer(c.fields, e.transform, { materials, name: `${this.key}:${e.path}` });
           this.sprites.push(e.sprite);
         } else if (k === "Animator") {
           if (this.animatorEntry) throw new FxEffectsError(`${this.key}: two Animators`);
-          this.animatorEntry = e; this.animatorComp = c;
+          this.animatorEntry = e; this.animatorComp = c.fields;
         } else if (k === "LiveNoteEffectAsset" || k === "LiveLaneEffectAsset") {
           if (this.asset) throw new FxEffectsError(`${this.key}: two effect assets`);
-          this.asset = c; this.assetClass = k;
+          this.asset = c.fields; this.assetClass = k;
         } else if (k === "LiveRendererOrderInLayerSetter" || k === "LiveParticleOrderInLayerSetter") {
-          setters.push(c);
+          setters.push(c.fields);
         } else if (k === "LiveGameParticleCallback") {
           e.particleCallback = true;
         } else if (k !== "ParticleSystemRenderer") {
@@ -433,29 +434,13 @@ export class FxPrefab {
   }
 
   // ----------------------------------------------------------------------------------------- Animator
-  _clip(key) {
-    const cs = this.cache.clips;
-    if (!cs.has(key)) {
-      const raw = this.notes.clips[key];
-      if (!raw) throw new FxEffectsError(`clip ${key} not exported`);
-      const clip = AnimClip.fromMecanim(raw, key);
-      clip.rawName = raw.name;                // AnimationClip.name (AnimationFinishEventTrigger matches it)
-      cs.set(key, clip);
-    }
-    return cs.get(key);
-  }
-
+  // The controller's clips are named for this Animator's node (LiveObjects.controller); `clipList` is
+  // runtimeAnimatorController.animationClips, `rawName` the AnimationClip.name AnimationFinishEventTrigger matches.
   _buildAnimator(comp) {
     if (comp.m_KeepAnimatorStateOnDisable || comp.m_WriteDefaultValuesOnDisable || comp.m_UpdateMode !== 0 || comp.m_ApplyRootMotion)
       throw new FxEffectsError(`${this.key}: Animator settings not implemented`);
-    const key = comp.m_Controller && comp.m_Controller.controller;
-    if (!key || !this.notes.controllers[key]) throw new FxEffectsError(`${this.key}: controller ${key} not exported`);
-    let ctrl = this.cache.ctrls.get(key);
-    if (!ctrl) {
-      ctrl = AnimController.fromMecanim(this.notes.controllers[key], (k) => this._clip(k));
-      ctrl.clipList = this.notes.controllers[key].clips.map((c) => this._clip(c.clip));   // runtimeAnimatorController.animationClips
-      this.cache.ctrls.set(key, ctrl);
-    }
+    const ctrl = this.objects.controller(comp.m_Controller, this.id, this.animatorEntry.path);
+    if (!ctrl) throw new FxEffectsError(`${this.key}: Animator without controller`);
     this.controller = ctrl;
     this.unresolved = [];
     this.animator = new Animator(ctrl, (b) => {
@@ -784,22 +769,17 @@ export const FxContainerChain = (names) => {
 // LiveAllNoteEffectView (LiveGameView/root/LiveGameNoteEffectView): one-shot note effects per judged note and the
 // slide hold loop per held long line. Effects are drawn by LiveEffectCamera (layer 29): camera "effect".
 export class LiveNoteEffects {
-  // opts {notes (livenotes/notes.json), score (score/<file>.notes.json), materials (FxMaterials), rng (UnityRandom),
-  //       sceneInfo (FxScene.read(scene)), judgementRoot3D (localToWorld of judgement_root; default = sceneInfo),
-  //       effect (the effect set's asset name, NoteEffectId; default notes.settings.effect)}
-  constructor(gl, { notes, score, sceneInfo, materials = null, rng = null, judgementRoot3D = null, effect = null } = {}) {
+  // opts {objects (LiveObjects), effect (noteeffect.json of the effect set: MasterLiveNoteEffectSkin of NoteEffectId,
+  //       its Light set at LiveQuality Low; SoloLiveResourceLoadStateNode.CreateLoadParameter), score
+  //       (score/<file>.notes.json), materials (FxMaterials), rng (UnityRandom), sceneInfo (FxScene.read),
+  //       judgementRoot3D (localToWorld of judgement_root; default = sceneInfo)}
+  constructor(gl, { objects, effect, score, sceneInfo, materials = null, rng = null, judgementRoot3D = null } = {}) {
     if (!sceneInfo) throw new FxEffectsError("LiveNoteEffects: sceneInfo (FxScene.read) missing");
     this.gl = gl;
-    this.notes = notes;
     this.score = score;
     this.materials = materials;
     this.rng = rng;
-    this.cache = { clips: new Map(), ctrls: new Map() };
-    // effect set: MasterLiveNoteEffectSkin of NoteEffectId (default 1 -> effect001), LiveQuality Middle -> not the
-    // Light set (SoloLiveResourceLoadStateNode.CreateLoadParameter)
-    const dir = `Effect/Live/NoteEffect/${effect || notes.settings.effect}`;
-    const settings = notes.assets[`${dir}/LiveNoteEffectAssetSettings`];
-    if (!settings) throw new FxEffectsError(`${dir}/LiveNoteEffectAssetSettings not exported`);
+    const settings = objects.mono(effect.settings), dir = effect.name;
     this.laneCount = score.laneCount;                                  // _maxLaneCount (24)
     this.baseLaneWidth = F(sceneInfo.laneWidth);                     // (float)LiveLaneView._laneWidth
     // FullInitialize: judgement positions of the 3D root (LiveLaneView.noteJudgementRoot3D) cached once
@@ -815,17 +795,16 @@ export class LiveNoteEffects {
     this.pools = new Map();
     for (const c of sceneInfo.noteContainers) {
       const ref = settings[c.field];
-      if (!ref || !ref.gameObject) throw new FxEffectsError(`${dir}: ${c.field} missing`);
-      const key = `${dir}/${ref.gameObject}`, exported = notes.assets[key];
-      if (!exported) throw new FxEffectsError(`${key} not exported`);
+      if (!ref) throw new FxEffectsError(`${dir}: ${c.field} missing`);
+      const id = objects.assets.contained(ref).prefab;                // the effect prefab of the LiveNoteEffectAsset
       const parent = FxContainerChain(["LiveGameView", "root", "LiveGameNoteEffectView", "container_root", c.name]);
       const create = (i) => {
-        const e = new FxPrefab(exported, { notes, materials, rng, parent, cache: this.cache, name: `${c.name}#${i}` });
+        const e = new FxPrefab(id, { objects, materials, rng, parent, name: `${c.name}#${i}` });
         e.initialize(c.type, this.baseLaneWidth);                      // OnInitializeElementView
         return e;
       };
       const pool = new FxPool(create, c);
-      pool.name = c.name; pool.key = key;
+      pool.name = c.name; pool.key = `${dir}/${c.field}`;
       this.pools.set(c.type, pool);
     }
     this.activeOneShot = new Set();                                    // _activeOneShotEffects
@@ -981,22 +960,18 @@ export class LiveNoteEffects {
 };
 
 // ------------------------------------------------------------------------------------------ lane effects
-export const LIVE_LANE_EFFECT_SET = "effect001";       // LaneEffectLoadStep.GetAssetPath
 // LiveLaneEffectView (LiveGameView/root/LiveGameLaneEffectView): per container 24 permanent instances, one per
 // lane; per frame the requested type per lane is played. Drawn by LiveGameCamera (layer 25): camera "game".
 export class LiveLaneEffects {
   // The lane effect set does not follow NoteEffectId or LiveQuality: LaneEffectLoadStep.GetAssetPath passes the
-  // constant "effect001" to LiveAddressablePath.GetLiveLaneEffectSkinAssetPath.
-  constructor(gl, { notes, score, sceneInfo, materials = null, rng = null } = {}) {
+  // constant "effect001" to LiveAddressablePath.GetLiveLaneEffectSkinAssetPath (notes.json laneEffect: its
+  // LiveLaneEffectAssetSettings).
+  constructor(gl, { objects, notes, score, sceneInfo, materials = null, rng = null } = {}) {
     if (!sceneInfo) throw new FxEffectsError("LiveLaneEffects: sceneInfo (FxScene.read) missing");
     this.gl = gl;
-    this.notes = notes;
-    const dir = `Effect/Live/LaneEffect/${LIVE_LANE_EFFECT_SET}`;
-    const settings = notes.assets[`${dir}/LiveLaneEffectAssetSettings`];
-    if (!settings) throw new FxEffectsError(`${dir}/LiveLaneEffectAssetSettings not exported`);
+    const settings = objects.mono(notes.laneEffect), dir = notes.settings.laneEffect;
     this.laneCount = score.laneCount;                                  // LiveLaneView lane count (24)
     this.noteById = new Map(score.notes.map((x) => [x.id, x]));
-    this.cache = { clips: new Map(), ctrls: new Map() };
     // FullInitialize: width = (float)_laneWidth / laneCount, instance i at
     // (width * 0.5 + (width * i - (float)_laneWidth * 0.5), 0, 0) world, SetWidth(width), SetActive(true)
     const lw = F(sceneInfo.laneWidth), n = this.laneCount;
@@ -1006,11 +981,11 @@ export class LiveLaneEffects {
     this.pools = new Map();
     for (const c of sceneInfo.laneContainers) {
       const ref = settings[c.field];
-      const key = `${dir}/${ref.gameObject}`, exported = notes.assets[key];
-      if (!exported) throw new FxEffectsError(`${key} not exported`);
+      if (!ref) throw new FxEffectsError(`${dir}: ${c.field} missing`);
+      const id = objects.assets.contained(ref).prefab;                // the effect prefab of the LiveLaneEffectAsset
       const parent = FxContainerChain(["LiveGameView", "root", "LiveGameLaneEffectView", "container_root", c.name]);
       const create = (i) => {
-        const e = new FxPrefab(exported, { notes, materials, rng, parent, cache: this.cache, name: `lane-${c.name}#${i}` });
+        const e = new FxPrefab(id, { objects, materials, rng, parent, name: `lane-${c.name}#${i}` });
         e.initialize(c.type);
         return e;
       };

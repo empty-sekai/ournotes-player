@@ -183,12 +183,13 @@ export class URPPost {
   }
 
   // ------------------------------------------------------------------ resources
-  // film grain textures by FilmGrain.type (the renderer's post data); the Uber shader samples them with its inline
-  // sampler_LinearRepeat
-  static async loadGrain(gl, base, descs) {
+  // film grain textures by FilmGrain.type (the renderer's post data), each loaded by `load(item)`; the Uber shader
+  // samples them with its inline sampler_LinearRepeat
+  static async loadGrain(gl, items, load) {
     const out = [];
-    for (const d of descs) {
-      const t = await GLTex.load(gl, base, d);
+    for (const d of items) {
+      const t = await load(d);
+      gl.bindTexture(gl.TEXTURE_2D, t.glTexture);
       GLTex.sampler(gl, { m_FilterMode: 1, m_WrapU: 0, m_WrapV: 0 }, 1);
       out.push(t);
     }

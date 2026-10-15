@@ -197,25 +197,30 @@ LiveCameraMath.sortItems = (items, opaqueDrawn = true) => {
 };
 
 // ------------------------------------------------------------------------------------------------ renderer
-// `scene` = parsed livescene/scene.json, `lib` = ShaderLib over "livescene/shaders", `loop` = PlayerLoop.
+// `objects` = LiveObjects of the live (its `lib` draws), `scene` = scene.json of the live.scene part (the scene roots,
+// settings, graphics objects), `loop` = PlayerLoop. The scene's root prefabs make one hierarchy (`prefab`).
 // Screen size: resize(W, H) (Screen.width / height; LiveGameView.FullInitialize runs again on a size change).
 // `settings`: the live settings (settings.js) read by the lane and the render canvas; absent: the data's defaults.
+// `band`: the band's entry of scene.json bands (its start timeline and LightWeight background); `jacket`: the music's
+// jacket sprite (live.json jacket). `sprites` {stage, jacket}: the sprites of the LightWeight background composite.
 export class LiveRenderer {
-  constructor(gl, lib, scene, loop, { quality = LIVE_QUALITY.Middle, base = "livescene", settings } = {}) {
+  constructor(gl, objects, scene, loop, { quality = LIVE_QUALITY.Middle, settings, band, jacket } = {}) {
     if (!gl.getExtension("EXT_color_buffer_float")) throw new Error("EXT_color_buffer_float is required");
-    this.gl = gl; this.lib = lib; this.scene = scene; this.loop = loop; this.base = base; this.settings = settings;
+    if (!band || !jacket) throw new Error("LiveRenderer: the band and the jacket are required");
+    this.gl = gl; this.objects = objects; this.lib = objects.lib; this.scene = scene; this.loop = loop;
+    this.settings = settings; this.band = band; this.sprites = { stage: band.background, jacket };
     gl.frontFace(gl.CW);                    // Unity's front-face convention with its world-to-camera matrix
     this.vao = gl.createVertexArray();
-    this.post = new URPPost(gl, lib, { vao: this.vao });
-    this.prefab = new Prefab(scene.scene);
+    this.post = new URPPost(gl, this.lib, { vao: this.vao });
+    this.prefab = Prefab.fromObjects(objects.assets, scene.scene, "scene");
     // MasterLiveQualitySettings row of the LiveQuality
-    this.qualityRow = scene.master.liveQualitySettings.find((r) => r._quality === quality);
+    this.qualityRow = scene.settings.qualitySettings.find((r) => r._quality === quality);
     if (!this.qualityRow) throw new Error(`no MasterLiveQualitySettings for quality ${quality}`);
     this.quality = quality;
     const camera = (path, name, extra) => {
       const t = this.prefab.transform(path);
-      return new LiveCamera(name, t, this.prefab.component(path, "Camera"),
-                               { uacd: this.prefab.component(path, "UniversalAdditionalCameraData"), ...extra });
+      return new LiveCamera(name, t, this.prefab.fields(path, "Camera"),
+                               { uacd: this.prefab.fields(path, "UniversalAdditionalCameraData"), ...extra });
     };
     this.cameras = {
       effect: camera("LiveGameView/LiveGameCamera/LiveEffectCamera", "effect", { opaqueDrawn: false }),
@@ -232,13 +237,30 @@ export class LiveRenderer {
   // LiveEffectCamera's Volume (LiveGameVolume, global, priority 0) after
   // LiveViewPresenter.ApplyQualityEffectBloomSettings -> QualityConstants.ApplyQualityBloomMaxIterations:
   // quality != High -> maxIterations.Override(max(4, value - 1)) on the shared profile (applied once here).
+  // The profile's components are VolumeComponent assets (URPPost.evaluateStack reads them by class, `asset`).
   _effectStack() {
-    const vol = this.prefab.component("LiveGameView/LiveGameCamera/LiveEffectCamera", "Volume");
-    const profile = JSON.parse(JSON.stringify(vol.sharedProfile));
+    const vol = this.prefab.fields("LiveGameView/LiveGameCamera/LiveEffectCamera", "Volume");
+    const shared = this.objects.mono(vol.sharedProfile);
+    const profile = { components: shared.components.map((v) => {
+      const c = JSON.parse(JSON.stringify(this.objects.mono(v)));
+      return { ...c, asset: c.class };
+    }) };
     if (this.quality !== LIVE_QUALITY.High)
       for (const c of profile.components)
         if (c.asset === "Bloom") c.maxIterations = { m_OverrideState: 1, m_Value: Math.max(4, c.maxIterations.m_Value - 1) };
     return URPPost.evaluateStack([{ profile, weight: vol.weight }]);
+  }
+
+  // The film grain textures of the effect camera's renderer: GraphicsSettings.m_CustomRenderPipeline (the URP asset)
+  // -> m_RendererDataList[UniversalAdditionalCameraData.m_RendererIndex, -1: m_DefaultRendererIndex] -> its
+  // postProcessData (SiriusPostProcessData) -> textures.filmGrainTex (Texture2D ids).
+  grainTextures() {
+    const O = this.objects, graphics = O.assets.objectJson(this.scene.graphics.graphics);
+    const pipeline = O.mono(graphics.m_CustomRenderPipeline);
+    const index = this.cameras.effect.uacd.m_RendererIndex;
+    const renderer = O.mono(pipeline.m_RendererDataList[index >= 0 ? index : pipeline.m_DefaultRendererIndex]);
+    const post = O.mono(renderer.postProcessData);
+    return post.textures.filmGrainTex.map((v) => O.id(v, "Texture2D"));
   }
 
   async load() {
@@ -249,8 +271,8 @@ export class LiveRenderer {
       gray: GLTex.solid(gl, [128, 128, 128, 255], "gray"),
       clear: GLTex.solid(gl, [0, 0, 0, 0], "clear"),
     };
-    // SiriusPostProcessData of ForwardRendererLiveGameEffect (film grain textures; FilmGrain is off in LiveGameVolume)
-    this.grain = await URPPost.loadGrain(gl, this.base, this.scene.postTextures.ForwardRendererLiveGameEffect.filmGrainTex);
+    // SiriusPostProcessData of the effect camera's renderer (film grain textures; FilmGrain is off in LiveGameVolume)
+    this.grain = await URPPost.loadGrain(gl, this.grainTextures(), (id) => GLTex.loadObject(gl, id, this.objects.assets));
     this.post.initLut();
     this.canvas = new LiveRenderCanvas(this);
     await this.canvas.load();
@@ -378,9 +400,10 @@ export const liveFitSheets = (prog, sheets) => {
 };
 
 // material property sheet [floats with every scalar shader default filled in, colours as arrays] for render state
-// lookups (passState reads state properties such as _ColorMask / _Stencil* from the material floats)
+// lookups (passState reads state properties such as _ColorMask / _Stencil* from the material floats); `mat`: a
+// LiveObjects material (or a material of the same form whose `shader` is a key of `lib`)
 export const liveMaterialSheets = (lib, mat, tex) => {
-  const shader = mat.shader.shader, defaults = lib.defaults(shader, tex), floats = {}, colors = {};
+  const shader = mat.shader, defaults = lib.defaults(shader, tex), floats = {}, colors = {};
   for (const [k, v] of Object.entries(defaults)) if (typeof v === "number") floats[k] = v;
   Object.assign(floats, mat.floats || {});
   for (const [k, v] of Object.entries(mat.colors || {})) colors[k] = [v.r, v.g, v.b, v.a];

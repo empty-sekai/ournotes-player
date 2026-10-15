@@ -383,7 +383,7 @@ export class SimpleHomeHost {
     this.kawase = new DualKawaseBlur(gl, this.lib);
     // the main camera's post chain: the renderer's film grain textures (only when the grain is drawn), its LUT
     this.urp = new URPPost(gl, this.postOpts.lib, { vao: this.vao });
-    this.grain = post.grainDescs ? await URPPost.loadGrain(gl, "", post.grainDescs) : [];
+    this.grain = post.grainDescs ? await URPPost.loadGrain(gl, post.grainDescs, (d) => GLTex.load(gl, "", d)) : [];
     this.urp.initLut();
     this.cameraColor = null;
     this.room.glb = null;                 // the file's bytes are no longer needed
