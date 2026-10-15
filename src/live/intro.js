@@ -1,9 +1,6 @@
-import { AnimClip } from "../engine/anim.js";
 import { F } from "../engine/core.js";
 import { applyState } from "../engine/glsl.js";
 import { mat4 } from "../engine/math.js";
-import { Prefab } from "../engine/prefab.js";
-import { GLTex } from "../engine/texture.js";
 import { LIVE_UI_DEAD_INPUTS, LiveGeom, LiveLane } from "./lane.js";
 import { liveFitSheets, liveMaterialSheets } from "./renderer.js";
 
@@ -32,10 +29,12 @@ import { liveFitSheets, liveMaterialSheets } from "./renderer.js";
 // gradient veil + the simple jacket panel + TMP texts, T 1.5 .. 4.4167): the player has no start canvas; the 7
 // ef_particle_star ParticleSystems are drawn by the effects (LiveFx; `stars()` gives their transforms and active
 // state).
-// Clips are sampled with AnimClip (engine/anim.js). Bindings are resolved against each track's bound
-// Animator (TimelineAsset track `boundAnimator` {key, gameObject}: the scene or the timeline prefab) and applied by
-// attribute name: GameObject m_IsActive, Transform m_LocalPosition / m_LocalScale, SpriteRenderer m_Color.*,
-// renderer material properties `material.<name>.<c>` (Animator material property block, typeID 137).
+// Clips are sampled with AnimClip (engine/anim.js). The timeline is the band's (scene.json bands[b].timeline); each
+// animation track plays on the Animator its binding names (bands[b].tracks[track id]: {prefab: a scene root or the
+// timeline prefab, animator: the Animator's node path}), its clips' bindings named for that Animator (scene.json
+// bindings) and applied by attribute name: GameObject m_IsActive, Transform m_LocalPosition / m_LocalScale,
+// SpriteRenderer m_Color.*, renderer material properties `material.<name>.<c>` (Animator material property block,
+// typeID 137).
 
 // TimelineClip -> clip-local time at timeline time T, or null when the clip does not drive the track at T
 // (m_Start, m_Duration, m_ClipIn, m_TimeScale, Hold extrapolation (1) within the pre/post extrapolation time).
@@ -55,18 +54,24 @@ export const LIVE_SIGNAL_METHODS = { NotifyPlayVoice: "PlayVoice" };
 export class LiveIntro {
   constructor(stage) {
     this.stage = stage; this.r = stage.r; this.scene = stage.scene; this.prefab = stage.r.prefab;
-    this.tl = new Prefab(this.scene.assets.startTimeline);
+    const O = this.r.objects, band = this.r.band;
+    this.tlId = band.timeline;
+    this.tl = O.prefab(band.timeline);
     const rootPath = this.tl.roots[0].name;
-    this.director = this.tl.component(rootPath, "PlayableDirector");
-    const ta = this.director.m_PlayableAsset;
-    this.tracks = new Map(ta.m_Tracks.map((t) => [t.m_Name, {
-      bound: t.boundAnimator || null,
-      clips: t.m_Clips.map((c) => ({ tc: c, clip: AnimClip.fromMecanim(c.m_Asset.m_Clip, c.m_Asset.m_Clip.clip) })) }]));
-    this.duration = Math.max(...ta.m_Tracks.flatMap((t) => t.m_Clips.map((c) => c.m_Start + c.m_Duration)));   // BasedOnClips
+    this.director = this.tl.fields(rootPath, "PlayableDirector");
+    const tracks = O.mono(this.director.m_PlayableAsset).m_Tracks.map((v) => O.mono(v));
+    // an animation track's clips (AnimationPlayableAsset.m_Clip) as its bound Animator plays them
+    this.tracks = new Map(tracks.filter((t) => t.class === "AnimationTrack").map((t) => {
+      const bound = band.tracks[t.id];
+      if (!bound) throw new Error(`timeline track ${t.m_Name}: no bound Animator`);
+      return [t.m_Name, { bound, clips: t.m_Clips.map((c) => ({
+        tc: c, clip: O.clip(O.id(O.mono(c.m_Asset).m_Clip, "AnimationClip"), bound.prefab, bound.animator) })) }];
+    }));
+    this.duration = Math.max(...tracks.flatMap((t) => (t.m_Clips || []).map((c) => c.m_Start + c.m_Duration)));   // BasedOnClips
     this.effectRoot = `${rootPath}/root`;
     this.time = 0; this.playing = false; this.done = false; this.onEnd = null; this.n = 0; this.ignored = 0;
     this.onSignal = null;                    // onSignal(name): Signal track markers (see _signalMarkers)
-    this.signals = this._signalMarkers(ta, rootPath);
+    this.signals = this._signalMarkers(tracks, rootPath);
     this.dt = F(1 / 60);
     this.effect = new LiveLaneInEffect(this);
   }
@@ -91,19 +96,21 @@ export class LiveIntro {
   // Signal track markers: SignalEmitter {m_Time, m_Retroactive, m_EmitOnce, m_Asset (SignalAsset)} resolved through the
   // timeline prefab's SignalReceiver (LivePlayableTimeline._signalReceiver): the asset's reaction is a UnityEvent
   // whose persistent call names the LivePlayableTimeline method, mapped to the callback name here.
-  _signalMarkers(ta, rootPath) {
-    const recv = this.tl.component(rootPath, "SignalReceiver").m_Events;
+  _signalMarkers(tracks, rootPath) {
+    const O = this.r.objects, recv = this.tl.fields(rootPath, "SignalReceiver").m_Events;
     const out = [];
-    for (const tr of ta.m_Tracks) {
-      if (tr.asset !== "SignalTrack" || tr.m_Muted) continue;
-      for (const m of (tr.m_Markers && tr.m_Markers.m_Objects) || []) {
-        if (m.asset !== "SignalEmitter" || !m.m_Enabled) continue;
-        const k = recv.m_Signals.findIndex((a) => a && a.name === m.m_Asset.name);
+    for (const tr of tracks) {
+      if (tr.class !== "SignalTrack" || tr.m_Muted) continue;
+      for (const v of (tr.m_Markers && tr.m_Markers.m_Objects) || []) {
+        const m = O.mono(v);
+        if (m.class !== "SignalEmitter" || !m.m_Enabled) continue;
+        const asset = O.mono(m.m_Asset);
+        const k = recv.m_Signals.findIndex((a) => a && O.id(a) === asset.id);
         if (k < 0) continue;                 // no reaction for this signal on the receiver
         for (const c of recv.m_Events[k].m_PersistentCalls.m_Calls) {
           const name = LIVE_SIGNAL_METHODS[c.m_MethodName];
-          if (!name) throw new Error(`signal ${m.m_Asset.name}: receiver method ${c.m_MethodName}`);
-          out.push({ time: m.m_Time, retroactive: !!m.m_Retroactive, emitOnce: !!m.m_EmitOnce, asset: m.m_Asset.name, name, fired: false });
+          if (!name) throw new Error(`signal ${asset.m_Name}: receiver method ${c.m_MethodName}`);
+          out.push({ time: m.m_Time, retroactive: !!m.m_Retroactive, emitOnce: !!m.m_EmitOnce, asset: asset.m_Name, name, fired: false });
         }
       }
     }
@@ -145,9 +152,9 @@ export class LiveIntro {
 
   // node of a binding: the bound Animator's GameObject + binding path, in the scene or the timeline prefab
   _target(bound, b) {
-    const pf = bound.key === this.scene.scene.key ? this.prefab : bound.key === this.tl.key ? this.tl : null;
-    if (!pf) throw new Error(`timeline binding in ${bound.key}`);
-    const path = b.path ? `${bound.gameObject}/${b.path}` : bound.gameObject;
+    const pf = bound.prefab === this.tlId ? this.tl : this.prefab.ids.includes(bound.prefab) ? this.prefab : null;
+    if (!pf) throw new Error(`timeline binding in ${bound.prefab}`);
+    const path = b.path ? `${bound.animator}/${b.path}` : bound.animator;
     if (!pf.nodes.has(path)) throw new Error(`timeline binding: no node ${path}`);
     return { pf, path };
   }
@@ -200,7 +207,7 @@ export class LiveIntro {
   // area's animation alpha (created in the animation phase; first DOTween update next frame)
   _playTapAreaFadeIn() {
     this.fadeReserved = false;
-    const lane = this.stage.lane, view = this.prefab.component("LiveGameView/root/LiveGameLane", "LiveLaneView");
+    const lane = this.stage.lane, view = this.prefab.fields("LiveGameView/root/LiveGameLane", "LiveLaneView");
     const dur = view._tapAreaFadeInDuration, ease = view._tapAreaFadeInEase;
     if (typeof dur !== "number" || typeof ease !== "number") throw new Error("LiveLaneView tap-area fade fields missing");
     this.fadeTween = this.loop.tweens.to(0, 1, dur, ease, (v) => { lane.tapArea.animationAlpha = F(v); });
@@ -230,22 +237,22 @@ export class LiveLaneInEffect {
     this.renderers = [];
     for (const [path, e] of this.tl.nodes) {
       if (!path.startsWith(`${this.root}/LiveGameLaneInEffect`)) continue;
-      const sr = e.node.components.find((c) => c.type === "SpriteRenderer");
+      const c = e.node.components.find((x) => x.type === "SpriteRenderer"), sr = c && c.fields;
       if (sr) this.renderers.push({ path, sr, layer: e.node.layer, color: { ...sr.m_Color } });
     }
     this.byPath = new Map(this.renderers.map((x) => [x.path, x]));
     const meshPath = `${this.root}/LiveGameLaneInEffect/lines/lane_line03_plus/lane_mesh/lane_mesh`;
-    this.mesh = new LiveSkinnedMesh(this.tl, meshPath, this.tl.component(meshPath, "SkinnedMeshRenderer"), this.tl.nodes.get(meshPath).node.layer);
+    this.mesh = new LiveSkinnedMesh(this.tl, meshPath, this.tl.fields(meshPath, "SkinnedMeshRenderer"),
+                                    this.tl.nodes.get(meshPath).node.layer, this.r.objects);
   }
 
   async load() {
-    const gl = this.r.gl, textures = new Map();
+    const gl = this.r.gl;
     this.vbo = { pos: gl.createBuffer(), uv: gl.createBuffer(), col: gl.createBuffer(), idx: gl.createBuffer() };
     await this.mesh.load(this.r);
     for (const x of this.renderers) {
-      const sp = x.sr.m_Sprite, d = sp.texture;
-      if (!textures.has(d.texture)) textures.set(d.texture, await GLTex.load(gl, this.r.base, d));
-      x.tex = textures.get(d.texture);
+      const sp = this.r.objects.sprite(x.sr.m_Sprite), d = sp.texture;
+      x.tex = await this.r.objects.texture(d.id);
       if (x.sr.m_DrawMode === 1) {                     // Sliced (LiveGeom.sliced: uv from the sprite rect)
         const r = sp.textureRect || sp.rect, tw = d.width, th = d.height;
         x.mesh = LiveGeom.sliced(x.sr.m_Size, sp.rect, sp.pivot, [sp.border.x, sp.border.y, sp.border.z, sp.border.w],
@@ -275,8 +282,8 @@ export class LiveLaneInEffect {
   // the SortingGroup a renderer belongs to (nearest ancestor with an enabled SortingGroup), or null
   sortingGroup(path) {
     for (let p = path; p.includes("/"); p = p.slice(0, p.lastIndexOf("/"))) {
-      const g = this.tl.nodes.get(p).node.components.find((c) => c.type === "SortingGroup" && c.m_Enabled);
-      if (g) return { path: p, group: g };
+      const g = this.tl.nodes.get(p).node.components.find((c) => c.type === "SortingGroup" && c.fields.m_Enabled);
+      if (g) return { path: p, group: g.fields };
     }
     return null;
   }
@@ -314,7 +321,8 @@ export class LiveLaneInEffect {
 
   meshState() { return this.mesh ? this.mesh.state() : null; }
 
-  // for the effects (LiveFx): the 7 star emitters (ef_particle_star under lane_lineNN/star_icon)
+  // for the effects (LiveFx): the 7 star emitters (ef_particle_star under lane_lineNN/star_icon), with their node's
+  // prefab.json components
   stars() {
     const out = [];
     for (const [path] of this.tl.nodes)
@@ -336,14 +344,16 @@ export class LiveLaneInEffect {
 // root bone; the same world positions).
 // ENGINE: the mesh has no colour channel; the missing COLOR input is taken as (1, 1, 1, 1).
 export class LiveSkinnedMesh {
-  constructor(prefab, path, smr, layer) {
+  // smr: the SkinnedMeshRenderer's fields; objects: LiveObjects (its mesh and material)
+  constructor(prefab, path, smr, layer, objects) {
     this.pf = prefab; this.path = path; this.smr = smr; this.layer = layer;
-    const m = smr.m_Mesh;
-    if (!m || !m.m_Skin || !m.m_BindPose) throw new Error(`${path}: skinned mesh without skin data`);
+    const m = objects.mesh(smr.m_Mesh);
+    if (!m || !m.skin || !m.bindPoses.length) throw new Error(`${path}: skinned mesh without skin data`);
     if (m.submeshes.length !== 1) throw new Error(`${path}: ${m.submeshes.length} submeshes`);
     this.vertices = m.vertices; this.uv = new Float32Array(m.uv0.flat()); this.idx = new Uint16Array(m.submeshes[0]);
-    this.skin = m.m_Skin;
-    this.bindPoses = m.m_BindPose.map((e) => {
+    // per vertex: the bone indices and weights of its influences, in the mesh's order
+    this.skin = m.skin.joints.map((boneIndex, k) => ({ boneIndex, weight: m.skin.weights[k] }));
+    this.bindPoses = m.bindPoses.map((e) => {
       const o = new Float32Array(16);
       for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) o[c * 4 + r] = e[`e${r}${c}`];
       return o;
@@ -351,14 +361,14 @@ export class LiveSkinnedMesh {
     this.bones = smr.m_Bones.map((b) => b.transform);
     if (this.bones.length !== this.bindPoses.length) throw new Error(`${path}: bones / bind poses`);
     this.rootBone = smr.m_RootBone ? smr.m_RootBone.transform : path;
-    this.material = smr.m_Materials[0];
+    this.material = objects.material(smr.m_Materials[0]);
     this.block = {};                         // Animator material property block (material.<name>.<c> curves)
     this.skinWeights = 2;                    // QualitySettings.skinWeights of every quality level (player data)
   }
 
   async load(r) {
     this.r = r;
-    this.tex = await GLTex.load(r.gl, r.base, this.material.textures._MainTex.texture);
+    this.tex = await r.objects.texture(this.material.textures._MainTex.texture.id);
     this.vbo = { pos: r.gl.createBuffer(), uv: r.gl.createBuffer(), col: r.gl.createBuffer(), idx: r.gl.createBuffer() };
   }
 
@@ -428,7 +438,7 @@ export class LiveSkinnedMesh {
     this.lastCulled = culled;
     if (culled) return null;
     const pos = this.skinned(), mesh = { pos, uv: this.uv, idx: this.idx };
-    const mat = this.material, shader = mat.shader.shader, tint = this.tint(), I = mat4.identity();
+    const mat = this.material, shader = mat.shader, tint = this.tint(), I = mat4.identity();
     return {
       sortingLayer: this.smr.m_SortingLayer || 0, sortingOrder: this.smr.m_SortingOrder, queue: LiveLane.queue(this.r.lib, mat),
       center: LiveLane._center(pos),

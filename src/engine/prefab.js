@@ -3,12 +3,16 @@ import { Transform } from "./math.js";
 // Prefab: Transform hierarchy and component lookup over an exported prefab node list
 // (hierarchy order, local TRS, components in GameObject order).
 
-// A component's class: a MonoBehaviour's script class (the last part of a prefab.json component's `script`,
-// "assembly|namespace|class"; the `class` of a component in a chart or story file), else the component's type.
-export const componentClass = (c) =>
-  (typeof c.script === "string" ? c.script.slice(c.script.lastIndexOf("|") + 1) : (c.class || c.type));
+// the class of a script "assembly|namespace|class" (a prefab.json component's `script`, a MonoBehaviour object's
+// `$script`)
+export const scriptClass = (script) => script.slice(script.lastIndexOf("|") + 1);
+
+// A component's class: a MonoBehaviour's script class (prefab.json `script`; the `class` of a component in a story
+// file), else the component's type.
+export const componentClass = (c) => (typeof c.script === "string" ? scriptClass(c.script) : (c.class || c.type));
 
 export class Prefab {
+  // exported: {key, nodes}
   constructor(exported) {
     this.key = exported.key;
     this.nodes = new Map();          // path -> {node, transform}
@@ -27,6 +31,17 @@ export class Prefab {
       if (!parent) this.roots.push(t);
     }
   }
+
+  // The prefab.json roots `ids` of the store (AssetStore.prefab) as one hierarchy: a prefab, or the roots of a scene
+  // (their node paths start with the root's name). `ids` keeps the root ids.
+  static fromObjects(assets, ids, key = ids.join(" ")) {
+    const p = new Prefab({ key, nodes: ids.flatMap((id) => assets.prefab(id).nodes) });
+    p.ids = ids.slice();
+    return p;
+  }
+
+  // the `fields` of the unique component of class `cls` on `path` (prefab.json)
+  fields(path, cls) { return this.component(path, cls).fields; }
 
   get root() {
     if (this.roots.length !== 1) throw new Error(`${this.key}: ${this.roots.length} roots`);

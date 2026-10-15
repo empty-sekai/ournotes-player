@@ -2,13 +2,13 @@ import { bindAssets, unbindAssets } from "../data/assets.js";
 import { F } from "../engine/core.js";
 import { SOUND_CATEGORY } from "../engine/audio.js";
 import { trackGL } from "../engine/gltrack.js";
-import { ShaderLib } from "../engine/glsl.js";
 import { PlayerLoop } from "../engine/loop.js";
 import { LiveLightWeightBackground } from "./background.js";
 import { LiveData } from "./data.js";
 import { LiveFx } from "./fx.js";
 import { isLegacyLive, legacyLive } from "./legacy.js";
 import { LiveNotes } from "./noteview.js";
+import { LiveObjects } from "./objects.js";
 import { LiveRenderer } from "./renderer.js";
 import { LIVE_OPTION_BY_NAME, LiveOptionContext, LiveSettingsError, liveCategoryVolumes, liveDerived, liveNoteEffectName,
          liveNoteSeMaps, liveOptionItems, liveSettingsChanges } from "./settings.js";
@@ -114,9 +114,10 @@ export class ChartSession {
     this.gl = gl; this.assets = assets;
     this._gl = trackGL(gl);
     const data = this.data = new LiveData(assets);
-    const live = data.live, scene = data.sceneDoc, noteAssets = data.noteAssets, audioData = data.audio();
-    // Live options: defaults, ranges and the values the chart's files offer, then the settings of this session
-    const ctx = new LiveOptionContext({ live, scene, notes: noteAssets, audio: audioData, info: assets.info || null });
+    const live = data.live, scene = data.scene, notes = data.notes, audioData = data.audio();
+    // Live options: defaults, ranges and the values the live's files offer, then the settings of this session
+    const ctx = new LiveOptionContext({ live, scene, notes, audio: audioData, info: assets.info || null,
+                                        skins: data.noteskins, effects: data.noteeffects });
     if (quality !== undefined && quality !== null) ctx.defaults.LiveQuality = Number(quality);
     const s = ctx.resolve(settings || {});
     this.optionContext = ctx;
@@ -125,15 +126,25 @@ export class ChartSession {
     // MirrorChart (4): the score converted with isMirror (SsMusicScoreConverter), a file of its own
     const score = data.score(s.MirrorChart);
     this.live = live;
-    this.score = score; this.noteAssets = noteAssets;
+    this.score = score; this.noteSettings = notes.settings;
+    // NoteDesignId (306): the note skin asset of MasterLiveNoteSkin; NoteEffectId (307) with LiveQuality: the note
+    // effect set (SoloLiveResourceLoadStateNode.CreateLoadParameter); the defaults are the live's parts
+    const skin = data.noteskin(s.NoteDesignId !== ctx.defaults.NoteDesignId ? notes.settings.skins[String(s.NoteDesignId)] : undefined);
+    const effect = data.noteeffect(liveNoteEffectName(ctx, s) ?? undefined);
+    // the live's objects: clip bindings of the scene, the notes and the selected skin and effect set; Shader.Find
+    // names of the scene
+    const objects = this.objects = new LiveObjects(assets, { gl, shaders: scene.shaders,
+      bindings: [scene.bindings, notes.bindings, skin.bindings, effect.bindings] });
     const loop = new PlayerLoop(60);
     this.loop = loop;
 
     // FullInitialize: renderer (cameras, RTs, LightWeight background, post), stage (lane + start timeline),
     // simulation, note views, effects. The effects are built after the stage so that their animation hook runs
     // after the timeline evaluation (DirectorUpdateAnimation precedes ParticleSystemBeginUpdateAll).
-    const renderer = new LiveRenderer(gl, new ShaderLib(gl, "livescene/shaders", assets), scene, loop,
-                                      { quality: s.LiveQuality, settings: s });
+    const band = scene.bands[String(live.band.band)];
+    if (!band) throw new Error(`band ${live.band.band}: not in scene.json bands`);
+    const renderer = new LiveRenderer(gl, objects, scene, loop,
+                                      { quality: s.LiveQuality, settings: s, band, jacket: live.jacket });
     await renderer.load();
     this.renderer = renderer;
     const c = gl.canvas;
@@ -143,15 +154,12 @@ export class ChartSession {
     await stage.load();
     stage.attach(loop);
     this.stage = stage;
-    this.exec = new LiveExecutor(score, noteAssets.settings, this.derived);
-    // NoteDesignId (306): the note skin asset of MasterLiveNoteSkin (SoloLiveResourceLoadStateNode.CreateLoadParameter)
-    const skin = s.NoteDesignId !== ctx.defaults.NoteDesignId
-      ? noteAssets.noteSkins[noteAssets.settings.skins[String(s.NoteDesignId)]] : undefined;
-    this.notes = new LiveNotes(gl, noteAssets, score, { base: "livenotes", settings: s, displayOffsetMs: this.exec.D, skin,
-                                                        scene: renderer.prefab });
+    this.exec = new LiveExecutor(score, notes.settings, this.derived);
+    this.notes = new LiveNotes(gl, objects, notes, score, { settings: s, displayOffsetMs: this.exec.D, skin,
+                                                            scene: renderer.prefab, barLineView: scene.prefabs.barLineView });
     await this.notes.load();
-    this.fx = new LiveFx({ gl, loop, notes: noteAssets, score, scene, introStars: () => stage.intro.stars(),
-                           seed: seed ?? (Date.now() >>> 0), settings: s, effect: liveNoteEffectName(ctx, s) });
+    this.fx = new LiveFx({ gl, loop, objects, scene, notes, effect, score, introStars: () => stage.intro.stars(),
+                           seed: seed ?? (Date.now() >>> 0), settings: s });
     await this.fx.load();
 
     // live sound: SoundManager with the live's CRI routing, LiveSoundPlayer (cheers, note SE, BGM); every cue of
@@ -477,7 +485,7 @@ export class ChartSession {
   // the chart state of a live booted with the current settings, at the current chart time (setSettings)
   async _restart() {
     if (!this.started) {                                           // at the chart start: nothing simulated yet
-      this.exec = new LiveExecutor(this.score, this.noteAssets.settings, this.derived);
+      this.exec = new LiveExecutor(this.score, this.noteSettings, this.derived);
       this.notes.configure(this._settings, this.exec.D);
       this.fx.resetUI(this._settings);
       for (const d of this.preDts) this.fx.uiFrame(null, d);
@@ -546,7 +554,7 @@ export class ChartSession {
   // DOTween / Animator steps of every frame up to the music start, clock gate reset. reconfigure: the note views and
   // the live UI take the current settings (setSettings)
   _resetChart(len, reconfigure = false) {
-    this.exec = new LiveExecutor(this.score, this.noteAssets.settings, this.derived);
+    this.exec = new LiveExecutor(this.score, this.noteSettings, this.derived);
     if (reconfigure) this.notes.configure(this._settings, this.exec.D); else this.notes.reset();
     this.fx.resetUI(reconfigure ? this._settings : undefined);
     for (const d of this.preDts) this.fx.uiFrame(null, d);
@@ -595,8 +603,8 @@ export class ChartSession {
       if (this._gl) this._gl.release();
       unbindAssets(this.gl, this.assets);
     }
-    for (const k of ["renderer", "stage", "notes", "fx", "exec", "audio", "frame", "clock", "live", "score", "noteAssets",
-                     "loop", "preDts", "_gl"]) this[k] = null;
+    for (const k of ["renderer", "stage", "notes", "fx", "exec", "audio", "frame", "clock", "live", "score", "noteSettings",
+                     "objects", "loop", "preDts", "_gl"]) this[k] = null;
   }
 }
 

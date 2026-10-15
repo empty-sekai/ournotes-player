@@ -315,12 +315,41 @@ export const applyState = (gl, s) => {
 export const SHADER_PLATFORM = "gles3", SHADER_PROGRAM_TYPE = "GLES3";
 const RECORDS = Symbol("shader records");
 
-// Shader index + variant selection + program cache. The shaders are named by their Unity names:
+// The Shader objects of a store by object id (each object's `json`: the parsed form, `index`: its variants,
+// `program:<platform>/<name>`: their GLSL; docs/data-format.md "Shaders"), and a name table {Unity name: object id}
+// that answers lookups by name (Shader.Find).
+class ShaderObjects {
+  constructor(assets, names) {
+    this.assets = assets;
+    this.names = names;
+    this.records = new Map();
+  }
+
+  get(key) {
+    const id = this.names.get(key) ?? key;
+    let r = this.records.get(id);
+    if (!r) {
+      if (!this.assets.hasObject(id)) return undefined;
+      this.assets.object(id, "Shader");
+      const index = this.assets.objectJson(id, "index");
+      r = {
+        name: index.name,
+        variants: index.variants.filter((v) => v.platform === SHADER_PLATFORM && v.type === SHADER_PROGRAM_TYPE)
+          .map((v) => ({ ...v, key: `${id}#${v.role}` })),
+        info: () => this.assets.objectJson(id),
+        text: (v) => this.assets.objectText(id, v.role),
+      };
+      this.records.set(id, r);
+    }
+    return r;
+  }
+}
+
+// Shader index + variant selection + program cache. A shader is named by its key:
 //   new ShaderLib(gl, base, assets)                a packed shader directory `base` (shaders.json +
-//                                                  <name>/gles3/*.glsl + <name>.json)
-//   ShaderLib.fromObjects(gl, shaders, assets)     the Shader objects of a shader table {name: object id}: each
-//                                                  object's `json` (the parsed form), `index` (its variants) and
-//                                                  `program:<platform>/<name>` files (docs/data-format.md "Shaders")
+//                                                  <name>/gles3/*.glsl + <name>.json): the key is the Unity name
+//   ShaderLib.fromObjects(gl, names, assets)       the Shader objects of the store: the key is the object id, or a
+//                                                  Unity name of the name table `names` {name: object id}
 export class ShaderLib {
   constructor(gl, base = "shaders", assets = assetsOf(gl)) {
     this.gl = gl;
@@ -338,28 +367,30 @@ export class ShaderLib {
     this.states = new Map();            // "name|subShader|pass" -> {state, names, byValues}: passState per value set
   }
 
-  // The shaders of a shader table {Unity name: Shader object id}; a name must be the one its object's index states.
-  static fromObjects(gl, shaders, assets = assetsOf(gl)) {
-    const records = new Map(Object.entries(shaders).map(([name, id]) => {
-      assets.object(id, "Shader");
-      const index = assets.objectJson(id, "index");
-      if (index.name !== name) throw new Error(`shader ${id} is ${index.name}, the table names it ${name}`);
-      return [name, {
-        variants: index.variants.filter((v) => v.platform === SHADER_PLATFORM && v.type === SHADER_PROGRAM_TYPE)
-          .map((v) => ({ ...v, key: `${id}#${v.role}` })),
-        info: () => assets.objectJson(id),
-        text: (v) => assets.objectText(id, v.role),
-      }];
-    }));
+  // The Shader objects of the store; `names` {Unity name: Shader object id} names some of them (a name must be the one
+  // its object's index states).
+  static fromObjects(gl, names = {}, assets = assetsOf(gl)) {
+    const table = new Map(Object.entries(names));
+    const records = new ShaderObjects(assets, table);
+    for (const [name, id] of table) {
+      const r = records.get(id);
+      if (!r) throw new Error(`shader ${name}: object ${id} not found`);
+      if (r.name !== name) throw new Error(`shader ${id} is ${r.name}, the table names it ${name}`);
+    }
     return new ShaderLib(gl, { [RECORDS]: records }, assets);
   }
 
+  // the Unity name of the shader a key names
+  nameOf(key) { return this._record(key).name ?? key; }
+
+  _record(key) {
+    const rec = this.index.get(key);
+    if (!rec) throw new Error(`shader not packed: ${key}`);
+    return rec;
+  }
+
   info(name) {
-    if (!this.parsed.has(name)) {
-      const rec = this.index.get(name);
-      if (!rec) throw new Error(`shader not packed: ${name}`);
-      this.parsed.set(name, rec.info());
-    }
+    if (!this.parsed.has(name)) this.parsed.set(name, this._record(name).info());
     return this.parsed.get(name);
   }
 
@@ -372,9 +403,8 @@ export class ShaderLib {
     return prog;
   }
 
-  _program(name, pass, keywords, subShader) {
-    const rec = this.index.get(name);
-    if (!rec) throw new Error(`shader not packed: ${name}`);
+  _program(key, pass, keywords, subShader) {
+    const rec = this._record(key), name = rec.name ?? key;
     const vs = rec.variants.filter((v) => v.subShader === subShader && v.pass === pass);
     if (!vs.length) throw new Error(`${name}: no GLES3 variants for subshader ${subShader} pass ${pass}`);
     const known = new Set(vs.flatMap((v) => v.keywords));
