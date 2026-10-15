@@ -318,3 +318,71 @@ test("fromManifest: cancellation while reading an empty manifest still rejects",
   finishRead({ files: {} });
   await rejected;
 });
+
+// ------------------------------------------------------------------------------------------------ sprites and meshes
+// object ids are "<file>:<pathId>" (refId); a reference value names one
+const ref = (file, pathId) => ({ $ref: { file, pathId: String(pathId) } });
+const texture = (name) => ({ class: "Texture2D", name, files: { json: JSON.stringify({ m_Name: name, m_Width: 2, m_Height: 2,
+  m_MipCount: 1, m_ColorSpace: 1, m_TextureSettings: {} }) } });
+const KEY = [{ "data[0]": 1, "data[1]": 2, "data[2]": 3, "data[3]": 4 }, 21300000];
+const OTHER_KEY = [{ "data[0]": 9, "data[1]": 9, "data[2]": 9, "data[3]": 9 }, 21300001];
+const renderData = (texturePath, uvTransform, textureRect) => ({
+  texture: ref(...texturePath), textureRect, textureRectOffset: { x: 0, y: 0 }, atlasRectOffset: { x: 0, y: 0 },
+  uvTransform, downscaleMultiplier: 1, settingsRaw: 0,
+});
+// a sprite packed by the SpriteAtlas "atlas:10" (two entries: the other key first, the sprite's key second)
+const packedObjects = (spriteFields) => ({
+  "pages:1": texture("page-a"),
+  "pages:2": texture("page-b"),
+  "atlas:10": { class: "SpriteAtlas", name: "atlas", files: { json: JSON.stringify({ m_Name: "atlas", m_RenderDataMap: [
+    [OTHER_KEY, renderData(["pages", 2], { x: 1, y: 1, z: 1, w: 1 }, { x: 0, y: 0, width: 1, height: 1 })],
+    [KEY, renderData(["pages", 1], { x: 2, y: 0, z: 2, w: 0 }, { x: 0, y: 0, width: 2, height: 2 })],
+  ] }) } },
+  "sprites:20": { class: "Sprite", name: "icon", files: { json: JSON.stringify({ sprite: {
+    m_Name: "icon", m_Rect: { x: 0, y: 0, width: 2, height: 2 }, m_Pivot: { x: 0.5, y: 0.5 },
+    m_Border: { x: 0, y: 0, z: 0, w: 0 }, m_PixelsToUnits: 100, m_Offset: { x: 0, y: 0 },
+    m_SpriteAtlas: ref("atlas", 10), m_RenderDataKey: KEY, ...spriteFields } }) } },
+});
+
+test("sprite: a sprite packed by an atlas of another file is drawn from the atlas' render data", () => {
+  const s = new AssetStore({ objects: packedObjects({}) }).sprite("sprites:20");
+  assert.equal(s.texture.id, "pages:1");                       // the matching entry's texture, not the other entry's
+  assert.deepEqual(s.textureRect, { x: 0, y: 0, width: 2, height: 2 });
+  assert.deepEqual(s.uvTransform, { x: 2, y: 0, z: 2, w: 0 });
+  assert.equal(s.vertices, null);                              // no render mesh
+});
+
+test("sprite: a render data key missing from the atlas' map is an error", () => {
+  const store = new AssetStore({ objects: packedObjects({ m_RenderDataKey: [OTHER_KEY[0], 21300002] }) });
+  assert.throws(() => store.sprite("sprites:20"), /not in the render data of atlas atlas/);
+});
+
+test("sprite: a sprite with neither render data nor an atlas is an error", () => {
+  const store = new AssetStore({ objects: packedObjects({ m_SpriteAtlas: null }) });
+  assert.throws(() => store.sprite("sprites:20"), /no render data and no atlas/);
+});
+
+// a Mesh whose `arrays` file is `arrays`
+const meshStore = (arrays) => new AssetStore({ objects: {
+  "meshes:3": { class: "Mesh", name: "quad", files: { json: "{}", arrays: JSON.stringify(arrays) } },
+} });
+const QUAD = [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]];
+
+test("mesh: triangle submeshes are read flat, vertices are the positions, no skin without joints", () => {
+  const store = meshStore({ positions: QUAD, submeshes: [{ topology: "triangles", indices: [[0, 1, 2], [2, 1, 3]] }] });
+  const m = store.mesh("meshes:3");
+  assert.equal(m.name, "quad");
+  assert.deepEqual(m.submeshes, [[0, 1, 2, 2, 1, 3]]);
+  assert.deepEqual(m.vertices, QUAD);
+  assert.equal(m.skin, null);                                  // no joints
+  assert.equal(meshStore({ positions: QUAD, joints: null, submeshes: [] }).mesh("meshes:3").skin, null);
+  assert.equal(store.mesh("meshes:3"), m);                     // made once
+});
+
+test("mesh: a submesh of another topology is an error that names its index", () => {
+  const store = meshStore({ positions: QUAD, submeshes: [
+    { topology: "triangles", indices: [[0, 1, 2]] },
+    { topology: "lines", indices: [[0, 1]] },
+  ] });
+  assert.throws(() => store.mesh("meshes:3"), /submesh 1 is lines/);
+});

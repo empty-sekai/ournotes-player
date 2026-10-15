@@ -323,16 +323,28 @@ export class AssetStore {
   }
 
   // A Sprite as it is drawn from its render data (sprite.json: the typetree `sprite`, its render mesh `mesh`, the
-  // render data `renderData`): {id, name, texture (texture() of the page it is drawn from), rect, pivot, border,
+  // render data `renderData`; a sprite packed by a SpriteAtlas of another file has no `renderData`: its render data is
+  // the atlas' m_RenderDataMap entry under the sprite's m_RenderDataKey, as the engine reads it at run time):
+  // {id, name, texture (texture() of the page it is drawn from), rect, pivot, border,
   // pixelsToUnits, offset, textureRect, textureRectOffset, atlasRectOffset, downscaleMultiplier, settingsRaw,
   // uvTransform, vertices, uv, indices}. The texture coordinates of a vertex p are ((p.x * uvTransform.x +
   // uvTransform.y) / width, (p.y * uvTransform.z + uvTransform.w) / height) of the page, in float32; vertices, uv and
   // indices are null for a sprite without a render mesh. Made once and shared: callers do not modify it.
+  // the render data of sprite `id` (typetree `t`) in its SpriteAtlas (m_SpriteAtlas): the m_RenderDataMap entry whose
+  // key is the sprite's m_RenderDataKey
+  _atlasRenderData(id, t) {
+    if (!t.m_SpriteAtlas) throw new Error(`sprite ${id} (${t.m_Name}): no render data and no atlas`);
+    const atlas = this.objectJson(this.ref(t.m_SpriteAtlas, "SpriteAtlas")), key = JSON.stringify(t.m_RenderDataKey);
+    const e = atlas.m_RenderDataMap.find(([k]) => JSON.stringify(k) === key);
+    if (!e) throw new Error(`sprite ${id} (${t.m_Name}): not in the render data of atlas ${atlas.m_Name}`);
+    return e[1];
+  }
+
   sprite(id) {
     this.object(id, "Sprite");
     let s = this._sprites.get(id);
     if (s) return s;
-    const j = this.objectJson(id), t = j.sprite, rd = j.renderData, ut = rd.uvTransform;
+    const j = this.objectJson(id), t = j.sprite, rd = j.renderData ?? this._atlasRenderData(id, t), ut = rd.uvTransform;
     const tex = this.texture(this.ref(rd.texture, "Texture2D")), f = Math.fround;
     const m = j.mesh;
     if (m && m.submeshes.length !== 1) throw new Error(`sprite ${id} (${t.m_Name}): ${m.submeshes.length} submeshes`);
@@ -348,14 +360,19 @@ export class AssetStore {
   }
 
   // A Mesh in Unity's space, from its `arrays` file: {id, name, vertices, normals, tangents, colors, uv0 .. uv7 (each
-  // [[...]] per vertex, absent channels null), submeshes (the triangle indices of each submesh, flat), skin ({joints,
-  // weights}: four per vertex, or null), bindPoses (the typetree's m_BindPose)}. Made once and shared.
+  // [[...]] per vertex, absent channels null), submeshes (the triangle indices of each submesh, flat; a submesh of
+  // another topology is an error), skin ({joints, weights}: four per vertex, or null), bindPoses (the typetree's
+  // m_BindPose)}. Made once and shared.
   mesh(id) {
     const o = this.object(id, "Mesh");
     let m = this._meshes.get(id);
     if (m) return m;
     const a = this.objectJson(id, "arrays"), t = this.objectJson(id);
-    m = { id, name: o.name, vertices: a.positions, submeshes: a.submeshes.map((s) => s.flat()),
+    const tris = (s, i) => {
+      if (s.topology !== "triangles" || !s.indices) throw new Error(`mesh ${id} (${o.name}): submesh ${i} is ${s.topology}`);
+      return s.indices.flat();
+    };
+    m = { id, name: o.name, vertices: a.positions, submeshes: a.submeshes.map(tris),
           skin: a.joints ? { joints: a.joints, weights: a.weights } : null, bindPoses: t.m_BindPose || [] };
     for (const k of ["normals", "tangents", "colors", "uv0", "uv1", "uv2", "uv3", "uv4", "uv5", "uv6", "uv7"]) m[k] = a[k] ?? null;
     this._meshes.set(id, m);
