@@ -50,7 +50,7 @@ test("nothing is deleted on a lost context; other contexts are not tracked", () 
 test("ChartSession tracks its context and releases it when it fails to load", () => withWebGL2(async () => {
   const gl = new FakeGL2(), set = [];
   const spy = new Proxy(gl, { set(o, k, v) { set.push(k); o[k] = v; return true; } });
-  await assert.rejects(ChartSession.create({ gl: spy, assets: new AssetStore() }), /live\.json/);
+  await assert.rejects(ChartSession.create({ gl: spy, assets: new AssetStore() }), /not the store of a live/);
   assert.deepEqual(set.slice(0, 2), ["createBuffer", "deleteBuffer"]);
   assert.deepEqual(Object.keys(gl).filter((k) => typeof gl[k] === "function"), []);
 }));

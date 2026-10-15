@@ -125,13 +125,18 @@ test("read-set --serve answers each request line in order, one JSON line each, u
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-// a live directory whose session gets as far as the Live options: live.json and empty scene / note asset / audio
-// files, no score (a load with accepted settings fails at the score)
+// a live directory whose session gets as far as the Live options: live.json, empty scene and note asset files, an
+// audio file with the music's sound, no score (a load with accepted settings fails at the score)
 const settingsDir = () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ournotes-settings-"));
-  fs.writeFileSync(path.join(dir, "live.json"), JSON.stringify({ scene: "scene.json", noteAssets: "notes.json",
-                                                                 liveAudio: "audio.json", notes: "score.json" }));
-  for (const f of ["scene.json", "notes.json", "audio.json"]) fs.writeFileSync(path.join(dir, f), "{}");
+  fs.writeFileSync(path.join(dir, "live.json"), JSON.stringify({
+    musicId: 1, difficulty: "expert", scene: "livescene/scene.json", noteAssets: "livenotes/notes.json",
+    liveAudio: "audio.json", notes: "score.json" }));
+  for (const d of ["livescene", "livenotes"]) {
+    fs.mkdirSync(path.join(dir, d));
+    fs.writeFileSync(path.join(dir, d, d === "livescene" ? "scene.json" : "notes.json"), "{}");
+  }
+  fs.writeFileSync(path.join(dir, "audio.json"), JSON.stringify({ music: { soundId: 1 }, sounds: { 1: { layers: [] } } }));
   return dir;
 };
 

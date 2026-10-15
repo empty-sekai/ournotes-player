@@ -220,10 +220,23 @@ export class ChartSession {
 /** The playback speeds the controls offer. */
 export const LIVE_SPEEDS: readonly number[];
 
+export interface LoadLiveStoreOptions extends FromManifestOptions {
+  /** Manifest paths (relative to `base`) of further products of note skins, note effect sets and note sound sets
+   *  (`live.noteskin`, `live.noteeffect`, `live.sounds`) the player offers. */
+  variants?: string[];
+}
+
+/** The store of a live: its product manifest (`lives/<musicId>_<difficulty>.json`), the products its live.json
+ *  `parts` names and the `variants`, each product's files under its manifest path without `.json`. A chart manifest
+ *  (`charts/<id>.json`) gives the store of its files. */
+export function loadLiveStore(url: string | URL, options?: LoadLiveStoreOptions): Promise<AssetStore>;
+
 export interface ChartPlayerOptions {
-  /** URL of a chart manifest (charts/<id>.json). */
+  /** URL of a live manifest (lives/<musicId>_<difficulty>.json) or of a chart manifest (charts/<id>.json). */
   src?: string | URL;
-  /** A loaded AssetStore instead of `src`. */
+  /** With `src`: manifest paths of further note skins, note effect sets and note sound sets (`loadLiveStore`). */
+  variants?: string[];
+  /** A loaded AssetStore instead of `src` (`loadLiveStore`'s, or a chart manifest's). */
   assets?: AssetStore;
   /** Show the control bar (default true). */
   controls?: boolean;
