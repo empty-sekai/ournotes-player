@@ -32,8 +32,16 @@ export class GLTex {
   // ENGINE: a mipmapped texture samples the mip chain stored in the asset; the data holds its base level only, so the
   // other levels are generated from it (glGenerateMipmap) and filtered as the texture's FilterMode asks.
   static async load(gl, base, desc, assets = assetsOf(gl)) {
+    return GLTex._upload(gl, await assets.image(join(base, desc.texture)), desc);
+  }
+
+  // A Texture2D object of the store (AssetStore.texture: size, mip count, settings) and its image.
+  static async loadObject(gl, id, assets = assetsOf(gl)) {
+    return GLTex._upload(gl, await assets.objectImage(id), assets.texture(id));
+  }
+
+  static _upload(gl, bmp, desc) {
     const mips = desc.mipCount > 1 ? desc.mipCount : 1;
-    const bmp = await assets.image(join(base, desc.texture));
     if (bmp.width !== desc.width || bmp.height !== desc.height) throw new Error(`${desc.name}: size mismatch`);
     const t = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, t);

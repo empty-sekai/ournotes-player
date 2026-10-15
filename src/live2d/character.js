@@ -1,6 +1,6 @@
 import { F } from "../engine/core.js";
 import { quat } from "../engine/math.js";
-import { Prefab } from "../engine/prefab.js";
+import { Prefab, componentClass } from "../engine/prefab.js";
 import { UnityRandom } from "../engine/random.js";
 import { EASE } from "../engine/tween.js";
 import { CUBISM, CubismModel } from "./cubism.js";
@@ -34,25 +34,29 @@ import { Live2DPhysics } from "./physics.js";
 // The managed math is float32 without FMA; F (Math.fround) is applied in source order.
 
 export class Live2DCharacter {
-  // prefab: the exported model prefab; mocBytes: the moc3 (ArrayBuffer); loop: the PlayerLoop that drives the model.
-  // opts.random: the UnityRandom stream (UnityEngine.Random) of the auto eye blink and the pseudo lip sync (default:
-  // a stream seeded from the clock). opts.motionSync: the MotionSync Core (motionsync.js motionSyncCore()) for voice
-  // lip sync, or null.
-  constructor(prefab, mocBytes, loop, { random = null, motionSync = null } = {}) {
+  // assets: the AssetStore holding the model's objects; model: its model.json (model.js modelIndex); loop: the
+  // PlayerLoop that drives the model. opts.random: the UnityRandom stream (UnityEngine.Random) of the auto eye blink and
+  // the pseudo lip sync (default: a stream seeded from the clock). opts.motionSync: the MotionSync Core (motionsync.js
+  // motionSyncCore()) for voice lip sync, or null.
+  constructor(assets, model, loop, { random = null, motionSync = null } = {}) {
     this.loop = loop;
     this.random = random || new UnityRandom(Date.now() >>> 0);
     this.motionSyncCore = motionSync;
+    const prefab = assets.prefab(model.prefab);
     this.name = prefab.nodes[0].name;
-    this.core = new CubismModel(mocBytes);
+    this.core = new CubismModel(assets.objectBytes(model.moc, "blob:_bytes").buffer);
     try {
-      this._build(prefab);
+      this._build(assets, model, prefab);
     } catch (e) {
       this.core.release();
       throw e;
     }
   }
 
-  _build(prefab) {
+  // assets.mono() of the MonoBehaviours a list of references names
+  static _monos(assets, refs) { return refs.map((r) => assets.mono(assets.ref(r, "MonoBehaviour"))); }
+
+  _build(assets, model, prefab) {
     this.core.update();
     this.params = new Live2DParameters(this.core);
     this.parts = Float32Array.from(this.core.parts.opacities);
@@ -60,7 +64,8 @@ export class Live2DCharacter {
     this.prefab = new Prefab(prefab);
     this.root = this.prefab.root;
     const rootPath = this.root.name;
-    const comp = (cls) => this.prefab.component(rootPath, cls);
+    // the fields of the root's component of a class
+    const comp = (cls) => this.prefab.component(rootPath, cls).fields;
     const ch = comp("Live2DCharacter");
     this.defaultMotionName = ch.DefaultMotionName;
     this.defaultExpressionName = ch.DefaultExpressionName;
@@ -68,10 +73,13 @@ export class Live2DCharacter {
     this.baseScale = ch.BaseScale;
 
     // motions: clips by name; fade data by instance id
-    this.clips = new Map(ch._motionList.map((c) => [c.clip, new Live2DClip(c, this.params)]));
-    const fl = comp("CubismFadeController").CubismFadeMotionList;
-    this.fadeById = new Map(fl.MotionInstanceIds.map((id, k) =>
-      [id, new Live2DFadeMotion(fl.CubismFadeMotionObjects[k], this.params)]));
+    this.clips = new Map(ch._motionList.map((r) => {
+      const id = assets.ref(r, "AnimationClip"), c = new Live2DClip(assets.clip(id), model.bindings[id], this.params);
+      return [c.name, c];
+    }));
+    const fl = assets.mono(assets.ref(comp("CubismFadeController").CubismFadeMotionList, "MonoBehaviour"));
+    const fades = Live2DCharacter._monos(assets, fl.CubismFadeMotionObjects);
+    this.fadeById = new Map(fl.MotionInstanceIds.map((id, k) => [id, new Live2DFadeMotion(fades[k], this.params)]));
     for (const c of this.clips.values())
       if (!this.fadeById.has(c.instanceId)) throw new Error(`${c.name}: no fade motion for id ${c.instanceId}`);
 
@@ -79,9 +87,10 @@ export class Live2DCharacter {
     const el = comp("CubismExpressionController");
     if (el.UseLegacyBlendCalculation) throw new Error("legacy expression blend not implemented");
     // a model without expressions has no ExpressionsList (null); its CurrentExpressionIndex stays -1
-    const eo = (el.ExpressionsList && el.ExpressionsList.CubismExpressionObjects) || [];
+    const list = assets.ref(el.ExpressionsList, "MonoBehaviour");
+    const eo = list === null ? [] : Live2DCharacter._monos(assets, assets.mono(list).CubismExpressionObjects);
     this.expressions = eo.map((e) => ({
-      name: e.name.replace(/\.exp3$/, ""), fadeIn: e.FadeInTime, fadeOut: e.FadeOutTime,
+      name: e.m_Name.replace(/\.exp3$/, ""), fadeIn: e.FadeInTime, fadeOut: e.FadeOutTime,
       // CubismPlayingExpression.Create: FindById is null for an id the model lacks; UpdateExpression and
       // ResetExpressionParametersToDefault skip such a destination
       dest: e.Parameters.filter((p) => this.params.index.has(p.Id))
@@ -95,8 +104,8 @@ export class Live2DCharacter {
 
     // tagged parameters
     const tagged = (cls) => [...this.prefab.nodes.values()]
-      .filter((e) => e.node.components.some((c) => c.class === cls))
-      .map((e) => ({ id: e.node.name, c: e.node.components.find((c) => c.class === cls) }));
+      .filter((e) => e.node.components.some((c) => componentClass(c) === cls))
+      .map((e) => ({ id: e.node.name, c: e.node.components.find((c) => componentClass(c) === cls).fields }));
     this.eyeBlinkParams = tagged("CubismEyeBlinkParameter").map((x) => this.params.idx(x.id));
     this.harmonic = tagged("CubismHarmonicMotionParameter").map((x) => {
       if (x.c.Direction !== 2) throw new Error("harmonic direction other than Centric not implemented");
@@ -124,13 +133,13 @@ export class Live2DCharacter {
     // live stage's background characters only.)
     this.mouthDestinations = tagged("CubismMouthParameter").filter((x) => x.id === "ParamMouthOpenY")
       .map((x) => this.params.idx(x.id));
-    if ([...this.prefab.nodes.values()].some((e) => e.node.components.some((c) => c.class === "CubismPosePart")))
+    if ([...this.prefab.nodes.values()].some((e) => e.node.components.some((c) => componentClass(c) === "CubismPosePart")))
       throw new Error("pose parts not implemented");
 
     // a model without CubismPhysicsController has no physics (the update controller's chain has no order 800)
     const pc = this.prefab.components(rootPath, "CubismPhysicsController");
     if (pc.length > 1) throw new Error(`${pc.length} CubismPhysicsController components`);
-    this.physics = pc.length ? new Live2DPhysics(pc[0]._rig, this.params) : null;
+    this.physics = pc.length ? new Live2DPhysics(pc[0].fields._rig, this.params) : null;
 
     // state
     this.showing = false; this.pausing = false; this.ignoreAllUpdate = false;
@@ -152,15 +161,15 @@ export class Live2DCharacter {
                              frequency: 0.5 };
 
     this.model = { ignore: false, wasJustEnabled: false, lastTick: -1, didExecute: false, dyn: null };
-    this._initRender(comp("CubismRenderController"));
+    this._initRender(assets, comp("CubismRenderController"));
     this._initMasks();
-    this._initGameLayer(rootPath, tagged, fl, ch);
+    this._initGameLayer(rootPath, tagged, fades, ch);
   }
 
   // The rest of Live2DCharacter.Init: the override parameters (a parameter the model lacks is skipped wherever it
   // would be written), the lip sync controller over the model's MotionSync controller, the eye-blink stop targets,
   // the parameter loop controller, the rim light and shadow values and the state of the game layer's overrides.
-  _initGameLayer(rootPath, tagged, fadeList, ch) {
+  _initGameLayer(rootPath, tagged, fades, ch) {
     const opt = (id) => (this.params.index.has(id) ? this.params.idx(id) : -1);
     this.mouthForm = opt("ParamMouthForm");
     this.angleXParam = opt("ParamAngleX");
@@ -171,7 +180,8 @@ export class Live2DCharacter {
     const head = `${rootPath}/Anchors/Head`;
     this.headAnchor = this.prefab.nodes.has(head) ? this.prefab.transform(head) : null;
     this.mouthControllerEnabled = true;            // CubismMouthController.enabled
-    this.motionSync = CubismMotionSyncController.fromPrefab((cls) => this.prefab.components(rootPath, cls), this.params,
+    this.motionSync = CubismMotionSyncController.fromPrefab((cls) => this.prefab.components(rootPath, cls).map((c) => c.fields),
+                                                            this.params,
                                                             this.loop, this.motionSyncCore);
     // ResolveAdvLipSyncPresentationProfile counts the CubismMouthParameter components before
     // RemoveMouthParametersExceptMouthOpenY keeps the one on ParamMouthOpenY
@@ -181,7 +191,7 @@ export class Live2DCharacter {
     const eb = [...this.eyeBlinkParams, opt("ParamEyeLOpen"), opt("ParamEyeROpen")].filter((i) => i >= 0);
     this.eyeBlinkStop = { stopped: false, wasAuto: false, start: 0, elapsed: 0, duration: 0, targets: [...new Set(eb)] };
     this.defaultFadeMotionName = `${this.defaultMotionName}.fade`;
-    this.paramLoop = new Live2DParameterLoopController(fadeList.CubismFadeMotionObjects, this.params, this.store);
+    this.paramLoop = new Live2DParameterLoopController(fades, this.params, this.store);
     this.breathEnabled = true;                     // _playingHarmonicMotion
     // Live2DCharacter _isOverrideRotate, _isAdditiveOverrideRotate, _angleX, _bodyAngleX and the additive amounts
     // applied last (_appliedAdditiveAngleX, _appliedAdditiveBodyAngleX); the controller's angle tweens
@@ -260,19 +270,22 @@ export class Live2DCharacter {
   // CubismRenderer.TryInitialize per drawable: two meshes (the displayed one and the one written next), vertex
   // colours, the material of its MeshRenderer, sorting mode 2 (BackToFrontOrder, set by Live2DCharacter.Init: every
   // drawable at z = 0, sortingOrder = controller order + local order + Core render order).
-  _initRender(rc) {
+  _initRender(assets, rc) {
     const d = this.core.drawables, n = d.count;
     const byIndex = new Array(n);
+    const of = (e, cls) => { const c = e.node.components.find((x) => componentClass(x) === cls); return c ? c.fields : null; };
     for (const e of this.prefab.nodes.values()) {
-      const dc = e.node.components.find((c) => c.class === "CubismDrawable");
+      const dc = of(e, "CubismDrawable");
       if (!dc) continue;
       if (d.ids[dc._unmanagedIndex] !== e.node.name) throw new Error(`drawable ${e.node.name} index mismatch`);
       e.transform.localPosition = { x: 0, y: 0, z: 0 };
-      const r = e.node.components.find((c) => c.class === "CubismRenderer");
-      const mr = e.node.components.find((c) => c.type === "MeshRenderer");
+      const r = of(e, "CubismRenderer"), mr = of(e, "MeshRenderer");
       if (!r || !mr) throw new Error(`${e.node.name}: no CubismRenderer / MeshRenderer`);
       if (mr.m_Materials.length !== 1) throw new Error(`${e.node.name}: ${mr.m_Materials.length} materials`);
-      byIndex[dc._unmanagedIndex] = { node: e.node, transform: e.transform, cr: r, material: mr.m_Materials[0] };
+      const texture = assets.ref(r._mainTexture, "Texture2D");
+      if (texture === null) throw new Error(`${e.node.name}: no main texture`);
+      byIndex[dc._unmanagedIndex] = { node: e.node, transform: e.transform, cr: r, texture,
+                                      material: assets.material(assets.ref(mr.m_Materials[0], "Material")) };
     }
     // renderOpacity: CubismRenderController.Opacity (clips may animate it); rc.opacity: the value last passed to the
     // renderers (_lastOpacity, cubism_ModelOpacity)
@@ -285,7 +298,7 @@ export class Live2DCharacter {
       const mc = d.multiplyColors, sc = d.screenColors;
       const r = {
         index: i, id: d.ids[i], name: x.node.name, transform: x.transform, material: x.material,
-        textureDesc: x.cr._mainTexture, localSortingOrder: x.cr._localSortingOrder,
+        texture: x.texture, localSortingOrder: x.cr._localSortingOrder,
         color: { ...x.cr._color }, opacity: d.opacities[i], renderOrder: d.renderOrders[i],
         meshes: [{ pos, color: null, bounds: null }, { pos: Float32Array.from(pos), color: null, bounds: null }],
         front: 0, thisSwap: {}, lastSwap: {}, enabled: visible, isMaskSource: false,

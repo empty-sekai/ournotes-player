@@ -60,7 +60,7 @@ export class ModelSession {
 
   // opts:
   //   gl           WebGL2RenderingContext (required); used by this session alone while it lives
-  //   assets       AssetStore of the model (required): model.json and the files it names
+  //   assets       AssetStore of the model (required): model.json and the objects it names
   //   motion, expression   shown first (default: the model's default motion / expression); loop: replay that motion
   //   physics, breath      CubismPhysicsController and the harmonic breath on (default true)
   //   seed         seed of the auto eye blink's random intervals (default: from the clock)
@@ -87,21 +87,18 @@ export class ModelSession {
     this.gl = gl; this.assets = assets;
     this._gl = trackGL(gl);
     const model = modelIndex(assets);
-    const prefab = assets.json(model.prefab);
     this.info = assets.info;
     this.seed = seed ?? (Date.now() >>> 0);
     const loop = this.loop = new PlayerLoop(MODEL_FRAME_RATE);
-    const ch = this.character = new Live2DCharacter(prefab, assets.arrayBuffer(model.moc3), loop,
-                                                    { random: new UnityRandom(this.seed) });
+    const ch = this.character = new Live2DCharacter(assets, model, loop, { random: new UnityRandom(this.seed) });
     this.motions = [...ch.clips.keys()];
     this.expressions = ch.expressions.map((e) => e.name);
     for (const [name, list] of [[motion, this.motions], [expression, this.expressions]])
       if (name && !list.includes(name)) throw new Error(`${ch.name}: no ${list === this.motions ? "motion" : "expression"} "${name}"`);
-    const lib = new ShaderLib(gl, model.shaderDir, assets);
+    const lib = ShaderLib.fromObjects(gl, model.shaders, assets);
     gl.frontFace(gl.CW);                          // Unity's front-face convention with its world-to-camera matrix
     this.white = GLTex.solid(gl, [255, 255, 255, 255], "white");
-    const drawing = this.drawing = new Live2DDrawing(gl, lib, ch, { dir: model.textureDir, resources: model.resources,
-                                                                    white: this.white, assets });
+    const drawing = this.drawing = new Live2DDrawing(gl, lib, ch, { model, white: this.white, assets });
     await drawing.loadTextures();
     drawing.prepare();
     const c = gl.canvas;

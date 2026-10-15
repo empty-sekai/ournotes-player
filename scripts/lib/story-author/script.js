@@ -15,6 +15,7 @@
 // window). compileScript turns a script without errors into the episode's command rows (episode.json) and the story
 // index (story.json).
 
+import { componentClass } from "../../../src/engine/prefab.js";
 import { ADV_COMMAND } from "../../../src/story/interfaces.js";
 import { STORY_LANGUAGES } from "../../../src/story/params.js";
 
@@ -306,14 +307,17 @@ export const stageBackground = (prefab) => {
 
 // ------------------------------------------------------------------------------------------------ models
 
-// The motions and expressions of a model, from its prefab (the Live2DCharacter component of the root node):
-// {motions: clip names, expressions, defaultMotion, defaultExpression}.
-export const modelActions = (prefab) => {
-  const root = ((prefab && prefab.nodes) || [])[0];
-  const ch = root && (root.components || []).find((c) => c && c.class === "Live2DCharacter");
+// The motions and expressions of a model (`model`: its model.json; `assets`: the AssetStore of its objects), from the
+// Live2DCharacter component of its prefab's root: {motions: the names of its clips, expressions, defaultMotion,
+// defaultExpression}.
+export const modelActions = (assets, model) => {
+  const root = assets.prefab(model.prefab).nodes[0];
+  const ch = root && root.components.find((c) => componentClass(c) === "Live2DCharacter");
   if (!ch) throw new Error("the model prefab has no Live2DCharacter");
-  return { motions: (ch._motionList || []).map((m) => m.clip).filter(Boolean), expressions: [...(ch._expressionList || [])],
-           defaultMotion: ch.DefaultMotionName || "", defaultExpression: ch.DefaultExpressionName || "" };
+  const f = ch.fields;
+  return { motions: (f._motionList || []).map((r) => assets.clip(assets.ref(r, "AnimationClip")).name),
+           expressions: [...(f._expressionList || [])],
+           defaultMotion: f.DefaultMotionName || "", defaultExpression: f.DefaultExpressionName || "" };
 };
 
 // "mtn_smile02_L" -> {stem: "mtn_smile02", side: "L"}; a name without a side is its own stem
@@ -504,7 +508,7 @@ export const parseScript = (doc) => {
 // The names of a script against its site. `site`:
 //   base     {languages, language, stages: stageChoices(...), music: musicChoices(...)} of the script's base story
 //   models   the model ids of the site's models.json (an array or a Set)
-//   actions  model id -> modelActions(prefab), for the models of the cast that exist
+//   actions  model id -> modelActions, for the models of the cast that exist
 // -> {language, errors, warnings}: language, the language the story plays in; error codes unknownLanguage,
 // unknownModel, unknownCast, unknownStage, unknownMusic, unknownMotion, unknownExpression, beforeScene,
 // positionTaken, offStage; warning codes speakerOffStage (a line of a character not on stage), unusedCast.
@@ -580,7 +584,7 @@ export const checkScript = (script, site) => {
 //   base     {story, episode, stages, music} of the base story (its story.json and episode.json; stageChoices,
 //            musicChoices)
 //   models   model id -> model key (Character/Live2D/<group>/<name>/model/<name>) of the site's models.json
-//   actions  model id -> modelActions(prefab)
+//   actions  model id -> modelActions
 // language: the story language. -> {episode, story, lines: [{line, beat, path, id, speaker, name, text}], scenes}
 export const compileScript = (script, site, language) => {
   const field = STORY_LANGUAGES[language];

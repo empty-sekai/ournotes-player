@@ -149,6 +149,7 @@ const pngSize = (b) => {
 // images decode to their size only ({width, height, close}): enough for texture uploads to the headless context
 export const headlessImages = (store) => {
   store.image = async (p) => ({ ...pngSize(Buffer.from(store.bytes(p))), close() {} });
+  store.objectImage = async (id, role = "image") => ({ ...pngSize(Buffer.from(store.objectBytes(id, role))), close() {} });
   return store;
 };
 

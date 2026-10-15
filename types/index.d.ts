@@ -54,9 +54,35 @@ export interface FromManifestOptions {
 
 type PathMap<T> = Map<string, T> | Record<string, T>;
 
-/** The files of one chart, read synchronously once loaded. */
+/** A reference to an object in an object's JSON: the object `<file>:<pathId>`. */
+export interface ObjectRef {
+  $ref: { file: string; pathId: string; class?: string; name?: string };
+}
+
+/** An object of a store's object table: its class, name and files by role (`json`, `image`, `index`,
+ *  `program:<platform>/<name>`, `blob:<field>`). */
+export interface ObjectEntry {
+  class: string;
+  name?: string | null;
+  files: Record<string, string | Uint8Array | ArrayBuffer>;
+}
+
+/** A Texture2D object: its size, mip count, colour space and sampler settings. */
+export interface TextureObject {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  mipCount: number;
+  colorSpace: number;
+  settings: Record<string, unknown>;
+}
+
+/** The files of one chart or product and the objects it uses (a product manifest's object table), read synchronously
+ *  once loaded. An object id is `<serialized file>:<path id>`. */
 export class AssetStore {
-  constructor(files?: { text?: PathMap<string>; bytes?: PathMap<Uint8Array | ArrayBuffer>; info?: ManifestInfo | null });
+  constructor(files?: { text?: PathMap<string>; bytes?: PathMap<Uint8Array | ArrayBuffer>;
+                        objects?: Record<string, ObjectEntry>; info?: ManifestInfo | null });
   static fromManifest(url: string | URL, options?: FromManifestOptions): Promise<AssetStore>;
   info: ManifestInfo | null;
   has(path: string): boolean;
@@ -68,6 +94,27 @@ export class AssetStore {
   /** A PNG decoded with its texel values as stored, row 0 at the bottom. */
   image(path: string): Promise<ImageBitmap>;
   list(prefix?: string): string[];
+  hasObject(id: string): boolean;
+  /** The object's class and name; throws for an unknown object or, with `cls`, an object of another class. */
+  object(id: string, cls?: string | null): { class: string; name: string | null };
+  /** The roles of the object's files. */
+  roles(id: string): string[];
+  objectText(id: string, role?: string): string;
+  /** The parsed file (cached: callers must not change it). */
+  objectJson<T = any>(id: string, role?: string): T;
+  /** A copy of the file's bytes. */
+  objectBytes(id: string, role: string): Uint8Array;
+  /** The Texture2D's image, decoded as `image` decodes a PNG. */
+  objectImage(id: string, role?: string): Promise<ImageBitmap>;
+  /** The object id a reference names (null for null), checked to be an object of the store (of class `cls`). */
+  ref(value: ObjectRef | null, cls?: string | null): string | null;
+  /** A GameObject's hierarchy (prefab.json). */
+  prefab(id: string): { name: string; nodes: any[] };
+  material(id: string): any;
+  clip(id: string): any;
+  /** A MonoBehaviour's fields and `$script`. */
+  mono(id: string): any;
+  texture(id: string): TextureObject;
 }
 
 export interface ChartSessionOptions {

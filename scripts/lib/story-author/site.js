@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { AssetStore } from "../../../src/data/assets.js";
-import { MODEL_MANIFEST_FORMATS, STORY_MANIFEST_FORMAT } from "../../../src/story/assets.js";
+import { STORY_MANIFEST_FORMAT, checkModelManifest } from "../../../src/story/assets.js";
 import { StoryPlayerCore } from "../../../src/story/player-core.js";
 import "../../../src/story/features/index.js";
 import { fileFetch, nodeDecode } from "../headless.mjs";
@@ -56,9 +56,10 @@ export class Site {
     return doc.models;
   }
 
-  // An AssetStore of `files` (logical path -> file entry, asset paths relative to the site root)
-  store(files) {
-    const url = pathToFileURL(path.join(this.dir, ".story-author-files.json")).href, body = { files };
+  // An AssetStore of `files` (logical path -> file entry, asset paths relative to the site root) and `objects` (an
+  // object table of a product manifest)
+  store(files, objects = {}) {
+    const url = pathToFileURL(path.join(this.dir, ".story-author-files.json")).href, body = { files, objects };
     const fetch = (u) => (String(u) === url ? Promise.resolve({ ok: true, status: 200, json: async () => body }) : fileFetch(u));
     return AssetStore.fromManifest(url, { fetch, base: pathToFileURL(this.dir + path.sep).href, decode: nodeDecode });
   }
@@ -108,11 +109,12 @@ export class Site {
     const entry = this.models().find((m) => m.id === id);
     if (!entry) throw new SiteError(`model ${id} is not in models.json`);
     const manifest = this.json(entry.manifest);
-    if (!manifest || !MODEL_MANIFEST_FORMATS.includes(manifest.format) || !manifest.files)
-      throw new SiteError(`${entry.manifest}: not a model manifest`);
-    const index = (await this.store({ "model.json": manifest.files["model.json"] })).json("model.json");
-    const prefab = (await this.store({ [index.prefab]: manifest.files[index.prefab] })).json(index.prefab);
-    return { entry, manifest, actions: modelActions(prefab) };
+    try { checkModelManifest(manifest, id, entry.manifest); } catch (e) { throw new SiteError(e.message); }
+    // model.json and the objects modelActions reads: the prefab and the clips
+    const { prefab } = (await this.store({ "model.json": manifest.files["model.json"] })).json("model.json");
+    const objects = Object.fromEntries(Object.entries(manifest.objects).filter(([oid, o]) => oid === prefab || o.class === "AnimationClip"));
+    const store = await this.store({ "model.json": manifest.files["model.json"] }, objects);
+    return { entry, manifest, actions: modelActions(store, store.json("model.json")) };
   }
 
   // the bytes of logical files of a base story (path -> Buffer), from its common files
