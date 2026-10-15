@@ -172,7 +172,8 @@ class LegacyFile {
   // a mesh record {mesh, vertices, normals, uv0, submeshes (flat indices), m_Skin, m_BindPose, ...}
   mesh(m) {
     return this.add("Mesh", m.mesh, () => {
-      const arrays = { positions: m.vertices, normals: m.normals ?? null, uv0: m.uv0 ?? null, submeshes: m.submeshes.map(triangles) };
+      const arrays = { positions: m.vertices, normals: m.normals ?? null, uv0: m.uv0 ?? null,
+                       submeshes: m.submeshes.map((s) => ({ topology: "triangles", indices: triangles(s) })) };
       if (m.m_Skin) {
         arrays.joints = m.m_Skin.map((w) => w.boneIndex);
         arrays.weights = m.m_Skin.map((w) => w.weight);

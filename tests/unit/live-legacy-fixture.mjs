@@ -36,7 +36,7 @@ export const SCENE = {
     node("Stage", [{ type: "MonoBehaviour", class: "StageView",
                      _judge: { gameObject: "Live/judge", component: "SpriteRenderer" }, _self: { gameObject: "Stage/mesh" } }]),
     node("Stage/mesh", [{ type: "MeshRenderer", m_Materials: [material("Unpacked", "Hidden/NotPacked")] },
-                        { type: "MeshFilter", m_Mesh: { mesh: "quad", vertices: [0, 0, 0, 1, 0, 0, 0, 1, 0], uv0: [0, 0, 1, 0, 0, 1],
+                        { type: "MeshFilter", m_Mesh: { mesh: "quad", vertices: [[0, 0, 0], [1, 0, 0], [0, 1, 0]], uv0: [[0, 0], [1, 0], [0, 1]],
                                                         submeshes: [[0, 1, 2]], m_LocalAABB: {} } }]),
   ] },
   assets: {
