@@ -1,50 +1,74 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/empty-sekai/ournotes-player/main/schema/model-json.schema.json",
-  "title": "Model index file (model.json)",
-  "description": "The logical file model.json of a Live2D model: the paths of its moc3, prefab and shader index, and the Cubism mask materials; format 2 adds motionSync. See docs/data-format.md.",
+  "title": "Model document (model.json)",
+  "description": "The file model.json of a Live2D model's product (live2d.model): the objects of its object table the player reads, by object id, and facts about the model. See docs/data-format.md.",
   "type": "object",
-  "required": ["format", "moc3", "prefab", "shaders", "resources"],
-  "anyOf": [
-    { "properties": { "format": { "const": 1 } } },
-    { "properties": { "format": { "const": 2 } }, "required": ["motionSync"] }
-  ],
+  "required": ["format", "name", "key", "prefab", "moc", "canvas", "textures", "shaders", "resources", "motionSync", "bindings"],
+  "additionalProperties": false,
   "properties": {
-    "format": { "enum": [1, 2] },
-    "motionSync": {
-      "description": "Format 2: the prefab's root has a CubismMotionSyncController with a Live2DMotionSyncCriAudioInput.",
-      "type": "boolean"
+    "format": { "const": 3 },
+    "name": { "description": "The model's id: the last part of its key.", "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
+    "key": { "description": "Character/Live2D/<group>/<name>/model/<name>.", "type": "string" },
+    "prefab": { "description": "The model's root GameObject; its json is the hierarchy (prefab.json).", "$ref": "#/$defs/objectId" },
+    "moc": { "description": "The CubismMoc MonoBehaviour; the moc3 is its file blob:_bytes.", "$ref": "#/$defs/objectId" },
+    "canvas": {
+      "description": "The moc3's canvas.",
+      "type": "object",
+      "required": ["pixelsPerUnit", "originX", "originY", "width", "height", "mocVersion"],
+      "additionalProperties": false,
+      "properties": {
+        "pixelsPerUnit": { "type": "number" },
+        "originX": { "type": "number" },
+        "originY": { "type": "number" },
+        "width": { "type": "number" },
+        "height": { "type": "number" },
+        "mocVersion": { "type": "integer" }
+      }
     },
-    "name": { "type": "string" },
-    "key": { "type": "string" },
-    "moc3": { "type": "string", "pattern": "\\.moc3$" },
-    "prefab": { "type": "string", "pattern": "\\.json$" },
-    "textures": { "type": "array", "items": { "type": "string", "pattern": "\\.png$" } },
-    "shaders": { "type": "string", "pattern": "(^|/)shaders\\.json$" },
+    "textures": {
+      "description": "The atlas pages (Texture2D) the drawables draw with, by name.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/objectId" }
+    },
+    "shaders": {
+      "description": "Unity shader name -> Shader object: the shaders of the drawables' materials and the Cubism mask materials.",
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/objectId" }
+    },
     "resources": {
+      "description": "The Material objects the Cubism mask pass draws with (Resources/Live2D/Cubism/Materials).",
       "type": "object",
       "required": ["cubismMask", "cubismMaskCulling"],
+      "additionalProperties": false,
       "properties": {
-        "cubismMask": { "$ref": "#/$defs/maskMaterial" },
-        "cubismMaskCulling": { "$ref": "#/$defs/maskMaterial" }
+        "cubismMask": { "$ref": "#/$defs/objectId" },
+        "cubismMaskCulling": { "$ref": "#/$defs/objectId" }
+      }
+    },
+    "motionSync": {
+      "description": "The prefab's root has a CubismMotionSyncController with a Live2DMotionSyncCriAudioInput.",
+      "type": "boolean"
+    },
+    "bindings": {
+      "description": "AnimationClip object -> per binding of the clip, the path below the model's root (\"\" for the root) and the attribute it animates; both null where the hierarchy names no single one (pathCandidates: the paths that fit).",
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["path", "attribute"],
+          "additionalProperties": false,
+          "properties": {
+            "path": { "type": ["string", "null"] },
+            "attribute": { "type": ["string", "null"] },
+            "pathCandidates": { "type": "array", "items": { "type": "string" } }
+          }
+        }
       }
     }
   },
   "$defs": {
-    "maskMaterial": {
-      "type": "object",
-      "required": ["shader", "floats"],
-      "properties": {
-        "material": { "type": "string" },
-        "shader": {
-          "type": "object",
-          "required": ["shader"],
-          "properties": { "shader": { "const": "Live2D Cubism/Mask" } }
-        },
-        "keywords": { "type": "array", "items": { "type": "string" } },
-        "floats": { "type": "object", "required": ["_Cull"], "properties": { "_Cull": { "enum": [0, 1, 2] } } },
-        "colors": { "type": "object" }
-      }
-    }
+    "objectId": { "description": "An object of the product's object table: <serialized file>:<path id>.", "type": "string", "pattern": "^.+:-?[0-9]+$" }
   }
 }

@@ -17,7 +17,8 @@ import { fileFetch, nodeDecode } from "../../scripts/lib/headless.mjs";
 import { loadStoryStore } from "../../src/story/assets.js";
 import { StoryPlayerCore } from "../../src/story/player-core.js";
 import "../../src/story/features/index.js";
-import { modelFiles, modelManifest, png, putFiles } from "./site-fixture.mjs";
+import { ModelObjects, mb, node, ref } from "./live2d-objects.mjs";
+import { modelObjects, modelProduct, png, putFiles } from "./site-fixture.mjs";
 
 const CLI = path.resolve("scripts/story-author.mjs");
 const LT = String.fromCharCode(0xFF1C), WJ = String.fromCharCode(0x2060);
@@ -85,11 +86,17 @@ test("the base story's stages with short ids and captions, its music and a stage
 });
 
 test("a model's motions and expressions; the clip a motion plays at a position", () => {
-  const prefab = { nodes: [{ components: [{ class: "CubismModel" }, { class: "Live2DCharacter", DefaultMotionName: "mtn_idle01_C",
-    DefaultExpressionName: "exp_idle01", _motionList: [{ clip: "mtn_idle01_C" }, { clip: "mtn_nod01_L" }], _expressionList: ["exp_idle01"] }] }] };
-  assert.deepEqual(modelActions(prefab), { motions: ["mtn_idle01_C", "mtn_nod01_L"], expressions: ["exp_idle01"],
-                                           defaultMotion: "mtn_idle01_C", defaultExpression: "exp_idle01" });
-  assert.throws(() => modelActions({ nodes: [{ components: [] }] }), /Live2DCharacter/);
+  const o = new ModelObjects();
+  const clips = ["mtn_idle01_C", "mtn_nod01_L"].map((name) => ref(o.clip({ name })));
+  const actions = (components) => {
+    const prefab = o.prefab([node("m", components)]);
+    return modelActions(o.store({ prefab, moc: prefab, shaders: [], resources: {} }), { prefab });
+  };
+  assert.deepEqual(actions([mb("CubismModel"), mb("Live2DCharacter", { DefaultMotionName: "mtn_idle01_C", DefaultExpressionName: "exp_idle01",
+                                                                       _motionList: clips, _expressionList: ["exp_idle01"] })]),
+                   { motions: ["mtn_idle01_C", "mtn_nod01_L"], expressions: ["exp_idle01"], defaultMotion: "mtn_idle01_C",
+                     defaultExpression: "exp_idle01" });
+  assert.throws(() => actions([]), /Live2DCharacter/);
   const m = ACTIONS.m_a.motions;
   assert.equal(resolveMotion("mtn_smile01", 3, m), "mtn_smile01_L");
   assert.equal(resolveMotion("mtn_smile01", 9, m), "mtn_smile01_C");          // no _R: the centre one
@@ -387,15 +394,15 @@ const makeSite = () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "story-author-test-"));
   const models = [];
   for (const id of ["m_a", "m_b"]) {
-    const man = modelManifest(id, putFiles(dir, modelFiles(id)));
+    const man = modelProduct(dir, modelObjects(id));
     fs.mkdirSync(path.join(dir, "models"), { recursive: true });
     fs.writeFileSync(path.join(dir, "models", `${id}.json`), JSON.stringify(man));
-    models.push({ id, group: "g", key: man.key, manifest: `models/${id}.json` });
+    models.push({ id, group: "g", key: man.subject, manifest: `models/${id}.json` });
   }
   fs.writeFileSync(path.join(dir, "models.json"), JSON.stringify({ format: 2, models }));
   const scene = { ...SCENE, stages: { "st/garden": { nodes: [{ components: [{ class: "AdvStage",
     _backgroundSprite: { texture: { texture: "textures/bg.png" } } }] }] }, "st/hall": {} } };
-  const story = { ...STORY, models: { "Character/Live2D/g/m_a": "m_a" } };
+  const story = { ...STORY, models: { "Character/Live2D/g/m_a/model/m_a": "m_a" } };
   const files = putFiles(dir, {
     "story.json": story, "episode.json": EPISODE, "scene.json": scene, "ui/ui.json": { nodes: [] },
     "frames.json": {}, "chat.json": {}, "textures/bg.png": png(8, 4), "textures/unused.png": png(2, 2),
@@ -481,7 +488,7 @@ test("the commands without a browser: new, check, build; the built story loads",
     assert.equal(man.audio, true);
     const store = await loadStoryStore(url, { fetch: fileFetch, decode: nodeDecode });
     assert.equal(store.json("episode.json").commands.filter((c) => c.cmd === "Talk").length, 2);
-    assert.deepEqual(store.json("story.json").models, { "Character/Live2D/g/m_a": "m_a", "Character/Live2D/g/m_b": "m_b" });
+    assert.deepEqual(store.json("story.json").models, { "Character/Live2D/g/m_a/model/m_a": "m_a", "Character/Live2D/g/m_b/model/m_b": "m_b" });
     assert.deepEqual(store.json("ui/fonts.json").fonts["F SDF"].browser.family.split(",")[0], "\"Noto Sans\"");
     assert.ok(store.has("live2d/m_b/model.json"));
 

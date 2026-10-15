@@ -11,7 +11,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { compile } from "../../scripts/lib/json-schema.mjs";
-import { encode, modelFiles, modelManifest, putFiles, sha256 } from "./site-fixture.mjs";
+import { encode, modelObjects, modelProduct, productSize, putFiles, sha256 } from "./site-fixture.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const script = path.join(here, "..", "..", "scripts", "validate-data.mjs");
@@ -98,7 +98,8 @@ const language = (lang, mode, field) => ({ format: "ournotes.story-language/1", 
 // logical files -> a content-addressed site with stories/7.json and stories.json; `edit(parts)` changes the pieces
 // before they are stored:
 //   common, groups, man   the story's common files, language groups and manifest keys
-//   models                model id -> its logical files (models/<id>.json; the manifest's models list them all)
+//   models                model id -> its objects and model.json (site-fixture modelObjects; its product manifest
+//                         models/<id>.json; the manifest's models list them all)
 //   modelsIndex           write models.json listing the models (true), or the ids of a list
 //   encoding              "gzip" | "br": every compressible asset encoded where that is smaller
 //   where                 the manifest's path (stories/7.json; stories/<region>/7.json for a region's own)
@@ -130,16 +131,15 @@ function buildSite(edit = () => {}) {
   const ids = Object.keys(parts.models).sort(), modelSize = {};
   fs.mkdirSync(path.join(dir, "models"), { recursive: true });
   for (const id of ids) {
-    const mm = modelManifest(id, entries(parts.models[id]));
-    modelSize[id] = Object.values(mm.files).reduce((n, f) => n + f.size, 0);
+    const mm = modelProduct(dir, parts.models[id], parts.encoding);
+    modelSize[id] = productSize(mm);
     fs.writeFileSync(path.join(dir, "models", `${id}.json`), JSON.stringify(mm));
   }
   if (parts.modelsIndex) {
     const listed = Array.isArray(parts.modelsIndex) ? parts.modelsIndex : ids;
     fs.writeFileSync(path.join(dir, "models.json"), JSON.stringify({ format: 2, models: listed.map((id) => ({ id, manifest: `models/${id}.json` })) }));
   }
-  const sited = parts.man.format === "ournotes.story-manifest/2";           // format /1: no models of the site
-  const m = { ...(sited ? { models: Object.fromEntries(ids.map((id) => [id, `models/${id}.json`])) } : {}), ...parts.man,
+  const m = { models: Object.fromEntries(ids.map((id) => [id, `models/${id}.json`])), ...parts.man,
               files: entries(parts.common),
               languages: Object.fromEntries(Object.entries(parts.groups).map(([l, g]) => [l, { files: entries(g) }])) };
   fs.mkdirSync(path.dirname(path.join(dir, parts.where)), { recursive: true });
@@ -147,7 +147,7 @@ function buildSite(edit = () => {}) {
   if (parts.index) {
     const size = (files) => Object.values(files).reduce((n, f) => n + f.size, 0);
     const entry = { id: "7", manifest: parts.where, audio: m.audio, audioFormat: m.audioFormat, fonts: m.fonts, ...m.story,
-                    size: { common: size(m.files), ...(sited ? { models: ids.reduce((n, id) => n + modelSize[id], 0) } : {}),
+                    size: { common: size(m.files), models: ids.reduce((n, id) => n + modelSize[id], 0),
                             languages: Object.fromEntries(Object.entries(m.languages).map(([l, g]) => [l, size(g.files)])) } };
     if (typeof parts.index === "function") parts.index(entry);
     fs.writeFileSync(path.join(dir, "stories.json"), JSON.stringify({ format: "ournotes.stories/1", language: "en", languages: ["ja", "en"], stories: [entry] }));
@@ -508,7 +508,7 @@ test("fallback font assets: the fallback material of each text material (GetFall
 // a Live2D model m1 used by a Character row: its files in models/m1.json, story.json naming it, the story's shaders
 const ADDRESS = "Character/Live2D/g/m1/model/m1";
 const withModel = (p, opts = {}) => {
-  p.models.m1 = modelFiles("m1", opts);
+  p.models.m1 = modelObjects("m1", opts);
   p.common["story.json"].models = { [ADDRESS]: "m1" };
   const ep = p.common["episode.json"];
   ep.commands.push({ i: 3, cmd: "Character", raw: 1, TargetName: "a", TargetAssetName: "g/m1/model/m1" });
@@ -543,7 +543,7 @@ test("models: the manifest's model manifests, valid as models; live2d/ holds the
   }, "manifest: models.m2: models/m2.json missing");
   failsWith((p) => {
     withModel(p);
-    p.models.m0 = modelFiles("m0");
+    p.models.m0 = modelObjects("m0");
     p.man.models = { m1: "models/m1.json", m0: "models/m0.json" };
     p.common["story.json"].models["Character/Live2D/g/m0/model/m0"] = "m0";
   }, "manifest: models: keys not sorted");
@@ -553,12 +553,12 @@ test("models: the manifest's model manifests, valid as models; live2d/ holds the
   failsWith((p) => { withModel(p); p.common["live2d/m1/model.json"] = {}; }, "manifest: files: live2d/m1/model.json: live2d/ holds the files of the models");
   failsWith((p) => { withModel(p); p.groups.en["live2d/m1/x.json"] = {}; }, "manifest: languages.en: live2d/m1/x.json: live2d/ holds");
   // a model manifest that is not a valid model fails the model and the story
-  const bad = validate((p) => { withModel(p); p.models.m1["extra.json"] = {}; });
+  const bad = validate((p) => { withModel(p); p.models.m1.objects.mono("CubismFadeMotionData", "extra"); });
   assert.equal(bad.status, 1);
   assert.ok(bad.lines.includes("FAIL m1") && bad.lines.includes("FAIL 7"), bad.lines.join("\n"));
-  assert.ok(bad.lines.some((l) => l.startsWith("models/m1.json: not a valid model (1 problem): extra.json: listed but read by neither")),
+  assert.ok(bad.lines.some((l) => /^models\/m1\.json: not a valid model \(1 problem\): CAB-m1:\d+#json: listed but read by neither/.test(l)),
             bad.lines.join("\n"));
-  failsWith((p) => { withModel(p); p.models.m1["model.json"].motionSync = true; },
+  failsWith((p) => { withModel(p); p.models.m1.model.motionSync = true; },
             "model.json: motionSync true, the prefab's root has no MotionSync controller with a CRI audio input");
 });
 
@@ -569,19 +569,15 @@ test("root: the site root seen from the manifest, ../../ for a region's own", ()
   failsWith((p) => { p.man.root = "../../"; }, 'manifest: root "../../", the site root from stories/7.json is "../"');
 });
 
-test("models: the variants the story renderer draws with at every quality", () => {
-  // model.json format 1: valid for the model viewer without the quality-4 variants, but not for a story
-  const r = validate((p) => withModel(p, { format: 1, storyLights: false }));
+test("models: the programs the story renderer draws with at every quality", () => {
+  // a model without the Lit programs of quality 4 is not a valid model, and its stories fail
+  const r = validate((p) => withModel(p, { storyLights: false }));
   assert.equal(r.status, 1);
-  assert.ok(r.lines.includes("1/1 models valid") && r.lines.includes("0/1 stories valid"), r.lines.join("\n"));
+  assert.ok(r.lines.includes("FAIL m1") && r.lines.includes("0/1 models valid") && r.lines.includes("0/1 stories valid"), r.lines.join("\n"));
   const lit = "Live2D Cubism/Lit-URP-ADV-optimize";
-  assert.ok(r.lines.includes(`models/m1.json: shaders/shaders.json: ${lit}: no variant for [_ADDITIONAL_LIGHTS_VERTEX] (the story renderer's keywords at quality 4)`),
+  assert.ok(r.lines.includes(`shader ${lit}: ${lit}: no variant for [_ADDITIONAL_LIGHTS_VERTEX] (the story renderer's keywords at quality 4)`),
             r.lines.join("\n"));
   assert.ok(r.lines.some((l) => l.includes("no variant for [CUBISM_MASK_ON _ADDITIONAL_LIGHTS_VERTEX]")), r.lines.join("\n"));
-  assert.equal(validate((p) => withModel(p, { format: 1 })).status, 0);
-  // model.json format 2 needs them for the model itself
-  const m = validate((p) => withModel(p, { storyLights: false }));
-  assert.ok(m.lines.includes("FAIL m1") && m.lines.includes("0/1 models valid"), m.lines.join("\n"));
 });
 
 test("encoded assets: gzip and brotli, decoded and checked against their name, size and stored length", () => {
@@ -650,57 +646,13 @@ test("the schemas: stored exactly with a .gz / .br asset, parts of four items, m
     assert.ok(S(withFiles(bad)).length > 0, JSON.stringify(bad));
   assert.ok(S({ ...man, root: "./" }).some((e) => e.includes("/root")));
   assert.ok(S({ ...man, models: { m1: "live2d/m1.json" } }).some((e) => e.includes("/models/m1")));
-  const { root, models, ...legacy } = man;
+  const { root, models, ...rest } = man;
   assert.equal(root, "../");
-  assert.ok(S({ ...legacy, models }).length > 0);                          // format /2 needs root and models
-  assert.ok(S({ ...legacy, root }).length > 0);
-  assert.deepEqual(S({ ...legacy, format: "ournotes.story-manifest/1" }), []);
+  assert.ok(S({ ...rest, models }).length > 0);                            // a manifest needs root and models
+  assert.ok(S({ ...rest, root }).length > 0);
+  assert.ok(S({ ...man, format: "ournotes.story-manifest/1" }).some((e) => e.includes("/format")));
   assert.deepEqual(schema("story")(story), []);
   assert.deepEqual(schema("story")({ ...story, modelsDir: "../live2d" }), []);
-  assert.ok(schema("story")({ ...story, models: { [ADDRESS]: { dir: "live2d/m1" } } }).some((e) => e.includes("/models/")));
-});
-
-// ------------------------------------------------------------------------------------------------ manifest format /1
-// a story of manifest format /1: the model's files among its common files (live2d/m1/), story.json models naming them
-// by {dir, moc3, prefab}, the story's shaders holding the Lit and mask variants, scene.json resources
-const withEmbeddedModel = (p) => {
-  withModel(p);
-  const files = p.models.m1;
-  delete p.models.m1;
-  p.man.format = "ournotes.story-manifest/1";
-  delete p.man.root;
-  for (const k of ["m1.moc3", "m1.prefab.json", "textures/texture_00.png"]) p.common[`live2d/m1/${k}`] = files[k];
-  for (const [k, v] of Object.entries(files)) if (k.startsWith("shaders/")) p.common[k] = v;
-  const sh = p.common["shaders/shaders.json"];
-  p.common["shaders/shaders.json"] = [...sh, ...shaderIndex(["Adv/AlphaBlend"])];
-  p.common["story.json"].models = { [ADDRESS]: { dir: "live2d/m1", moc3: "m1.moc3", prefab: "m1.prefab.json" } };
-  p.common["scene.json"].resources = files["model.json"].resources;
-};
-
-test("manifest format /1: the models' files among the story's, drawn with the story's shaders", () => {
-  const { dir, man } = buildSite(withEmbeddedModel);
-  const index = JSON.parse(fs.readFileSync(path.join(dir, "stories.json"), "utf8"));
-  const story = JSON.parse(fs.readFileSync(path.join(dir, man.files["story.json"].asset), "utf8"));
-  fs.rmSync(dir, { recursive: true, force: true });
-  assert.deepEqual(schema("story-manifest")(man), []);
-  assert.deepEqual(schema("stories")(index), []);
-  assert.deepEqual(Object.keys(index.stories[0].size), ["common", "languages"]);
-  assert.deepEqual(schema("story")(story), []);
-  const r = validate(withEmbeddedModel);
-  assert.equal(r.status, 0, r.lines.join("\n") + r.stderr);
-  assert.deepEqual(r.lines, ["1/1 stories valid"]);
-  assert.equal(validate((p) => { withEmbeddedModel(p); p.encoding = "gzip"; }).status, 0);
-  // the story's shaders hold a variant per drawable material
-  failsWith((p) => {
-    withEmbeddedModel(p);
-    const lit = p.common["shaders/shaders.json"][0];
-    lit.variants = lit.variants.filter((v) => v.keywords.join(" ") !== "CUBISM_MASK_ON");
-  }, "shaders/shaders.json: Live2D Cubism/Lit-URP-ADV-optimize: no variant for [CUBISM_MASK_ON]");
-  failsWith((p) => { withEmbeddedModel(p); delete p.common["live2d/m1/m1.moc3"]; }, `story.json: models.${ADDRESS}: live2d/m1/m1.moc3 is not a common file`);
-  failsWith((p) => { withEmbeddedModel(p); delete p.common["live2d/m1/textures/texture_00.png"]; }, "live2d/m1/textures/texture_00.png: texture of a drawable not in the manifest");
-  // each format names its models in its own form
-  failsWith((p) => { withEmbeddedModel(p); p.common["story.json"].models = { [ADDRESS]: "m1" }; }, `story.json: models.${ADDRESS}: not {dir, moc3, prefab}`);
-  failsWith((p) => { withModel(p); p.common["story.json"].models = { [ADDRESS]: { dir: "live2d/m1", moc3: "m1.moc3", prefab: "m1.prefab.json" } }; },
-            `story.json: models.${ADDRESS}: not a model id`);
-  failsWith((p) => { withEmbeddedModel(p); p.index = (e) => { e.size.models = 0; }; }, "stories.json: size");
+  assert.ok(schema("story")({ ...story, models: { [ADDRESS]: { dir: "live2d/m1", moc3: "m1.moc3", prefab: "m1.prefab.json" } } })
+    .some((e) => e.includes("/models/")));
 });

@@ -1,9 +1,10 @@
 // ModelSession over a synthetic model: a stand-in for Live2D Cubism Core (a few parameters, three drawables whose
-// vertices follow ParamAngleX, one of them masked), a prefab with the components the runtime reads, shaders in the
-// packed Unity layout, all in memory; drawn into the no-op WebGL2 context of scripts/lib/headless.mjs.
+// vertices follow ParamAngleX, one of them masked), the model's objects (a prefab with the components the runtime
+// reads, clips, fade motions, expressions, materials, a texture, shaders with their GLES3 programs) and model.json, all
+// in memory (live2d-objects.mjs); drawn into the no-op WebGL2 context of scripts/lib/headless.mjs.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AssetStore } from "../../src/data/assets.js";
+import { ModelObjects, component, mb, node, ref } from "./live2d-objects.mjs";
 import { MODEL_FRAME_RATE, ModelSession } from "../../src/live2d/session.js";
 import { headlessGL, headlessImages } from "../../scripts/lib/headless.mjs";
 
@@ -63,63 +64,21 @@ const fakeCore = () => {
 
 const MOC = new Uint8Array([0x4d, 0x4f, 0x43, 0x33, 5, 0, 0, 0, 0, 0, 0, 0]);
 
-// ---- prefab
+// ---- the model's objects
+const LIT = "Live2D Cubism/Lit-URP-ADV-optimize", MASK = "Live2D Cubism/Mask";
 const fadeData = (name, len, value) => ({
   MotionName: name, FadeInTime: 1, FadeOutTime: 1, MotionLength: len, ParameterFadeInTimes: [-1], ParameterFadeOutTimes: [-1],
   ParameterIds: ["ParamAngleX"], ParameterCurves: [{ m_Curve: [{ time: 0, value, inSlope: 0, outSlope: 0 },
                                                                { time: len, value, inSlope: 0, outSlope: 0 }] }],
 });
-const clip = (name, id, len, value, opacity) => ({
-  clip: name, stopTime: len, loopTime: true, startTime: 0, cycleOffset: 0,
-  events: [{ functionName: "InstanceId", intParameter: id }], dense: { curveCount: 0 },
-  bindings: [{ path: "Parameters/ParamAngleX", class: "CubismParameter", attribute: "Value" },
-             ...(opacity === undefined ? [] : [{ path: "", class: "CubismRenderController", attribute: "Opacity" }])],
-  streamed: { curveCount: 0, frames: [] }, constant: [value, ...(opacity === undefined ? [] : [opacity])],
+const clip = (o, name, id, len, value, opacity) => o.clip({
+  name, stopTime: len, loopTime: true, events: [{ functionName: "InstanceId", intParameter: id }],
+  bindings: [{ cls: "CubismParameter", path: "Parameters/ParamAngleX", attribute: "Value" },
+             ...(opacity === undefined ? [] : [{ cls: "CubismRenderController", path: "", attribute: "Opacity" }])],
+  constant: [value, ...(opacity === undefined ? [] : [opacity])],
 });
-const tex = { texture: "textures/texture_00.png", name: "texture_00", width: 4, height: 4, mipCount: 1,
-              settings: { m_FilterMode: 1, m_WrapU: 1, m_WrapV: 1 } };
-const material = (keywords) => ({ material: keywords.length ? "LitMasked" : "Lit", shader: { shader: "Live2D Cubism/Lit-URP-ADV-optimize" },
-                                  keywords, floats: { _SrcColor: 1, _DstColor: 10, _SrcAlpha: 1, _DstAlpha: 10, _Cull: 0 }, colors: {} });
 
-const prefab = ({ physics = true, mipCount = 1, opacity, missing = false } = {}) => {
-  const root = "model";
-  const node = (path, components = []) => ({ path, name: path.split("/").pop(), active: true, layer: 0,
-    localPosition: { x: 0, y: 0, z: 0 }, localRotation: { x: 0, y: 0, z: 0, w: 1 }, localScale: { x: 1, y: 1, z: 1 }, components });
-  const mb = (cls, fields) => ({ type: "MonoBehaviour", class: cls, ...fields });
-  return { key: "model", canvas: {}, nodes: [
-    node(root, [
-      mb("Live2DCharacter", { DefaultMotionName: "mtn_idle", DefaultExpressionName: "exp_idle", BasePosition: { x: 0, y: -0.41, z: 0 },
-                              BaseScale: 1.6, _motionList: [clip("mtn_idle", -1, 2, 0), clip("mtn_turn", -2, 1, 30, opacity)],
-                              _expressionList: ["exp_idle", "exp_closed"] }),
-      mb("CubismFadeController", { CubismFadeMotionList: { MotionInstanceIds: [-1, -2],
-        CubismFadeMotionObjects: [fadeData("mtn_idle", 2, 0), fadeData("mtn_turn", 1, 30)] } }),
-      mb("CubismExpressionController", { UseLegacyBlendCalculation: 0, CurrentExpressionIndex: -1, CurrentFadeInTime: -1,
-        ExpressionsList: { CubismExpressionObjects: [
-          { name: "exp_idle.exp3", FadeInTime: 0.5, FadeOutTime: 0.5, Parameters: [] },
-          { name: "exp_closed.exp3", FadeInTime: 0.5, FadeOutTime: 0.5, Parameters: [
-            ...(missing ? [{ Id: "ParamMissing", Value: 1, Blend: 1 }] : []), { Id: "ParamEyeLOpen", Value: 0, Blend: 2 }] }] } }),
-      mb("CubismHarmonicMotionController", { BlendMode: 1, ChannelTimescales: [1] }),
-      mb("CubismAutoEyeBlinkInput", { Mean: 2.5, MaximumDeviation: 2, Timescale: 10 }),
-      mb("CubismEyeBlinkController", { BlendMode: 2, EyeOpening: 1 }),
-      mb("CubismMouthController", { BlendMode: 0, MouthOpening: 0 }),
-      ...(physics ? [mb("CubismPhysicsController", { _rig: { Fps: 60, Gravity: { x: 0, y: -1 }, Wind: { x: 0, y: 0 }, SubRigs: [] } })] : []),
-      mb("CubismRenderController", { _sortingOrder: 0, Opacity: 1 }),
-    ]),
-    node(`${root}/Parameters`),
-    ...IDS.map((id) => node(`${root}/Parameters/${id}`, [mb("CubismParameter", {}),
-      ...(id === "ParamEyeLOpen" ? [mb("CubismEyeBlinkParameter", {})] : []),
-      ...(id === "ParamBreath" ? [mb("CubismHarmonicMotionParameter", { Channel: 0, Direction: 2, NormalizedOrigin: 0.5,
-                                                                         NormalizedRange: 0.5, Duration: 3 })] : [])])),
-    node(`${root}/Drawables`),
-    ...DRAWABLES.map((id, i) => node(`${root}/Drawables/${id}`, [
-      mb("CubismDrawable", { _unmanagedIndex: i }),
-      { type: "MeshRenderer", m_Materials: [material(i === 2 ? ["CUBISM_MASK_ON"] : [])] },
-      mb("CubismRenderer", { _localSortingOrder: 0, _color: { r: 1, g: 1, b: 1, a: 1 }, _mainTexture: { ...tex, mipCount } }),
-    ])),
-  ] };
-};
-
-// ---- shaders (packed Unity layout)
+// ---- shaders: the parsed forms and GLES3 programs
 const program = "#ifdef VERTEX\n#version 300 es\nvoid main() {}\n#endif\n#ifdef FRAGMENT\n#version 300 es\nvoid main() {}\n#endif\n";
 const V = (val, name = "") => ({ val, name });
 const pass = (blend) => ({ state: {
@@ -132,27 +91,60 @@ const pass = (blend) => ({ state: {
 } });
 const litPass = pass([V(1, "_SrcColor"), V(10, "_DstColor"), V(1, "_SrcAlpha"), V(10, "_DstAlpha")]);
 const maskPass = pass([V(1), V(1), V(1), V(1)]);
+const parsed = (p) => ({ properties: [], subShaders: [{ tags: { tags: [] }, passes: [p] }] });
 
-const modelFiles = ({ format = 1, motionSync, physics = true, mipCount = 1, opacity, missing = false } = {}) => {
-  const lit = "Live2D Cubism/Lit-URP-ADV-optimize", mask = "Live2D Cubism/Mask";
-  const text = {
-    "model.json": JSON.stringify({ format, ...(motionSync === undefined ? {} : { motionSync }), name: "model",
-      moc3: "model.moc3", prefab: "model.prefab.json", shaders: "shaders/shaders.json", resources: {
-        cubismMask: { material: "Mask", shader: { shader: mask }, keywords: [], floats: { _Cull: 0 }, colors: {} },
-        cubismMaskCulling: { material: "MaskCulling", shader: { shader: mask }, keywords: [], floats: { _Cull: 1 }, colors: {} } } }),
-    "model.prefab.json": JSON.stringify(prefab({ physics, mipCount, opacity, missing })),
-    "shaders/shaders.json": JSON.stringify([
-      { name: lit, parsed: "lit.json", variants: [{ file: "lit/0.glsl", subShader: 0, pass: 0, keywords: [] },
-                                                   { file: "lit/1.glsl", subShader: 0, pass: 0, keywords: ["CUBISM_MASK_ON"] }] },
-      { name: mask, parsed: "mask.json", variants: [{ file: "mask/0.glsl", subShader: 0, pass: 0, keywords: [] }] }]),
-    "shaders/lit.json": JSON.stringify({ properties: [], subShaders: [{ tags: { tags: [] }, passes: [litPass] }] }),
-    "shaders/mask.json": JSON.stringify({ properties: [], subShaders: [{ tags: { tags: [] }, passes: [maskPass] }] }),
-    "shaders/lit/0.glsl": program, "shaders/lit/1.glsl": program, "shaders/mask/0.glsl": program,
-  };
+const modelFiles = ({ motionSync = false, physics = true, mipCount = 1, opacity, missing = false, json = null } = {}) => {
+  const o = new ModelObjects();
+  const lit = o.shader(LIT, parsed(litPass), [[[], program], [["CUBISM_MASK_ON"], program]]);
+  const mask = o.shader(MASK, parsed(maskPass), [[[], program]]);
+  const material = (keywords) => o.material(keywords.length ? "LitMasked" : "Lit", {
+    shader: lit, keywords, floats: { _SrcColor: 1, _DstColor: 10, _SrcAlpha: 1, _DstAlpha: 10, _Cull: 0 } });
+  const lits = [material([]), material(["CUBISM_MASK_ON"])];
   const png = new Uint8Array(24);
   png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 4, 0, 0, 0, 4]);
-  return headlessImages(new AssetStore({ text, bytes: { "model.moc3": MOC, "textures/texture_00.png": png },
-                                         info: { id: "model", model: { group: "test" } } }));
+  const tex = o.texture("texture_00", { mipCount, image: png });
+  const fades = o.mono("CubismFadeMotionList", "common.fadeMotionList", { MotionInstanceIds: [-1, -2],
+    CubismFadeMotionObjects: [o.mono("CubismFadeMotionData", "mtn_idle.fade", fadeData("mtn_idle", 2, 0)),
+                              o.mono("CubismFadeMotionData", "mtn_turn.fade", fadeData("mtn_turn", 1, 30))].map(ref) });
+  const expressions = o.mono("CubismExpressionList", "common.expressionList", { CubismExpressionObjects: [
+    o.mono("CubismExpressionData", "exp_idle.exp3", { FadeInTime: 0.5, FadeOutTime: 0.5, Parameters: [] }),
+    o.mono("CubismExpressionData", "exp_closed.exp3", { FadeInTime: 0.5, FadeOutTime: 0.5, Parameters: [
+      ...(missing ? [{ Id: "ParamMissing", Value: 1, Blend: 1 }] : []), { Id: "ParamEyeLOpen", Value: 0, Blend: 2 }] }),
+  ].map(ref) });
+  const root = "model";
+  const prefab = o.prefab([
+    node(root, [
+      mb("Live2DCharacter", { DefaultMotionName: "mtn_idle", DefaultExpressionName: "exp_idle", BasePosition: { x: 0, y: -0.41, z: 0 },
+                              BaseScale: 1.6, _motionList: [clip(o, "mtn_idle", -1, 2, 0), clip(o, "mtn_turn", -2, 1, 30, opacity)].map(ref),
+                              _expressionList: ["exp_idle", "exp_closed"] }),
+      mb("CubismFadeController", { CubismFadeMotionList: ref(fades) }),
+      mb("CubismExpressionController", { UseLegacyBlendCalculation: 0, CurrentExpressionIndex: -1, CurrentFadeInTime: -1,
+                                         ExpressionsList: ref(expressions) }),
+      mb("CubismHarmonicMotionController", { BlendMode: 1, ChannelTimescales: [1] }),
+      mb("CubismAutoEyeBlinkInput", { Mean: 2.5, MaximumDeviation: 2, Timescale: 10 }),
+      mb("CubismEyeBlinkController", { BlendMode: 2, EyeOpening: 1 }),
+      mb("CubismMouthController", { BlendMode: 0, MouthOpening: 0 }),
+      ...(physics ? [mb("CubismPhysicsController", { _rig: { Fps: 60, Gravity: { x: 0, y: -1 }, Wind: { x: 0, y: 0 }, SubRigs: [] } })] : []),
+      mb("CubismRenderController", { _sortingOrder: 0, Opacity: 1 }),
+    ]),
+    node(`${root}/Parameters`),
+    ...IDS.map((id) => node(`${root}/Parameters/${id}`, [mb("CubismParameter"),
+      ...(id === "ParamEyeLOpen" ? [mb("CubismEyeBlinkParameter")] : []),
+      ...(id === "ParamBreath" ? [mb("CubismHarmonicMotionParameter", { Channel: 0, Direction: 2, NormalizedOrigin: 0.5,
+                                                                         NormalizedRange: 0.5, Duration: 3 })] : [])])),
+    node(`${root}/Drawables`),
+    ...DRAWABLES.map((id, i) => node(`${root}/Drawables/${id}`, [
+      mb("CubismDrawable", { _unmanagedIndex: i }),
+      component("MeshRenderer", { m_Materials: [ref(lits[i === 2 ? 1 : 0])] }),
+      mb("CubismRenderer", { _localSortingOrder: 0, _color: { r: 1, g: 1, b: 1, a: 1 }, _mainTexture: ref(tex) }),
+    ])),
+  ]);
+  const resources = { cubismMask: o.material("Mask", { shader: mask, floats: { _Cull: 0 } }),
+                      cubismMaskCulling: o.material("MaskCulling", { shader: mask, floats: { _Cull: 1 } }) };
+  const store = o.store({ prefab, moc: o.moc(MOC), shaders: [lit, mask], resources, motionSync,
+                          info: { schema: "nnnotes.product/1", product: "live2d.model", subject: "model" } });
+  if (json) store._text.set("model.json", JSON.stringify(json(JSON.parse(store.text("model.json")))));
+  return headlessImages(store);
 };
 
 const withCore = async (fn) => {
@@ -176,7 +168,7 @@ test("a model loads, warms up and is shown with its default motion and expressio
   assert.deepEqual(s.expressions, ["exp_idle", "exp_closed"]);
   assert.equal(s.motion, "mtn_idle");
   assert.equal(s.expression, "exp_idle");
-  assert.deepEqual(s.info, { id: "model", model: { group: "test" } });
+  assert.deepEqual(s.info, { schema: "nnnotes.product/1", product: "live2d.model", subject: "model" });
   assert.ok(s.loop.frameCount > 8 && s.loop.frameCount < 20, `load frames ${s.loop.frameCount}`);
   assert.equal(s.character.isShowing, true);
   assert.equal(s.physics, true);
@@ -332,7 +324,7 @@ test("a mipmapped texture gets its other levels generated", () => withCore(async
   }
 }));
 
-test("errors: no Core, unknown format, unknown initial motion; a disposed session; model.json formats 1 and 2", async () => {
+test("errors: no Core, unknown format, unknown initial motion; a disposed session; model.json checks", async () => {
   const saved = globalThis.Live2DCubismCore;
   delete globalThis.Live2DCubismCore;
   try {
@@ -340,9 +332,14 @@ test("errors: no Core, unknown format, unknown initial motion; a disposed sessio
   } finally { if (saved) globalThis.Live2DCubismCore = saved; }
   await withCore(async () => {
     const gl = headlessGL();
-    await assert.rejects(ModelSession.create({ gl, assets: modelFiles({ format: 3 }) }), /model\.json: format 3 is not supported/);
-    await assert.rejects(ModelSession.create({ gl, assets: modelFiles({ format: 2 }) }), /model\.json: "motionSync" missing/);
-    await (await ModelSession.create({ gl, assets: modelFiles({ format: 2, motionSync: false }) })).dispose();
+    const edit = (json) => ModelSession.create({ gl, assets: modelFiles({ json }) });
+    await assert.rejects(edit((m) => ({ ...m, format: 2 })), /model\.json: format 2 is not supported \(3 expected\)/);
+    await assert.rejects(edit(({ motionSync, ...m }) => m), /model\.json: "motionSync" missing/);
+    await assert.rejects(edit((m) => ({ ...m, moc: "CAB-test:999" })), /model\.json: object not found: CAB-test:999/);
+    await assert.rejects(edit((m) => ({ ...m, prefab: m.moc })), /model\.json: CAB-test:\d+: a MonoBehaviour, not a GameObject/);
+    await assert.rejects(edit((m) => ({ ...m, bindings: {} })), /mtn_idle: no names for its bindings/);
+    await assert.rejects(edit((m) => ({ ...m, shaders: { [LIT]: m.shaders[LIT] } })), /mask material Mask: not drawn with Live2D Cubism\/Mask/);
+    await (await ModelSession.create({ gl, assets: modelFiles({ motionSync: true }) })).dispose();
     await assert.rejects(ModelSession.create({ gl, assets: modelFiles(), motion: "mtn_none" }), /no motion "mtn_none"/);
     const s = await ModelSession.create({ gl, assets: modelFiles(), motion: "mtn_turn", expression: "exp_closed" });
     assert.equal(s.motion, "mtn_turn");
