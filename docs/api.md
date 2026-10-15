@@ -8,7 +8,7 @@ live UI, with the chart's music and sound effects, auto-played at Perfect. The d
 
 | Import | Contents |
 |---|---|
-| `ournotes-player` | `ChartPlayer`, `ChartSession`, `AssetStore`, `defineOurnotesPlayer`, `OurnotesPlayerElement`, `LIVE_SPEEDS`, `LIVE_OPTIONS`, `LIVE_OPTION_GROUPS`, `LiveSettingsError`, `PLAYER_LANGUAGES`, `formatTime` |
+| `ournotes-player` | `ChartPlayer`, `ChartSession`, `AssetStore`, `loadLiveStore`, `defineOurnotesPlayer`, `OurnotesPlayerElement`, `LIVE_SPEEDS`, `LIVE_OPTIONS`, `LIVE_OPTION_GROUPS`, `LiveSettingsError`, `PLAYER_LANGUAGES`, `formatTime` |
 | `ournotes-player/element` | the same exports; importing it defines `<ournotes-player>` |
 | `ournotes-player/ui` (experimental) | `UILibrary`, `UISession`, `UIPlayer`, `OurnotesUIElement`, `defineOurnotesUI`, `cameraProjection`; [prefab preview API and limits](ui-preview.md) |
 | `ournotes-player/ui/element` (experimental) | the same UI exports; importing it defines `<ournotes-ui>` |
@@ -25,7 +25,7 @@ Chart API times are in milliseconds of chart time. The independent UI preview AP
 
 | Attribute | Property | Meaning |
 |---|---|---|
-| `src` | `src` | URL of a chart manifest. Setting it loads that chart (the previous one is disposed). |
+| `src` | `src` | URL of a live manifest or of a chart manifest. Setting it loads that chart (the previous one is disposed). |
 | `controls` | `controls` | Shows the control bar (boolean attribute). |
 | `autoplay` | `autoplay` | Starts playing once loaded (boolean attribute). See [Audio](#audio). |
 | `speed` | `speed` | Playback speed, default `1`. |
@@ -68,8 +68,9 @@ Options:
 
 | Option | Default | |
 |---|---|---|
-| `src` | | URL of a chart manifest. |
-| `assets` | | An `AssetStore` to use instead of `src`. |
+| `src` | | URL of a live manifest ([data-format.md](data-format.md#lives)) or of a chart manifest. |
+| `variants` | `[]` | With `src`: manifest paths of further note skins, note effect sets and note sound sets (see `loadLiveStore`). |
+| `assets` | | An `AssetStore` to use instead of `src` (`loadLiveStore`'s, or a chart manifest's). |
 | `controls` | `true` | Shows the control bar. |
 | `autoplay` | `false` | Calls `play()` once loaded. |
 | `speed` | `1` | Playback speed (> 0). The control bar offers `LIVE_SPEEDS`: 0.5, 0.75, 1, 1.25, 1.5. |
@@ -148,9 +149,9 @@ The chart itself, without DOM access: it draws into a WebGL2 context you give it
 needs `AudioContext` (window only) even for a chart without audio files.
 
 ```js
-import { AssetStore, ChartSession } from "ournotes-player";
+import { ChartSession, loadLiveStore } from "ournotes-player";
 
-const assets = await AssetStore.fromManifest("https://example.org/site/charts/100001_expert.json");
+const assets = await loadLiveStore("https://example.org/out/lives/100001_expert.json");
 const gl = canvas.getContext("webgl2", { alpha: false, antialias: false, depth: false, stencil: false,
                                          premultipliedAlpha: false });
 const session = await ChartSession.create({ gl, assets, width: canvas.width, height: canvas.height });
@@ -182,6 +183,15 @@ the chart. The context serves this session alone while it lives (one session per
 ## `AssetStore`
 
 The files of one chart, loaded before the session starts and read synchronously by it.
+
+- `loadLiveStore(url, {variants, fetch, onProgress, signal, base, concurrency, decode})`: the store of a live
+  ([data-format.md](data-format.md#lives)): the live manifest at `url`, the manifests of the products its
+  `live.json` `parts` names and those of `variants` (manifest paths, relative to `base`, of `live.noteskin`,
+  `live.noteeffect` and `live.sounds` products the player offers besides), then every asset they list. Each
+  product's files are under its manifest path without `.json`; the objects of all of them are one table (an object
+  two products list must be the same in both). `base`: the root the manifest paths and asset paths are relative to
+  (default: the directory above the live manifest's directory). The other options are those of `fromManifest`. A
+  chart manifest gives the store of its files, as `fromManifest` does.
 
 - `AssetStore.fromManifest(url, {fetch, onProgress, signal, base, concurrency, decode})`: fetches the manifest, then
   every asset it lists (6 requests at a time), and checks each file's size against the manifest. Asset paths are
