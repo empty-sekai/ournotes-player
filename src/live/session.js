@@ -5,7 +5,9 @@ import { trackGL } from "../engine/gltrack.js";
 import { ShaderLib } from "../engine/glsl.js";
 import { PlayerLoop } from "../engine/loop.js";
 import { LiveLightWeightBackground } from "./background.js";
+import { LiveData } from "./data.js";
 import { LiveFx } from "./fx.js";
+import { isLegacyLive, legacyLive } from "./legacy.js";
 import { LiveNotes } from "./noteview.js";
 import { LiveRenderer } from "./renderer.js";
 import { LIVE_OPTION_BY_NAME, LiveOptionContext, LiveSettingsError, liveCategoryVolumes, liveDerived, liveNoteEffectName,
@@ -80,7 +82,8 @@ export const LIVE_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5];   // the playback speeds t
 export class ChartSession {
   // opts:
   //   gl            WebGL2RenderingContext (required); used by this session alone while it lives
-  //   assets        AssetStore of the chart (required)
+  //   assets        AssetStore of the live (required): loadLiveStore's, or the store of a chart manifest of the site
+  //                 layout with a live directory (read through legacy.js)
   //   audioContext  an AudioContext to play into, at any sample rate (the waveforms are decoded into its rate; default:
   //                 a 48 kHz one created and closed by the session)
   //   settings      Live options by name (settings.js LIVE_OPTIONS; default: the chart data's preset-1 values); values
@@ -106,13 +109,12 @@ export class ChartSession {
   async _load({ gl, assets, audioContext = null, quality, seed, width, height, settings = null } = {}) {
     if (!gl) throw new Error("ChartSession: a WebGL2 context is required");
     if (!assets) throw new Error("ChartSession: an AssetStore is required");
+    if (isLegacyLive(assets)) assets = legacyLive(assets);
     bindAssets(gl, assets);
     this.gl = gl; this.assets = assets;
     this._gl = trackGL(gl);
-    const live = assets.json("live.json");
-    const scene = assets.json(live.scene);
-    const noteAssets = assets.json(live.noteAssets);
-    const audioData = assets.json(live.liveAudio);
+    const data = this.data = new LiveData(assets);
+    const live = data.live, scene = data.sceneDoc, noteAssets = data.noteAssets, audioData = data.audio();
     // Live options: defaults, ranges and the values the chart's files offer, then the settings of this session
     const ctx = new LiveOptionContext({ live, scene, notes: noteAssets, audio: audioData, info: assets.info || null });
     if (quality !== undefined && quality !== null) ctx.defaults.LiveQuality = Number(quality);
@@ -121,7 +123,7 @@ export class ChartSession {
     this._settings = s;
     this.derived = liveDerived(ctx, s);
     // MirrorChart (4): the score converted with isMirror (SsMusicScoreConverter), a file of its own
-    const score = assets.json(s.MirrorChart ? live.notesMirror : live.notes);
+    const score = data.score(s.MirrorChart);
     this.live = live;
     this.score = score; this.noteAssets = noteAssets;
     const loop = new PlayerLoop(60);

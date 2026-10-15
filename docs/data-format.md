@@ -15,6 +15,7 @@ describes its shape and the conventions it follows rather than every serialized 
 
 Contents:
 [Site layout](#site-layout) ·
+[Lives](#lives) ·
 [charts.json](#chartsjson) ·
 [Chart manifest](#chart-manifest) ·
 [Logical files](#logical-files) ·
@@ -56,6 +57,45 @@ Contents:
 
 A page can also hand the player the logical files directly, without a site; the files and their contents are the
 same (see [docs/api.md](api.md)).
+
+## Lives
+
+A live is the product `live` of nnnotes' product layout and the products it plays with. Each has a product manifest
+(`nnnotes.product/1`: `files` and the `objects` of its object table) at `<directory>/<file>.json`, its files under
+`assets/<sha256>.<ext>`:
+
+```
+<root>/
+  lives/<musicId>_<difficulty>.json   the live (live.json, the score)
+  scenes/default.json                 the live scene (live.scene)
+  notes/default.json                  the note highway (live.notes)
+  noteskins/<skin>.json               a note skin (live.noteskin)
+  noteeffects/<set>.json              a note effect set (live.noteeffect)
+  sounds/<sets>.json                  the note and live sounds (live.sounds)
+  music/<musicId>.json                the music (live.music)
+  assets/<sha256>.<ext>
+```
+
+The player loads the live manifest, the manifests its `live.json` `parts` names (the defaults) and the manifests a page
+gives as variants (the other note skins, note effect sets and note sound sets it offers), and puts each product's files
+under its manifest path without `.json` (`lives/100001_expert/live.json`, `sounds/default/audio/LiveSe/<file>.flac`).
+
+`live.json` (format 1), as far as the player reads it:
+
+| Key | Meaning |
+|---|---|
+| `format` | `1`. |
+| `notes`, `notesMirror` | The score and the score converted with `MirrorChart`, files of the live ([Score](#score)). |
+| `parts` | Part → manifest path of the product: `scene`, `notes`, `noteskin`, `noteeffect`, `sounds`, `music`. |
+
+`sounds.json` of `live.sounds` (format 1) holds the keys of [Sounds](#sounds-audiolive-audiojson) except `music`, with
+the sounds of the note sound sets and the live sounds; `music.json` of `live.music` (format 1) holds `music`
+(`{ soundId }`) and `sounds` with the music's cue. A layer's `file` is relative to its product's directory. The player
+uses the `live.sounds` product that offers the most note sound sets (one with `NoteSePatternId=<ids>` holds the
+default set and the others) together with the music.
+
+A chart manifest of the site layout ([Chart manifest](#chart-manifest)) is read as a live as well: its `live.json`
+gives the score and its `audio/live-audio.json` the sounds and the music.
 
 ## charts.json
 
