@@ -6,6 +6,7 @@ import { AssetStore, PRODUCT_MANIFEST } from "../../src/data/assets.js";
 import { LiveData } from "../../src/live/data.js";
 import { isLegacyLive, legacyLive } from "../../src/live/legacy.js";
 import { LIVE_PARTS, loadLiveStore, productDir } from "../../src/live/store.js";
+import { chartFiles } from "./live-legacy-fixture.mjs";
 
 const ROOT = "https://example.org/out/";
 
@@ -115,22 +116,9 @@ test("LiveData: the score, and the sounds of the live.sounds product with the mo
   assert.throws(() => new LiveData(new AssetStore()), /not the store of a live/);
 });
 
-// a chart of the site layout: live.json, the score, live-audio.json and its waveforms
-const chart = (extra = {}) => new AssetStore({
-  text: {
-    "live.json": JSON.stringify({ musicId: 7, difficulty: "expert", scene: "livescene/scene.json",
-                                  notes: "score/m7_03.notes.json", notesMirror: "score/m7_03.mirror.notes.json",
-                                  noteAssets: "livenotes/notes.json", liveAudio: "audio/live-audio.json", ...extra }),
-    "score/m7_03.notes.json": JSON.stringify({ notes: [1] }), "score/m7_03.mirror.notes.json": JSON.stringify({ notes: [2] }),
-    "audio/live-audio.json": JSON.stringify({
-      sounds: { 1: cue("bgm_7", "audio/bgm_7/bgm_7.m4a", ["LiveBgm"]), 10: cue("se1", "audio/se1/a.flac", ["LiveSe"]) },
-      categories: { LiveBgm: 1, LiveSe: 1 }, react: [], music: { soundId: 1 }, noteSe: { types: { 1: 10 } }, liveSe: {},
-      timeline: { startCheerDelaySec: 1 } }),
-    "livescene/scene.json": "{}", "livenotes/notes.json": "{}",
-  },
-  bytes: { "audio/bgm_7/bgm_7.m4a": new Uint8Array([7]), "audio/se1/a.flac": new Uint8Array([1]) },
-  info: { format: 3, chart: { title: "x" }, quality: 1 },
-});
+// a chart of the site layout (live-legacy-fixture.mjs) in memory
+const chart = (extra = {}) => new AssetStore({ ...chartFiles(extra), info: { format: 3, chart: { title: "x" }, quality: 1 } });
+const refId = (v) => `${v.$ref.file}:${v.$ref.pathId}`;
 
 test("legacyLive: a chart of the site layout read as the store of a live", () => {
   const old = chart();
@@ -139,11 +127,71 @@ test("legacyLive: a chart of the site layout read as the store of a live", () =>
   assert.deepEqual([data.score().notes, data.score(true).notes], [[1], [2]]);
   assert.equal(store.info.dir, "lives/7_expert");
   assert.deepEqual([store.info.chart, store.info.quality, store.info.product], [{ title: "x" }, 1, "live"]);
+  assert.deepEqual([data.live.band, store.object(data.live.jacket).class], [{ band: 3 }, "Sprite"]);
   const a = data.audio();
   assert.deepEqual([a.music, Object.keys(a.sounds)], [{ soundId: 1 }, ["1", "10"]]);
   assert.deepEqual([...store.bytes(a.sounds[1].layers[0].file)], [7]);
   assert.deepEqual([...store.bytes(a.sounds[10].layers[0].file)], [1]);
-  assert.deepEqual([data.sceneDoc, data.noteAssets], [{}, {}]);
+  assert.deepEqual([data.noteskin().name, data.noteeffect().name], ["skin001", "effect001"]);
   assert.equal(new LiveData(legacyLive(chart({ notesMirror: undefined }))).live.notesMirror, undefined);
   assert.throws(() => legacyLive(chart({ musicId: undefined })), /live\.json: no musicId/);
+});
+
+test("legacyLive: the scene's roots, references between them, the graphics settings and the band's timeline", () => {
+  const store = legacyLive(chart()), scene = new LiveData(store).scene;
+  const [live, stage] = scene.scene.map((id) => store.prefab(id));
+  assert.deepEqual([live.name, stage.name], ["Live", "Stage"]);
+  // a reference into another root: the component; inside the root: the node path as it is
+  const view = stage.nodes[0].components[0], judge = live.nodes.find((n) => n.path === "Live/judge");
+  assert.deepEqual([view.type, view.script], ["MonoBehaviour", "StageView"]);
+  assert.equal(view.fields._judge.$ref.pathId, judge.components[0].pathId);
+  assert.deepEqual(view.fields._self, { gameObject: "Stage/mesh" });
+  // materials name their shader by object; a shader the chart does not pack names no object
+  const mat = store.material(refId(judge.components[0].fields.m_Materials[0]));
+  assert.equal(refId(mat.shader), scene.shaders["Sprites/Default"]);
+  assert.ok(store.roles(scene.shaders["Sprites/Default"]).includes("program:gles3/v0.glsl"));
+  const mesh = stage.nodes.find((n) => n.path === "Stage/mesh");
+  assert.equal(store.hasObject(refId(store.material(refId(mesh.components[0].fields.m_Materials[0])).shader)), false);
+  assert.deepEqual(store.mesh(refId(mesh.components[1].fields.m_Mesh)).submeshes, [[0, 1, 2]]);
+  // a texture has its image when the chart carries the file
+  const tex = (sp) => refId(store.objectJson(refId(sp)).renderData.texture);
+  assert.ok(store.roles(tex(judge.components[0].fields.m_Sprite)).includes("image"));
+  const noteJudge = store.prefab(scene.prefabs.judgeEffectView).nodes[0].components[0].fields.m_Sprite;
+  assert.deepEqual(store.roles(tex(noteJudge)), ["json"]);
+  // GraphicsSettings -> the pipeline -> its renderers -> the post-process data with the renderer's film grain
+  const g = store.objectJson(scene.graphics.graphics), pipe = store.mono(refId(g.m_CustomRenderPipeline));
+  assert.equal(pipe.m_RendererDataList[1], null);
+  const post = store.mono(refId(store.mono(refId(pipe.m_RendererDataList[0])).postProcessData));
+  assert.equal(store.object(refId(post.textures.filmGrainTex[0])).class, "Texture2D");
+  assert.deepEqual(scene.settings.optionDefaults, { LaneOpacity: "80" });
+  // the band's timeline: its track bound to the timeline prefab's Animator, the clip's bindings under it; an infinite
+  // extrapolation time stays infinite
+  const band = scene.bands[3], [trackId] = Object.keys(band.tracks);
+  assert.deepEqual(band.tracks[trackId], { name: "Band", prefab: band.timeline, animator: "StartTimeline/band" });
+  assert.equal(store.mono(trackId).m_Clips[0].m_PostExtrapolationTime, Infinity);
+  assert.deepEqual(Object.values(scene.bindings[band.timeline]["StartTimeline/band"]), [[{ path: "body", attribute: "m_LocalPosition.x" }]]);
+  // the scene's Animator plays the note assets' controller
+  const ctrl = refId(live.nodes[0].components[0].fields.m_Controller);
+  assert.equal(store.object(ctrl).class, "AnimatorController");
+  assert.deepEqual(Object.values(scene.bindings[scene.scene[0]].Live), [[{ path: "Live/judge", attribute: "m_IsActive" }]]);
+});
+
+test("legacyLive: the note assets, the skin's arrow clip and the effect sets' references to their prefabs", () => {
+  const store = legacyLive(chart()), data = new LiveData(store);
+  const notes = data.notes, skin = data.noteskin(), effect = data.noteeffect();
+  assert.deepEqual([notes.settings.laneEffect, notes.settings.judgementSprites], ["effect001", undefined]);
+  const flick = notes.prefabs.flick_note_view;
+  // the LoopAnimationTimeSync's clip in the notes bindings, the skin's arrow clip (a sprite curve) in the skin's
+  const anim = "flick_note_view/arrow/anim_root";
+  assert.deepEqual(Object.values(notes.bindings[flick][anim]), [[{ path: "arrow", attribute: "m_LocalPosition.y" }]]);
+  const unit = store.mono(refId(store.mono(skin.skin).FlickNoteAsset));
+  assert.deepEqual(skin.bindings[flick][anim][refId(unit._arrowLoopAnimation)], [{ path: "arrow", attribute: "m_Sprite" }]);
+  // an effect set's field: the effect asset component on the root of its prefab
+  for (const [settings, cls] of [[notes.laneEffect, "LiveLaneEffectAsset"], [effect.settings, "LiveNoteEffectAsset"]]) {
+    const r = store.mono(settings)._tap, root = store.prefab(store.contained(r).prefab).nodes[0];
+    assert.equal(root.components.find((c) => c.pathId === r.$ref.pathId).script, cls);
+    const ps = store.prefab(store.contained(r).prefab).nodes[1].components[0].fields;
+    assert.deepEqual(ps.m_VertexStreams, { $hex: "00010304" });
+  }
+  assert.equal(store.mono(data.scene.spriteAssets.combo).$script, "LiveComboSpriteAsset");
 });

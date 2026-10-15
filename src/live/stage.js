@@ -2,8 +2,7 @@ import { LiveIntro } from "./intro.js";
 import { LiveLane } from "./lane.js";
 
 // LiveStage: the 3D lane (LiveLane) and the start timeline (LiveIntro), updated in the loop phases and submitted
-// to LiveRenderer each frame. The scene is `assets.json("livescene/scene.json")` (infinities are written as 1e999,
-// which JSON.parse reads as Infinity).
+// to LiveRenderer each frame. The scene is the live's scene.json (LiveData.scene).
 //
 // Use (the chart session):
 //   const stage = new LiveStage(renderer, scene, loop); await stage.load(); stage.attach(loop);

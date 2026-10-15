@@ -67,7 +67,7 @@ export class StoryRenderer {
                    idx: this._buffer(new Uint16Array(m.submeshes[0]), gl.ELEMENT_ARRAY_BUFFER),
                    count: m.submeshes[0].length, bounds: StoryRenderer.bounds(m.vertices) };
     // post textures: film grain by FilmGrain.type, neutral colour curves, internal LUT
-    this.grain = await URPPost.loadGrain(gl, base, this.scene.postTextures.filmGrainTex);
+    this.grain = await URPPost.loadGrain(gl, this.scene.postTextures.filmGrainTex, (d) => GLTex.load(gl, base, d));
     this.post.initLut();
     for (const c of this.characters) { c.gl.white = this.tex.white; await c.gl.loadTextures(); c.gl.prepare(); }
   }

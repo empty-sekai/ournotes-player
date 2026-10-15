@@ -1,7 +1,8 @@
-import { AnimClip, AnimTargets, Gradient } from "../engine/anim.js";
+import { AnimTargets, Gradient } from "../engine/anim.js";
 import { F } from "../engine/core.js";
-import { ShaderLib, applyState } from "../engine/glsl.js";
+import { applyState } from "../engine/glsl.js";
 import { Transform, mat4 } from "../engine/math.js";
+import { componentClass } from "../engine/prefab.js";
 import { GLTex } from "../engine/texture.js";
 import { LiveLane } from "./lane.js";
 import { NoteGeo } from "./notegeo.js";
@@ -20,7 +21,7 @@ import { LiveSettingsMath } from "./settings.js";
 
 // ------------------------------------------------------------------ SpriteRenderer meshes
 export const SpriteMesh = {
-  // DrawMode Simple: the sprite's own mesh (exported vertices / uv / indices, atlas packing already resolved)
+  // DrawMode Simple: the sprite's own mesh (its render mesh vertices / uv / indices, atlas packing already resolved)
   simple(sp) {
     return { pos: Float32Array.from(sp.vertices.flatMap((v) => [v[0], v[1], v[2] ?? 0])), uv: Float32Array.from(sp.uv.flat()),
              idx: Uint16Array.from(sp.indices) };
@@ -29,9 +30,9 @@ export const SpriteMesh = {
   // DrawMode Sliced: 4 x 4 vertex grid over the rect at `size`, borders shrunk proportionally when they do not fit
   sliced(sp, sx, sy) {
     const ppu = sp.pixelsToUnits, r = sp.rect, tr = sp.textureRect, b = sp.border, tex = sp.texture;
-    if (((sp.settingsRaw >> 2) & 15) !== 0) throw new Error(`${sp.sprite}: rotated atlas packing with sliced draw mode`);
+    if (((sp.settingsRaw >> 2) & 15) !== 0) throw new Error(`${sp.name}: rotated atlas packing with sliced draw mode`);
     if (Math.abs(tr.width - r.width) > 1e-3 || Math.abs(tr.height - r.height) > 1e-3)
-      throw new Error(`${sp.sprite}: trimmed texture rect with sliced draw mode`);
+      throw new Error(`${sp.name}: trimmed texture rect with sliced draw mode`);
     const axis = (size, lo, hi, pivot, t0, tw, texSize) => {
       let a = lo / ppu, c = hi / ppu;
       if (a + c > size) { const k = size / (a + c); a *= k; c *= k; }
@@ -56,12 +57,13 @@ export const SpriteMesh = {
 
 // ------------------------------------------------------------------ GL drawing of note renderers
 export class NoteGL {
-  constructor(gl, base) {
+  // objects: LiveObjects (its ShaderLib and GL textures)
+  constructor(gl, objects) {
     this.gl = gl;
-    this.base = base;                                   // packed livenotes directory ("livenotes")
-    this.lib = new ShaderLib(gl, `${base}/shaders`);
+    this.objects = objects;
+    this.lib = objects.lib;
     this.vao = gl.createVertexArray();
-    this.tex = new Map();                               // texture path -> GLTex
+    this.tex = new Map();                               // Texture2D object id -> GLTex (loaded)
     this.meshes = new Map();                            // key -> {buffers, count, bounds}
     this.defTex = { white: GLTex.solid(gl, [255, 255, 255, 255], "white"),
                     black: GLTex.solid(gl, [0, 0, 0, 255], "black"),
@@ -71,14 +73,15 @@ export class NoteGL {
                  idx: gl.createBuffer() };
   }
 
-  async texture(desc) {
-    if (!this.tex.has(desc.texture)) this.tex.set(desc.texture, await GLTex.load(this.gl, this.base, desc));
-    return this.tex.get(desc.texture);
+  // the GL texture of a texture record (AssetStore.texture)
+  async texture(t) {
+    if (!this.tex.has(t.id)) this.tex.set(t.id, await this.objects.texture(t.id));
+    return this.tex.get(t.id);
   }
 
   // static sprite mesh, cached by sprite / draw mode / size
   spriteMesh(sp, drawMode, sx, sy) {
-    const key = drawMode === 1 ? `${sp.sprite}|${sx}|${sy}` : sp.sprite;
+    const key = drawMode === 1 ? `${sp.id}|${sx}|${sy}` : sp.id;
     let m = this.meshes.get(key);
     if (!m) {
       const g = this.gl, d = drawMode === 1 ? SpriteMesh.sliced(sp, sx, sy) : SpriteMesh.simple(sp);
@@ -106,10 +109,10 @@ export class NoteGL {
     return [mat.floats, mat.colors, texST, this.lib.defaults(shader, this.defTex)];
   }
 
-  // one SpriteRenderer: sr = serialized component (material, flip, colour), sprite + mesh, world matrix M; mpb: the
-  // renderer's MaterialPropertyBlock values (over the material's), or null
+  // one SpriteRenderer: sr = {m_Materials (LiveObjects materials), m_FlipX, m_FlipY, m_Color}, sprite + mesh, world
+  // matrix M; mpb: the renderer's MaterialPropertyBlock values (over the material's), or null
   drawSprite(ctx, sr, tex, mesh, M, color, mpb = null) {
-    const gl = this.gl, mat = sr.m_Materials[0], shader = mat.shader.shader;
+    const gl = this.gl, mat = sr.m_Materials[0], shader = mat.shader;
     const prog = this.lib.program(shader, 0, mat.keywords);
     const c = color || sr.m_Color, fx = sr.m_FlipX ? -1 : 1, fy = sr.m_FlipY ? -1 : 1;
     prog.apply([{ _MainTex: tex, _RendererColor: [c.r, c.g, c.b, c.a], _Flip: [fx, fy],
@@ -133,7 +136,7 @@ export class NoteGL {
   // defaults), without drawing: the read-set plan (scripts/read-set.mjs --plan) makes them for the materials of
   // LiveNotes.plannedMaterials(), so the files they read are read without stepping the chart
   prepare(mat) {
-    const shader = mat.shader.shader;
+    const shader = mat.shader;
     this.lib.program(shader, 0, mat.keywords);
     this.lib.state(shader, 0, mat.floats);
     this.lib.defaults(shader, this.defTex);
@@ -141,7 +144,7 @@ export class NoteGL {
 
   // one body mesh (Live/Unlit/SlideLine): m = NoteGeo.bodyMesh result, mpb = {_GradientTex, _Color, _GradientState}
   drawBody(ctx, mat, m, M, mpb) {
-    const gl = this.gl, shader = mat.shader.shader, prog = this.lib.program(shader, 0, mat.keywords);
+    const gl = this.gl, shader = mat.shader, prog = this.lib.program(shader, 0, mat.keywords);
     prog.apply([mpb, ctx.perObject(M), ...this._material(mat, shader), ctx.globals]);
     applyState(gl, this.lib.state(shader, 0, mat.floats));
     gl.frontFace(gl.CW);                              // Unity's clockwise front faces (Cull Back in this pass)
@@ -207,18 +210,21 @@ export const NoteViewType = {
 };
 
 // ------------------------------------------------------------------ one prefab instance (transforms + renderers)
+// prefab: a prefab.json; a node's `comp` is the fields of its SpriteRenderer / MeshRenderer and `materials` that
+// renderer's materials (LiveObjects materials)
 export class NotePrefab {
-  constructor(prefab, skipPrefix) {
+  constructor(prefab, skipPrefix, objects) {
     this.root = null;
-    this.nodes = new Map();                       // path -> {t: Transform, sr?, active}
+    this.nodes = new Map();                       // path -> {t: Transform, comp, materials, active, ...}
     for (const n of prefab.nodes) {
       if (skipPrefix && skipPrefix.some((s) => n.path.includes(s))) continue;
       const cut = n.path.lastIndexOf("/"), parent = cut < 0 ? null : this.nodes.get(n.path.slice(0, cut));
       if (cut >= 0 && !parent) continue;          // below a skipped node
       const t = new Transform(n.name, parent ? parent.t : null);
       t.localPosition = { ...n.localPosition }; t.localRotation = { ...n.localRotation }; t.localScale = { ...n.localScale };
-      const srC = n.components.find((c) => c.type === "SpriteRenderer" || c.type === "MeshRenderer");
-      const node = { t, active: n.active && (!parent || parent.active), path: n.path, comp: srC || null,
+      const c = n.components.find((x) => x.type === "SpriteRenderer" || x.type === "MeshRenderer"), srC = c ? c.fields : null;
+      const node = { t, active: n.active && (!parent || parent.active), path: n.path, comp: srC,
+                     materials: srC ? srC.m_Materials.map((m) => objects.material(m)) : null,
                      sprite: null, size: srC && srC.m_Size ? { ...srC.m_Size } : null, flipX: srC ? !!srC.m_FlipX : false,
                      enabled: srC ? !!srC.m_Enabled : false, order: srC ? srC.m_SortingOrder : 0,
                      color: srC && srC.m_Color ? { ...srC.m_Color } : null };
@@ -269,17 +275,19 @@ export class ArrowGradient {
 export class NoteHeadView {
   constructor(owner, type) {
     this.owner = owner; this.type = type;
-    const prefab = owner.ln.prefabs[NoteViewType.prefab[type]];
-    if (!prefab) throw new Error(`note view type ${type}: prefab missing`);
-    this.p = new NotePrefab(prefab, ["gekisou"]);
+    const id = owner.ln.prefabs[NoteViewType.prefab[type]];
+    if (!id) throw new Error(`note view type ${type}: prefab missing`);
+    const prefab = owner.objects.assets.prefab(id);
+    this.prefabId = id;
+    this.p = new NotePrefab(prefab, ["gekisou"], owner.objects);
     const root = this.p.root.comp ? null : prefab.nodes[0].components.find((c) => c.type === "MonoBehaviour");
-    this.mb = root || {};
+    this.mb = root ? root.fields : {};
     const ref = (k) => (this.mb[k] && this.mb[k].gameObject ? this.p.nodes.get(this.mb[k].gameObject) || null : null);
     this.main = ref("_mainSpriteRenderer"); this.mark = ref("_markSpriteRenderer");
     this.left = ref("_leftSpriteRenderer"); this.right = ref("_rightSpriteRenderer");
     this.arrow = ref("_flickArrowSpriteRenderer"); this.subArrow = ref("_subArrowSpriteRenderer");
     this.parts = ref("_partsRenderer");
-    this.unit = NoteViewType.skin[type] ? (owner.skin || owner.ln.noteSkin)[NoteViewType.skin[type]] : null;
+    this.unit = NoteViewType.skin[type] ? owner.skin[NoteViewType.skin[type]] : null;
     this.noteId = -1;
   }
 
@@ -290,7 +298,7 @@ export class NoteHeadView {
     if (this.main) this.main.sprite = u._mainSprite;
     if (this.mark) this.mark.sprite = u._centerMarkSprite;
     if (this.arrow) {                             // LiveFlickNoteView / LiveDirectionFlickNoteView.OnSetupNoteSkin
-      this.clip = u._arrowLoopAnimation ? this.owner.clip(u._arrowLoopAnimation.clip) : null;   // OverrideLoopAnimation
+      this.clip = u._arrowLoopAnimation ? this.owner.arrowClip(this, u._arrowLoopAnimation) : null;   // OverrideLoopAnimation
       // the tilt (the tilt material and its _Slope / _Center / _HalfScale block) only with _arrowTiltEnabled and a tilt
       // material; without the material the game skips it (and so does LateUpdate)
       if (u._arrowTiltEnabled && u._arrowTiltMaterial) throw new Error("flick arrow tilt path not implemented (skin _arrowTiltEnabled)");
@@ -364,9 +372,9 @@ export class NoteHeadView {
 export class PairLineView {
   constructor(owner) {
     this.owner = owner;
-    this.p = new NotePrefab(owner.ln.prefabs.pair_note_line);
+    this.p = new NotePrefab(owner.objects.assets.prefab(owner.ln.prefabs.pair_note_line), null, owner.objects);
     this.r = this.p.nodes.get(this.p.root.comp ? this.p.root.path : `${this.p.root.path}/renderer`);
-    this.r.sprite = this.r.comp.m_Sprite;
+    this.r.sprite = owner.objects.sprite(this.r.comp.m_Sprite);
   }
   // LiveAllNoteView.TrySpawnPairNoteLine -> Setup(spawn, mid, w)
   setup(a, b) {
@@ -387,9 +395,10 @@ export class PairLineView {
 export class NoteLineView {
   constructor(owner, kind) {
     this.owner = owner; this.kind = kind;
-    const pf = owner.ln.prefabs[kind === "slide" ? "slide_line_view" : "guide_line_view"];
-    this.mr = pf.nodes[0].components.find((c) => c.type === "MeshRenderer");
-    this.mb = pf.nodes[0].components.find((c) => c.type === "MonoBehaviour" && /NoteLineView$/.test(c.class));
+    const pf = owner.objects.assets.prefab(owner.ln.prefabs[kind === "slide" ? "slide_line_view" : "guide_line_view"]);
+    const comp = (f) => { const c = pf.nodes[0].components.find(f); return c ? c.fields : null; };
+    this.mr = comp((c) => c.type === "MeshRenderer");
+    this.mb = comp((c) => /NoteLineView$/.test(componentClass(c)));
     this.lineId = -1;
   }
   // LiveAllNoteView.TrySpawnNoteLine -> SetActiveLineView(true), SetSlideAlpha, ApplyNoteLine
@@ -446,7 +455,8 @@ export const musicScorePosition = (score, timeMs) => {
   return { bar: ref.bar + n, rhythm: Math.trunc(F(f * 8)) % 8, rhythmicUnit: 8, barProgress: F(f - n), timeMs };
 };
 
-// LiveAllBarLineView with its LiveBarLineViewContainer and LiveBarLineView (the view prefab: prefabs.bar_line_view).
+// LiveAllBarLineView with its LiveBarLineViewContainer and LiveBarLineView (the view prefab: scene.json
+// prefabs.barLineView).
 // Initialize: the score's BarLineTimeMsList and _beforePlayingTimeMs = (float) the display offset; each view rented
 // from the container gets SpriteRenderer.size.x = LaneCount x the lane unit and is parented to the container's
 // _elementRoot. UpdateFrame (at the top of UpdateNoteView): from the bar after the frame position's Bar, every bar
@@ -455,22 +465,24 @@ export const musicScorePosition = (score, timeMs) => {
 // reused are returned. LiveBarLineView.UpdateView: localPosition (0, y of the lerp from the spawn root to
 // GetNoteJudgementPosition(_laneCenter 0), 0), localScale the view progress. The sprite keeps its prefab sorting order.
 export class LiveBarLines {
-  constructor(owner, prefab, root) {
+  // id: the view prefab's root GameObject
+  constructor(owner, id, root) {
+    const O = owner.objects, prefab = O.assets.prefab(id);
     this.owner = owner; this.prefab = prefab; this.root = root;
     this.times = owner.score.barLineTimeMs || [];
-    const mb = prefab.nodes[0].components.find((c) => c.type === "MonoBehaviour" && c._renderer);
-    if (!mb || !mb._renderer.gameObject) throw new Error("bar line prefab: LiveBarLineView._renderer missing");
-    this.rendererPath = mb._renderer.gameObject;
-    const sr = prefab.nodes.find((n) => n.path === this.rendererPath).components.find((c) => c.type === "SpriteRenderer");
-    this.sprite = sr.m_Sprite; this.material = sr.m_Materials[0];
+    const mb = prefab.nodes[0].components.find((c) => c.type === "MonoBehaviour" && c.fields._renderer);
+    if (!mb || !mb.fields._renderer.gameObject) throw new Error("bar line prefab: LiveBarLineView._renderer missing");
+    this.rendererPath = mb.fields._renderer.gameObject;
+    const sr = prefab.nodes.find((n) => n.path === this.rendererPath).components.find((c) => c.type === "SpriteRenderer").fields;
+    this.sprite = O.sprite(sr.m_Sprite); this.material = O.material(sr.m_Materials[0]);
     this.active = []; this.pool = [];
   }
 
   // the container's _elementRoot relative to screen_root, from the live scene
   static elementRoot(scene) {
-    const nv = scene.component("LiveGameView/LiveGameCamera/screen_root/LiveGameAllNoteView", "LiveAllNoteView");
-    const bl = scene.component(nv._barLineView.gameObject, "LiveAllBarLineView");
-    const ct = scene.component(bl._container.gameObject, "LiveBarLineViewContainer");
+    const nv = scene.fields("LiveGameView/LiveGameCamera/screen_root/LiveGameAllNoteView", "LiveAllNoteView");
+    const bl = scene.fields(nv._barLineView.gameObject, "LiveAllBarLineView");
+    const ct = scene.fields(bl._container.gameObject, "LiveBarLineViewContainer");
     const top = scene.transform("LiveGameView/LiveGameCamera/screen_root");
     let m = mat4.identity();
     for (let t = scene.transform(ct._elementRoot.transform); t !== top; t = t.parent) {
@@ -483,7 +495,7 @@ export class LiveBarLines {
   _rent() {
     const v = this.pool.pop();
     if (v) return v;
-    const p = new NotePrefab(this.prefab), node = p.nodes.get(this.rendererPath), geo = this.owner.geo;
+    const p = new NotePrefab(this.prefab, null, this.owner.objects), node = p.nodes.get(this.rendererPath), geo = this.owner.geo;
     node.sprite = this.sprite;
     node.size = { x: F(F(geo.laneCount) * geo.unit), y: node.size.y };             // LiveBarLineView.Initialize
     return { p, node, progress: 0, dirty: false };
@@ -523,18 +535,20 @@ export class LiveBarLines {
 
 // ------------------------------------------------------------------ LiveAllNoteView (container of all views)
 export class LiveNotes {
-  // ln = livenotes/notes.json, score = score/<chart>.notes.json, opts.base = packed livenotes directory,
-  // opts.settings = the live settings (settings.js; absent: the data's option defaults), opts.displayOffsetMs = the
-  // executor's display offset, opts.skin = the note skin record (NoteDesignId; default ln.noteSkin)
-  constructor(gl, ln, score, opts = {}) {
-    this.gl = gl; this.ln = ln; this.score = score; this.base = opts.base || "livenotes";
-    this.skin = opts.skin || ln.noteSkin;
+  // objects = the live's LiveObjects, ln = notes.json, score = score/<chart>.notes.json, opts.skin = the note skin's
+  // noteskin.json (NoteDesignId), opts.settings = the live settings (settings.js; absent: the data's option defaults),
+  // opts.displayOffsetMs = the executor's display offset, opts.scene = the live scene's Prefab and opts.barLineView =
+  // the bar line view prefab (scene.json prefabs.barLineView), for the bar lines
+  constructor(gl, objects, ln, score, opts = {}) {
+    this.gl = gl; this.objects = objects; this.ln = ln; this.score = score;
+    // LiveNoteSkinAsset with its units, sprites and materials resolved
+    this.skin = objects.resolve(objects.mono(opts.skin.skin));
     this.notes = new Map(score.notes.map((n) => [n.id, n]));
     this.lines = new Map(score.lines.map((l) => [l.lineId, l]));
-    this._clips = new Map();
-    this.gl_ = gl ? new NoteGL(gl, this.base) : null;
-    // the bar line views' _elementRoot relative to screen_root (opts.scene: the live scene's Prefab)
-    this.barLineRoot = opts.scene && ln.prefabs.bar_line_view ? LiveBarLines.elementRoot(opts.scene) : null;
+    this.gl_ = gl ? new NoteGL(gl, objects) : null;
+    // the bar line views' _elementRoot relative to screen_root
+    this.barLineView = opts.barLineView || null;
+    this.barLineRoot = opts.scene && this.barLineView ? LiveBarLines.elementRoot(opts.scene) : null;
     this.configure(opts.settings, opts.displayOffsetMs);
   }
 
@@ -556,9 +570,9 @@ export class LiveNotes {
     this.displayOffsetMs = displayOffsetMs ?? s.noteDisplayTimeMs;
     // LiveAllBarLineView.Initialize runs always; with the option off (SetEnabled false) UpdateFrame does nothing
     if (this.showBarLines) {
-      if (!ln.prefabs.bar_line_view) throw new Error("MeasureLineDisplay: the bar line prefab (prefabs.bar_line_view) is not in the chart data");
+      if (!this.barLineView) throw new Error("MeasureLineDisplay: the bar line prefab (scene.json prefabs.barLineView) is needed");
       if (!this.barLineRoot) throw new Error("MeasureLineDisplay: the bar line container of the live scene is needed");
-      this.barLines = new LiveBarLines(this, ln.prefabs.bar_line_view, this.barLineRoot);
+      this.barLines = new LiveBarLines(this, this.barLineView, this.barLineRoot);
     } else this.barLines = null;
     // line kinds: skin + container values
     const sk = this.skin;
@@ -613,26 +627,32 @@ export class LiveNotes {
 
   // the bar line sprite's texture (MeasureLineDisplay turned on after load)
   async loadBarLineTexture() {
-    const pf = this.ln.prefabs.bar_line_view;
-    if (!this.gl_ || !pf) return;
-    for (const n of pf.nodes) for (const c of n.components) {
-      if (c.type === "SpriteRenderer" && c.m_Sprite && c.m_Sprite.texture) await this.gl_.texture(c.m_Sprite.texture);
+    if (!this.gl_ || !this.barLineView) return;
+    for (const n of this.objects.assets.prefab(this.barLineView).nodes) for (const c of n.components) {
+      if (c.type === "SpriteRenderer" && c.fields.m_Sprite) await this.gl_.texture(this.objects.sprite(c.fields.m_Sprite).texture);
     }
   }
 
-  clip(id) {
-    if (!this._clips.has(id)) this._clips.set(id, AnimClip.fromMecanim(this.ln.clips[id], id));
-    return this._clips.get(id);
+  // a flick view's arrow loop clip (the skin's OverrideLoopAnimation) as the Animator its LoopAnimationTimeSync
+  // (_loopAnimationTimeSync._animator) plays it
+  arrowClip(view, v) {
+    const pf = this.objects.assets.prefab(view.prefabId), ref = view.mb._loopAnimationTimeSync;
+    const node = ref && pf.nodes.find((n) => n.path === ref.gameObject);
+    const sync = node && node.components.find((c) => componentClass(c) === "LoopAnimationTimeSync");
+    if (!sync) throw new Error(`${pf.nodes[0].path}: no LoopAnimationTimeSync`);
+    return this.objects.clip(this.objects.id(v, "AnimationClip"), view.prefabId, sync.fields._animator.gameObject);
   }
 
   async load() {
     if (!this.gl_) return;
-    const g = this.gl_, want = new Map();
-    const add = (sp) => { if (sp && sp.texture) want.set(sp.texture.texture, sp.texture); };
-    const walk = (x) => { if (!x || typeof x !== "object") return; if (x.sprite && x.rect && x.texture) { add(x); return; }
+    const g = this.gl_, A = this.objects.assets, want = new Map();
+    const add = (sp) => { want.set(sp.texture.id, sp.texture); };
+    const isSprite = (x) => typeof x.id === "string" && A.hasObject(x.id) && A.object(x.id).class === "Sprite";
+    const walk = (x) => { if (!x || typeof x !== "object") return; if (isSprite(x)) { add(x); return; }
                           for (const v of Array.isArray(x) ? x : Object.values(x)) walk(v); };
     walk(this.skin);
-    add(this.ln.prefabs.pair_note_line.nodes.flatMap((n) => n.components).find((c) => c.type === "SpriteRenderer").m_Sprite);
+    const pair = A.prefab(this.ln.prefabs.pair_note_line).nodes.flatMap((n) => n.components).find((c) => c.type === "SpriteRenderer");
+    add(this.objects.sprite(pair.fields.m_Sprite));
     if (this.barLines) add(this.barLines.sprite);
     for (const d of want.values()) await g.texture(d);
     this._lineTex = {};
@@ -696,13 +716,13 @@ export class LiveNotes {
       view.setup(note.id, cw.width, cw.center, note.timeMs, note.critical);
       view.setViewProgress(1);
       view.updateView();
-      for (const n of view.renderers()) out.add(n.material || n.comp.m_Materials[0]);
+      for (const n of view.renderers()) out.add(n.material || n.materials[0]);
       if (this.showPairLines && note.pairNoteId && this.notes.has(note.pairNoteId)) pair = true;
       if (T.isLineBegin(note.op) && note.lineIds.length) body = true;
     }
     if (pair) {
       const pl = new PairLineView(this);
-      if (pl.r.enabled && pl.r.active) out.add(pl.r.comp.m_Materials[0]);
+      if (pl.r.enabled && pl.r.active) out.add(pl.r.materials[0]);
     }
     if (body) out.add(this.material);
     if (this.barLines && this.barLines.times.length) out.add(this.barLines.material);
@@ -728,9 +748,9 @@ export class LiveNotes {
     const at = (M, c) => { const p = mat4.transformPoint(M, c); return { p, d: Math.hypot(p.x - cam.x, p.y - cam.y, p.z - cam.z) }; };
     const sprite = (node, mpb = null) => {
       const comp = node.comp, M = mat4.mul(SR, node.t.localToWorld());
-      const mesh = g.spriteMesh(node.sprite, comp.m_DrawMode, node.size.x, node.size.y), tex = g.tex.get(node.sprite.texture.texture);
-      if (!tex) throw new Error(`texture not loaded: ${node.sprite.texture.texture}`);
-      const mats = node.material ? [node.material] : comp.m_Materials;               // sharedMaterial set by the view
+      const mesh = g.spriteMesh(node.sprite, comp.m_DrawMode, node.size.x, node.size.y), tex = g.tex.get(node.sprite.texture.id);
+      if (!tex) throw new Error(`texture not loaded: ${node.sprite.texture.name}`);
+      const mats = node.material ? [node.material] : node.materials;                 // sharedMaterial set by the view
       const { p, d } = at(M, mesh.center), sr = { m_Materials: mats, m_FlipX: node.flipX, m_FlipY: comp.m_FlipY };
       const queue = node.material ? LiveLane.queue(g.lib, node.material) : 3000;
       renderer.submit("game", { sortingLayer: comp.m_SortingLayer, sortingOrder: node.order, queue, distance: d,
@@ -745,10 +765,10 @@ export class LiveNotes {
       const BR = mat4.mul(SR, this.barLines.root);
       for (const n of this.barLines.renderers()) {
         const comp = n.comp, M = mat4.mul(BR, n.t.localToWorld());
-        const mesh = g.spriteMesh(n.sprite, comp.m_DrawMode, n.size.x, n.size.y), tex = g.tex.get(n.sprite.texture.texture);
-        if (!tex) throw new Error(`texture not loaded: ${n.sprite.texture.texture}`);
-        const { p, d } = at(M, mesh.center), mat = comp.m_Materials[0];
-        const sr = { m_Materials: comp.m_Materials, m_FlipX: n.flipX, m_FlipY: comp.m_FlipY };
+        const mesh = g.spriteMesh(n.sprite, comp.m_DrawMode, n.size.x, n.size.y), tex = g.tex.get(n.sprite.texture.id);
+        if (!tex) throw new Error(`texture not loaded: ${n.sprite.texture.name}`);
+        const { p, d } = at(M, mesh.center), mat = n.materials[0];
+        const sr = { m_Materials: n.materials, m_FlipX: n.flipX, m_FlipY: comp.m_FlipY };
         renderer.submit("game", { sortingLayer: comp.m_SortingLayer, sortingOrder: n.order, queue: LiveLane.queue(g.lib, mat),
                                   distance: d, center: p, draw: (ctx) => g.drawSprite(ctx, sr, tex, mesh, M, n.color) });
       }

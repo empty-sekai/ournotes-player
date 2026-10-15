@@ -17,9 +17,9 @@ import { F } from "../engine/core.js";
 //   reload  selects other files (score, skins, effect sets, quality): the session is created again
 //   none    read by the game, with no visible effect in an auto-played live (accepted, not applied)
 //
-// Defaults: the chart data's preset-1 values (livenotes settings.optionDefaults, livescene master
-// .optionDefaultsPreset1). Items the data does not carry fall back to the MasterOptionDefault / MasterOptionRange rows,
-// written below as `def` / `range` (the master's stored units).
+// Defaults: the live data's preset-1 values (notes.json and scene.json settings.optionDefaults). Items the data does
+// not carry fall back to the MasterOptionDefault / MasterOptionRange rows, written below as `def` / `range` (the
+// master's stored units).
 //
 // Live volumes (410-417): the game plays the live through the CRI categories Live*Config, whose volumes it keeps in
 // the device's local sound config, not in the options. A fresh install writes AppConfigDefaultData there
@@ -184,17 +184,19 @@ const parseAs = (o, s) => {
   return Number.parseInt(s, 10);
 };
 
-// Resolved chart context: defaults, ranges and the values the chart's files offer.
-//   live   live.json;  scene  livescene/scene.json;  notes  livenotes/notes.json;  audio  audio/live-audio.json
-//   info   the chart manifest (quality, options)
+// Resolved chart context: defaults, ranges and the values the live's files offer.
+//   live   live.json;  scene  scene.json;  notes  notes.json;  audio  the live's sounds (LiveData.audio())
+//   skins, effects   the names of the loaded note skins / note effect sets (LiveData.noteskins / noteeffects)
+//   info   the store's info (quality, options)
 export class LiveOptionContext {
-  constructor({ live = null, scene = null, notes = null, audio = null, info = null } = {}) {
+  constructor({ live = null, scene = null, notes = null, audio = null, info = null, skins = [], effects = [] } = {}) {
     this.live = live; this.scene = scene; this.notes = notes; this.audio = audio; this.info = info;
+    this.skins = skins; this.effects = effects;
     const ns = (notes && notes.settings) || {};
-    const sm = (scene && scene.master) || {};
+    const ss = (scene && scene.settings) || {};
     this._def = ns.optionDefaults || {};
-    this._def1 = sm.optionDefaultsPreset1 || {};
-    this._range = { ...(sm.optionRanges || {}), ...(ns.optionRanges || {}) };
+    this._def1 = ss.optionDefaults || {};
+    this._range = { ...(ss.optionRanges || {}), ...(ns.optionRanges || {}) };
     this.defaults = {};
     for (const o of LIVE_OPTIONS) this.defaults[o.name] = this._default(o);
   }
@@ -206,7 +208,7 @@ export class LiveOptionContext {
     }
     if (o.name === "NoteSePatternId" && this.audio && this.audio.noteSe && Number.isInteger(this.audio.noteSe.patternId))
       return this.audio.noteSe.patternId;
-    const s = this._def[o.name] ?? (this._def1[o.name] && this._def1[o.name].value) ?? o.def;
+    const s = this._def[o.name] ?? this._def1[o.name] ?? o.def;
     return parseAs(o, s);
   }
 
@@ -227,20 +229,20 @@ export class LiveOptionContext {
     const groupIds = groups ? Object.keys(groups).map(Number).sort((a, b) => a - b) : [this.defaults.NoteSePatternId];
     switch (o.name) {
       case "MirrorChart": return this.live && this.live.notesMirror ? [false, true] : [false];
-      // bar lines: the view prefab of the scene's LiveBarLineViewContainer (notes.json prefabs.bar_line_view)
-      case "MeasureLineDisplay": return this.notes && this.notes.prefabs && this.notes.prefabs.bar_line_view ? [false, true] : [false];
+      // bar lines: the view prefab of the scene's LiveBarLineViewContainer (scene.json prefabs.barLineView)
+      case "MeasureLineDisplay": return this.scene && this.scene.prefabs && this.scene.prefabs.barLineView ? [false, true] : [false];
       case "LiveQuality": {
         const q = this.info && this.info.options && this.info.options.LiveQuality;
         return Array.isArray(q) && q.length ? q.slice() : [this.defaults.LiveQuality];
       }
       case "NoteDesignId": {
-        // settings.skins: design id -> skin asset name; the records of the other skins: notes.json noteSkins
-        const recs = (this.notes && this.notes.noteSkins) || null;
-        const skins = ns.skins && recs ? Object.keys(ns.skins).map(Number).filter((id) => recs[ns.skins[id]]) : [];
+        // settings.skins: design id -> skin asset name; the ids whose skin is loaded
+        const skins = ns.skins ? Object.keys(ns.skins).map(Number).filter((id) => this.skins.includes(ns.skins[id])) : [];
         return [...new Set([this.defaults.NoteDesignId, ...skins])].sort((a, b) => a - b);
       }
       case "NoteEffectId": {
-        const fx = ns.effects ? Object.keys(ns.effects).map(Number) : [];
+        // settings.effects: effect id -> effect set name; the ids whose set is loaded
+        const fx = ns.effects ? Object.keys(ns.effects).map(Number).filter((id) => this.effects.includes(ns.effects[id])) : [];
         return [...new Set([this.defaults.NoteEffectId, ...fx])].sort((a, b) => a - b);
       }
       case "NoteSePatternId": return groupIds;
@@ -385,11 +387,11 @@ export const liveOptionItems = (ctx, s) => LIVE_OPTIONS.map((o) => ({
   offered: ctx.offered(o), hidden: !!o.hidden || MUTE_ITEMS.has(o.name), mute: o.mute || null,
 }));
 
-// The note effect set's asset name for NoteEffectId and LiveQuality, or null for the data's set (livenotes
-// settings.effect). MasterLiveNoteEffectSkin._assetName; at LiveQuality Low NoteSkinLoadStep.CollectDownloadAddresses
-// takes the set's Light variant (GetLightQualityAddress) when ResourceManager.ExistsAsset has it, else the set itself
-// (here: when notes.json assets has the variant's LiveNoteEffectAssetSettings). The lane effects do not follow the
-// set (LaneEffectLoadStep.GetAssetPath: always effect001).
+// The note effect set's asset name for NoteEffectId and LiveQuality, or null for the live's set (its noteeffect part).
+// MasterLiveNoteEffectSkin._assetName; at LiveQuality Low NoteSkinLoadStep.CollectDownloadAddresses takes the set's
+// Light variant (GetLightQualityAddress) when ResourceManager.ExistsAsset has it, else the set itself (here: when the
+// variant is among the loaded effect sets). The lane effects do not follow the set (LaneEffectLoadStep.GetAssetPath:
+// always effect001).
 export const liveNoteEffectName = (ctx, s) => {
   if (s.NoteEffectId === ctx.defaults.NoteEffectId && s.LiveQuality === ctx.defaults.LiveQuality) return null;
   const ns = (ctx.notes && ctx.notes.settings) || {};
@@ -397,8 +399,7 @@ export const liveNoteEffectName = (ctx, s) => {
     (s.NoteEffectId === ctx.defaults.NoteEffectId ? ns.effect : undefined);
   if (!base) throw new LiveSettingsError(`NoteEffectId ${s.NoteEffectId}: this chart's data has no effect set for it`);
   if (s.LiveQuality !== 2) return base;
-  const assets = (ctx.notes && ctx.notes.assets) || {};
-  return assets[`Effect/Live/NoteEffect/${base}Light/LiveNoteEffectAssetSettings`] ? `${base}Light` : base;
+  return ctx.effects.includes(`${base}Light`) ? `${base}Light` : base;
 };
 
 // the changed names grouped by how they apply: {none, live, noteSe, boot, reload} (boot: re-simulation needed or a

@@ -1,6 +1,6 @@
 import { Gradient } from "./anim.js";
 import { F, join } from "./core.js";
-import { assetsOf } from "../data/assets.js";
+import { assetsOf, hexBytes } from "../data/assets.js";
 import { ShaderLib, applyState } from "./glsl.js";
 import { mat4, quat } from "./math.js";
 import { UnityRandom } from "./random.js";
@@ -471,7 +471,7 @@ export class FxParticleSystem {
     const r = rendererComp && rendererComp.m_Enabled ? rendererComp : null;
     this._rendererComp = rendererComp || null;
     this._rendererConfig = undefined;
-    this.renderer = r ? this._alignSettings(FxParticleSystem._rendererSettings(r)) : null;
+    this.renderer = r ? this._alignSettings(this._rendererSettings(r)) : null;
     this.sortingOrder = r ? r.m_SortingOrder | 0 : 0;     // LiveParticleOrderInLayerSetter may overwrite
     this.renderUnsupported = [];
     if (this.renderer) {
@@ -498,15 +498,25 @@ export class FxParticleSystem {
     this._pausedFrom = null;
   }
 
-  // ParticleSystemRenderer serialized fields -> renderer settings
-  static _rendererSettings(r) {
+  // a mesh value of the data (ParticleSystemRenderer.m_Mesh, ShapeModule.m_Mesh): {vertices, normals, uv0, submeshes}
+  // through the materials' source (FxMaterials.mesh), the value itself without materials
+  _mesh(v) { return this.materials && v ? this.materials.mesh(v) : v || null; }
+
+  _rendererSettings(r) {
+    const bytes = (v) => (this.materials ? this.materials.bytes(v) : v);
+    return { ...FxParticleSystem._rendererSettings(r, bytes), mesh: this._mesh(r.m_Mesh) };
+  }
+
+  // ParticleSystemRenderer serialized fields -> renderer settings (`mesh` as stored); bytes(v): a byte array of the
+  // data as numbers
+  static _rendererSettings(r, bytes = (v) => v) {
     const v3 = (o) => [F(o.x), F(o.y), F(o.z)];
     return {
       renderMode: r.m_RenderMode, alignment: r.m_RenderAlignment, pivot: v3(r.m_Pivot), flip: v3(r.m_Flip),
       minSize: F(r.m_MinParticleSize), maxSize: F(r.m_MaxParticleSize), sortMode: r.m_SortMode,
       sortingLayer: r.m_SortingLayer | 0, sortingLayerID: r.m_SortingLayerID | 0, normalDirection: F(r.m_NormalDirection),
       maskInteraction: r.m_MaskInteraction | 0, sortingFudge: F(r.m_SortingFudge || 0),
-      streams: r.m_UseCustomVertexStreams ? r.m_VertexStreams.slice() : [0, 1, 3, 4],
+      streams: r.m_UseCustomVertexStreams ? Array.from(bytes(r.m_VertexStreams)) : [0, 1, 3, 4],
       mesh: r.m_Mesh || null, materials: (r.m_Materials || []).filter(Boolean),
       lengthScale: F(r.m_LengthScale ?? 2), velocityScale: F(r.m_VelocityScale || 0),
       cameraVelocityScale: F(r.m_CameraVelocityScale || 0), freeformStretching: !!r.m_FreeformStretching,
@@ -555,7 +565,7 @@ export class FxParticleSystem {
   // renderer settings also for a disabled renderer (null without a ParticleSystemRenderer component)
   get rendererConfig() {
     if (this._rendererConfig === undefined)
-      this._rendererConfig = this.renderer || (this._rendererComp ? this._alignSettings(FxParticleSystem._rendererSettings(this._rendererComp)) : null);
+      this._rendererConfig = this.renderer || (this._rendererComp ? this._alignSettings(this._rendererSettings(this._rendererComp)) : null);
     return this._rendererConfig;
   }
 
@@ -937,7 +947,7 @@ export class FxParticleSystem {
   // m_MeshMaterialIndex with m_UseMeshMaterialIndex), with cumulative areas and edge lengths for the placement modes
   // (placementMode: 0 Vertex, 1 Edge, 2 Triangle). Spawn modes other than Random and mesh colours raise FxError.
   _meshShape(S) {
-    const m = S.m_Mesh;
+    const m = this._mesh(S.m_Mesh);
     if (!m || !m.vertices || !m.vertices.length) { this.unsupported.push("shape mesh without mesh data"); return; }
     if (S.m_MeshSpawn && (S.m_MeshSpawn.mode | 0) !== 0) this.unsupported.push(`shape mesh spawn mode ${S.m_MeshSpawn.mode}`);
     if (S.m_UseMeshColors && m.colors) this.unsupported.push("shape mesh colours");
@@ -1578,11 +1588,19 @@ export class FxParticleSystem {
 };
 
 // ------------------------------------------------------------------------------------------------ materials
-// Entries of a renderer's m_Materials (exported: material, shader.shader, keywords, renderQueue, textures
-// {name: {texture: desc | null, scale, offset}}, floats, ints, colors) drawn with the game's HLSLcc GLES3 programs
-// through ShaderLib(gl, "<base>/shaders"), resolved as for the other live materials: shader
-// property defaults under the material values, the keywords select the variant (pass 0 of subshader 0), render queue
-// -1 -> the shader's Queue tag. Used by the particle renderers and by the effect SpriteRenderers (fx-effects.js).
+// The materials of renderers (m_Materials entries) drawn with the game's HLSLcc GLES3 programs, resolved as for the
+// other live materials: shader property defaults under the material values, the keywords select the variant (pass 0
+// of subshader 0), render queue -1 -> the shader's Queue tag. Used by the particle renderers and by the effect
+// SpriteRenderers (fx-effects.js). The values come from one of two sources:
+//   new FxMaterials(gl, base)          inline records of a data file: a material {material, shader: {shader: name},
+//                                      keywords, renderQueue, textures {name: {texture: descriptor | null, scale,
+//                                      offset}}, floats, ints, colors}, textures as exported descriptors under `base`,
+//                                      sprites, meshes and byte arrays inline, shaders packed under <base>/shaders
+//   FxMaterials.fromObjects(gl, objs)  references to the objects of a store, read through `objs`: material(v) ->
+//                                      {id, material, shader (Shader object id), keywords, renderQueue, textures {name:
+//                                      {texture: texture record | null, scale, offset}}, floats, ints, colors},
+//                                      texture(id) -> Promise<GLTex>, sprite(v), mesh(v), shaderInfo(id), and its
+//                                      ShaderLib `lib` (by Shader object id)
 // Uniform sheets per draw, highest priority first: the draw's sheet (MaterialPropertyBlock-like), ctx.perObject(M),
 // the material, the shader defaults, ctx.globals (per camera), then FxMaterials.ENGINE (values no one sets).
 // ENGINE: _TextureSampleAdd / _ClipRect / _UIMaskSoftnessX|Y are set by uGUI's CanvasRenderer only; 0 outside a canvas.
@@ -1593,9 +1611,10 @@ export class FxParticleSystem {
 // (m_EnableGPUInstancing) is not used: the shaders have no procedural-instancing variant, so Unity builds the vertices
 // on the CPU as here.
 export class FxMaterials {
-  constructor(gl, base = "livenotes") {
+  constructor(gl, base = "livenotes", objects = null) {
     this.gl = gl;
     this.base = base;
+    this.objects = objects;
     this.mats = new Map();
     this.lib = null;
     this.loaded = false;
@@ -1605,17 +1624,41 @@ export class FxMaterials {
     this._tex = new Map();
   }
 
-  // parsed shader JSON through assets (works with gl = null when assets can read the packed files)
-  shaderInfo(name) {
-    if (!this._info.has(name)) {
+  static fromObjects(gl, objects) { return new FxMaterials(gl, null, objects); }
+
+  // the material a value of the data names: {key, material, shader, keywords, renderQueue, textures, floats, ints,
+  // colors} (key: one per material of the source)
+  record(v) {
+    if (!v) throw new FxError("material record missing");
+    if (this.objects) { const m = this.objects.material(v); return { ...m, key: m.id }; }
+    if (!v.shader) throw new FxError("material record missing");
+    return { ...v, key: `${v.material}\u0000${v.shader.shader}`, shader: v.shader.shader };
+  }
+
+  // a sprite value of the data: {name, texture, rect, border, pivot, pixelsToUnits, vertices, uv, indices, settingsRaw}
+  sprite(v) {
+    if (!v) return null;
+    return this.objects ? this.objects.sprite(v) : { ...v, name: v.sprite };
+  }
+
+  // a mesh value of the data: {vertices, normals, uv0, submeshes (flat triangle indices)}
+  mesh(v) { return this.objects ? this.objects.mesh(v) : v; }
+
+  // a byte array of the data ({"$hex"} in an object, numbers in a packed directory)
+  bytes(v) { return this.objects ? hexBytes(v) : v; }
+
+  // parsed shader JSON (works with gl = null when the store can read the shader files)
+  shaderInfo(shader) {
+    if (this.objects) return this.objects.shaderInfo(shader);
+    if (!this._info.has(shader)) {
       const assets = assetsOf(this.gl);
       if (!this._index)
         this._index = new Map(assets.json(join(this.base, "shaders", "shaders.json")).map((r) => [r.name, r]));
-      const rec = this._index.get(name);
-      if (!rec) throw new FxError(`shader not packed: ${name}`);
-      this._info.set(name, assets.json(join(this.base, "shaders", rec.parsed)));
+      const rec = this._index.get(shader);
+      if (!rec) throw new FxError(`shader not packed: ${shader}`);
+      this._info.set(shader, assets.json(join(this.base, "shaders", rec.parsed)));
     }
-    return this._info.get(name);
+    return this._info.get(shader);
   }
 
   // ShaderLab "Queue" tag -> render queue (Background 1000, Geometry 2000, AlphaTest 2450, GeometryLast 2500,
@@ -1636,13 +1679,12 @@ export class FxMaterials {
     return FxMaterials.queueFromTag(q ? q[1] : undefined);
   }
 
-  get(record) {
-    if (!record || !record.shader) throw new FxError("material record missing");
-    const key = `${record.material}\u0000${record.shader.shader}`;
-    let m = this.mats.get(key);
+  get(v) {
+    const record = this.record(v);
+    let m = this.mats.get(record.key);
     if (!m) {
       m = new FxMaterial(this, record);
-      this.mats.set(key, m);
+      this.mats.set(record.key, m);
       if (this.loaded && this.gl) m._pending = m._load();
     }
     return m;
@@ -1655,7 +1697,7 @@ export class FxMaterials {
     const gl = this.gl;
     if (!gl) return;
     if (!this.lib) {
-      this.lib = new ShaderLib(gl, join(this.base, "shaders"));
+      this.lib = this.objects ? this.objects.lib : new ShaderLib(gl, join(this.base, "shaders"));
       this.solid = {
         white: GLTex.solid(gl, [255, 255, 255, 255], "white"), black: GLTex.solid(gl, [0, 0, 0, 255], "black"),
         gray: GLTex.solid(gl, [128, 128, 128, 255], "gray"), bump: GLTex.solid(gl, [128, 128, 255, 255], "bump"),
@@ -1667,9 +1709,11 @@ export class FxMaterials {
     for (const m of [...this.mats.values()]) await (m._pending || (m._pending = m._load()));
   }
 
-  texture(desc) {
-    if (!this._tex.has(desc.texture)) this._tex.set(desc.texture, GLTex.load(this.gl, this.base, desc));
-    return this._tex.get(desc.texture);
+  // the GL texture of a material's or sprite's texture (an exported descriptor, or a texture record of the store)
+  texture(t) {
+    if (this.objects) return this.objects.texture(t.id);
+    if (!this._tex.has(t.texture)) this._tex.set(t.texture, GLTex.load(this.gl, this.base, t));
+    return this._tex.get(t.texture);
   }
 };
 
@@ -1677,11 +1721,12 @@ FxMaterials.ENGINE = { _TextureSampleAdd: [0, 0, 0, 0], _ClipRect: [0, 0, 0, 0],
 FxMaterials.ENGINE_STATE = { unity_GUIZTestMode: 4 };
 
 export class FxMaterial {
+  // record: FxMaterials.record
   constructor(owner, record) {
     this.owner = owner;
     this.record = record;
     this.name = record.material;
-    this.shader = record.shader.shader;
+    this.shader = record.shader;
     this.keywords = record.keywords || [];
     this.ready = false;
     this._queue = undefined;

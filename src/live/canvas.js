@@ -1,5 +1,4 @@
 import { F } from "../engine/core.js";
-import { GLTex } from "../engine/texture.js";
 import { UIDraw, UIImage, UILayout, UIMesh, UINode, UISprite, uiColor32 } from "../engine/ugui.js";
 import { LiveCopyProgram, LiveLightWeightBackground } from "./background.js";
 import { LiveLane, LiveLaneLayout } from "./lane.js";
@@ -29,7 +28,7 @@ export class LiveRenderCanvas {
   constructor(renderer) {
     this.r = renderer; this.gl = renderer.gl; this.lib = renderer.lib; this.prefab = renderer.prefab; this.scene = renderer.scene;
     this.ROOT = "Live/RenderCanvas";
-    this.canvasComp = this.prefab.component(this.ROOT, "Canvas");
+    this.canvasComp = this.prefab.fields(this.ROOT, "Canvas");
     this.sortingOrder = LiveLane.sortingOrder(this.prefab, this.ROOT, this.canvasComp.m_SortingOrder);
     // UINode tree of the canvas (CanvasGroup components folded into the records UINode reads)
     const nodes = new Map();
@@ -37,7 +36,7 @@ export class LiveRenderCanvas {
       if (path !== this.ROOT && !path.startsWith(`${this.ROOT}/`)) continue;
       const cg = e.node.components.find((c) => c.type === "CanvasGroup");
       const parent = path === this.ROOT ? null : nodes.get(path.slice(0, path.lastIndexOf("/")));
-      nodes.set(path, new UINode({ ...e.node, canvasGroup: cg }, parent));
+      nodes.set(path, new UINode({ ...e.node, canvasGroup: cg ? cg.fields : null }, parent));
     }
     this.nodes = nodes;
     this.root = nodes.get(this.ROOT);
@@ -50,7 +49,7 @@ export class LiveRenderCanvas {
     for (const k of ["LightWeightBackgroundStageImage", "LightWeightBackgroundShadowImage"]) n(k).activeSelf = true;
     for (const k of ["LightWeightCompositeRoot", "LightWeightBackgroundSuppertCardImage", "MVImage"]) n(k).activeSelf = false;
     this.configure(renderer.settings);
-    const comp = (node, cls) => this.prefab.component(node.path, cls);
+    const comp = (node, cls) => this.prefab.fields(node.path, cls);
     this.graphics = new Map([
       [this.stage, { kind: "raw", g: comp(this.stage, "RawImage") }],
       [this.shadow, { kind: "image", g: comp(this.shadow, "Image") }],
@@ -61,7 +60,8 @@ export class LiveRenderCanvas {
   }
 
   _material(m) {                            // m_Material null -> Default UI Material (UI/Default, property defaults)
-    const mat = m || { material: "Default UI Material", shader: { shader: "UI/Default" }, keywords: [], floats: {}, colors: {} };
+    const mat = m ? this.r.objects.material(m)
+      : { material: "Default UI Material", shader: "UI/Default", keywords: [], floats: {}, colors: {} };
     return liveMaterialSheets(this.lib, mat, this.r.tex);
   }
 
@@ -77,10 +77,10 @@ export class LiveRenderCanvas {
 
   async load() {
     const gl = this.gl;
-    this.bg = await LiveLightWeightBackground.build(gl, this.lib, this.scene, this.prefab, this.r.base, this.r.vao);
-    const sp = this.graphics.get(this.shadow).g.m_Sprite;
-    const atlas = await GLTex.load(gl, this.r.base, sp.texture);
-    this.shadowSprite = new UISprite(sp.sprite, { ...sp, pixelsPerUnit: sp.pixelsToUnits }, atlas);
+    this.bg = await LiveLightWeightBackground.build(gl, this.r.objects, this.prefab, this.r.sprites, this.r.vao);
+    const sp = this.r.objects.sprite(this.graphics.get(this.shadow).g.m_Sprite);
+    const atlas = await this.r.objects.texture(sp.texture.id);
+    this.shadowSprite = new UISprite(sp.name, { ...sp, pixelsPerUnit: sp.pixelsToUnits }, atlas);
     this.buf = { vao: gl.createVertexArray(), vbo: gl.createBuffer(), ibo: gl.createBuffer() };
     for (const e of this.graphics.values()) e.mat = this._material(e.g.m_Material);
     // AspectRatioFitter.aspectRatio = (float)tex.width / (float)tex.height of the composite (FullInitialize)

@@ -57,27 +57,45 @@ export class AnimClip {
     this.events = (desc.events || []).map((e) => ({ ...e, time: F(e.time) }));
   }
 
-  // raw Mecanim clip. The discrete curves supported are PPtr curves on SpriteRenderer.m_Sprite (the SpriteRenderer
-  // binding with attribute 0) in the streamed clip. Dense curves, other discrete curves and discrete curves outside
-  // the streamed clip are not implemented (raising keeps other data from being sampled wrongly).
+  // A raw Mecanim clip whose bindings carry their path and attribute ({path, typeID, class, attribute, curves, pptr}).
+  // The discrete curves supported are PPtr curves on SpriteRenderer.m_Sprite (the SpriteRenderer binding with
+  // attribute 0) in the streamed clip. Dense curves, other discrete curves and discrete curves outside the streamed
+  // clip are not implemented (raising keeps other data from being sampled wrongly).
   static fromMecanim(clip, key = clip.name) {
-    const name = key;
+    // a PPtr curve on m_Sprite is stored without attribute (the exporter keeps none for object curves)
+    return AnimClip._mecanim(clip, key, clip.bindings.map((b) => ({
+      path: b.path, cls: b.class, typeID: b.typeID, curves: b.curves || 1, pptr: !!b.pptr,
+      attribute: b.pptr && b.attribute == null && !b.attributeCrc ? "m_Sprite" : b.attribute })));
+  }
+
+  // An AnimationClip object (clip.json: the raw Mecanim data and the bindings as stored) played by an Animator whose
+  // hierarchy names its bindings: `names[i]` = {path, attribute} of binding i in that hierarchy (a product's bindings
+  // table, AnimBindings); a path null binds nothing there. A binding animates `curves` consecutive curves (default 1).
+  static fromObject(clip, names, key = clip.name) {
+    if (!Array.isArray(names) || names.length !== clip.bindings.length)
+      throw new AnimError(`clip ${key}: ${names ? names.length : "no"} names for ${clip.bindings.length} bindings`);
+    return AnimClip._mecanim(clip, key, clip.bindings.map((b, i) => ({
+      path: names[i].path, cls: b.class, typeID: b.typeID, attribute: names[i].attribute, curves: b.curves || 1,
+      pptr: !!b.pptr })));
+  }
+
+  static _mecanim(clip, name, named) {
     if (clip.startTime !== 0 || clip.cycleOffset) throw new AnimError(`clip ${name}: start time / cycle offset`);
     if (clip.dense.curveCount) throw new AnimError(`clip ${name}: dense curves not implemented`);
     if (clip.discreteCurveCount) throw new AnimError(`clip ${name}: discrete curves outside the streamed clip`);
     const nD = clip.streamed.discreteCurveCount || 0, objects = clip.pptrCurveMapping || [];
     const bindings = [];
-    for (const b of clip.bindings) {
+    for (const b of named) {
       if (b.pptr) {
-        if (b.typeID !== 212 || b.attribute != null || b.attributeCrc)
-          throw new AnimError(`clip ${name}: PPtr curve ${b.class}.${b.attribute ?? b.attributeCrc} not implemented`);
-        bindings.push({ path: b.path, cls: b.class, typeID: b.typeID, attr: "m_Sprite", pptr: true });
+        if (b.typeID !== 212 || b.attribute !== "m_Sprite")
+          throw new AnimError(`clip ${name}: PPtr curve ${b.cls}.${b.attribute} not implemented`);
+        bindings.push({ path: b.path, cls: b.cls, typeID: b.typeID, attr: "m_Sprite", pptr: true });
         continue;
       }
-      const comps = ANIM_COMPONENTS[b.curves || 1];
+      const comps = ANIM_COMPONENTS[b.curves];
       if (!comps) throw new AnimError(`clip ${name}: binding with ${b.curves} curves`);
       for (const c of comps)
-        bindings.push({ path: b.path, cls: b.class, typeID: b.typeID, attr: `${b.attribute}${c}` });
+        bindings.push({ path: b.path, cls: b.cls, typeID: b.typeID, attr: `${b.attribute}${c}` });
     }
     const nS = clip.streamed.curveCount + nD;
     if (bindings.length !== nS + clip.constant.length) throw new AnimError(`clip ${name}: binding count`);
@@ -181,11 +199,11 @@ export const crc32 = (s) => {
 // (index), anyState: [transition], parameters: Map name -> {type, value}}. transition = {destination, duration,
 // offset, exitTime, hasExitTime, fixedDuration, canTransitionToSelf, conditions: [{mode, event, threshold}]}.
 export const AnimController = {
-  // raw AnimatorController: clips[i].clip keys into `clipOf(key)` -> AnimClip
+  // raw AnimatorController: `clipOf(entry, index)` -> AnimClip for each entry of its `clips` (a clip reference)
   fromMecanim(ctrl, clipOf) {
     if (ctrl.layers.length !== 1) throw new AnimError(`${ctrl.name}: ${ctrl.layers.length} layers`);
     const sm = ctrl.stateMachines[ctrl.layers[0].stateMachine];
-    const clips = ctrl.clips.map((c) => clipOf(c.clip));
+    const clips = ctrl.clips.map((c, i) => clipOf(c, i));
     const states = sm.states.map((s) => {
       if (s.cycleOffset || s.mirror || s.speedParam || s.timeParam) throw new AnimError(`${ctrl.name}.${s.name}: state settings`);
       if (s.blendTrees.length > 1 || (s.blendTrees[0] && s.blendTrees[0].length !== 1))
@@ -199,6 +217,32 @@ export const AnimController = {
     return { name: ctrl.name, states, defaultState: sm.defaultState, anyState: sm.anyStateTransitions, parameters };
   },
 };
+
+// The clip bindings of a product's documents: {prefab GameObject id: {Animator node path: {clip id: [{path,
+// attribute}]}}}, the path and attribute each binding of a clip names when the Animator at that node plays it (paths
+// relative to the Animator's GameObject; null: nothing of the hierarchy there). Several tables merge; an entry two
+// tables both give must be the same.
+export class AnimBindings {
+  constructor(tables = []) {
+    this.table = new Map();               // "<prefab>\u0000<path>\u0000<clip>" -> names
+    for (const t of tables)
+      for (const [prefab, animators] of Object.entries(t || {}))
+        for (const [path, clips] of Object.entries(animators))
+          for (const [clip, names] of Object.entries(clips)) {
+            const k = `${prefab}\u0000${path}\u0000${clip}`, seen = this.table.get(k);
+            if (seen && JSON.stringify(seen) !== JSON.stringify(names))
+              throw new AnimError(`bindings of clip ${clip} at ${path} of ${prefab} differ between documents`);
+            this.table.set(k, names);
+          }
+  }
+
+  // the names of clip `clip` played by the Animator at `path` of the prefab (or scene root) `prefab`
+  names(prefab, path, clip) {
+    const n = this.table.get(`${prefab}\u0000${path}\u0000${clip}`);
+    if (!n) throw new AnimError(`no bindings of clip ${clip} for the Animator at ${path} of ${prefab}`);
+    return n;
+  }
+}
 
 // ------------------------------------------------------------------- Animator
 // The state time advances in the animation phase before sampling, so a state entered this frame is first sampled
