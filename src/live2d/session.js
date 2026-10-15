@@ -8,6 +8,7 @@ import { GLTex } from "../engine/texture.js";
 import { Live2DCharacter } from "./character.js";
 import { cubismCore } from "./cubism.js";
 import { Live2DDrawing } from "./drawing.js";
+import { isLegacyModel, legacyModel } from "./legacy.js";
 import { modelIndex } from "./model.js";
 
 // ModelSession: one Live2D model of the game's ADV, running idle as the story shows a character (auto eye blink,
@@ -60,7 +61,8 @@ export class ModelSession {
 
   // opts:
   //   gl           WebGL2RenderingContext (required); used by this session alone while it lives
-  //   assets       AssetStore of the model (required): model.json and the objects it names
+  //   assets       AssetStore of the model (required): model.json and the objects it names, or the files of a model
+  //                manifest of format 2 (read through legacy.js; `info` is then the product form)
   //   motion, expression   shown first (default: the model's default motion / expression); loop: replay that motion
   //   physics, breath      CubismPhysicsController and the harmonic breath on (default true)
   //   seed         seed of the auto eye blink's random intervals (default: from the clock)
@@ -82,6 +84,7 @@ export class ModelSession {
                 width, height, onMotion = null } = {}) {
     if (!gl) throw new Error("ModelSession: a WebGL2 context is required");
     if (!assets) throw new Error("ModelSession: an AssetStore is required");
+    if (isLegacyModel(assets.info)) assets = legacyModel(assets);
     await cubismCore();
     bindAssets(gl, assets);
     this.gl = gl; this.assets = assets;
