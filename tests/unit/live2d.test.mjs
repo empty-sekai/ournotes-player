@@ -59,20 +59,23 @@ test("parameter writes clamp to the moc3 range (override, add, multiply) and the
   assert.deepEqual([...parts], [1, 0.5]);
 });
 
-const clipData = (extra = {}) => ({
-  clip: "mtn_test", stopTime: 2, loopTime: true, startTime: 0, cycleOffset: 0,
+// [clip.json, model.json names] of a clip whose `bindings` are {path, class, attribute}: a MonoBehaviour binding
+// names its script class, a Transform binding its type
+const clipData = ({ bindings = [{ path: "Parameters/A", class: "CubismParameter", attribute: "Value" },
+                                { path: "Parameters/B", class: "CubismParameter", attribute: "Value" }], ...extra } = {}) => [{
+  name: "mtn_test", stopTime: 2, loopTime: true, startTime: 0, cycleOffset: 0,
   events: [{ functionName: "InstanceId", intParameter: -7 }],
   dense: { curveCount: 0 },
-  bindings: [{ path: "Parameters/A", class: "CubismParameter", attribute: "Value" },
-             { path: "Parameters/B", class: "CubismParameter", attribute: "Value" }],
+  bindings: bindings.map((b) => (b.class === "Transform" ? { typeID: 4, class: "Transform", pptr: false }
+    : { typeID: 114, class: "MonoBehaviour", scriptClass: `Test||${b.class}`, pptr: false })),
   streamed: { curveCount: 1, frames: [[0, [[0, 0, 0, 1, 0]]], [1, [[0, 0, 0, 0, 1]]]] },
   constant: [4],
   ...extra,
-});
+}, bindings.map(({ path, attribute }) => ({ path, attribute }))];
 
 test("a clip writes its streamed cubic keys and constants raw, wrapped past its length", () => {
   const P = new Live2DParameters(fakeCore(["A", "B"], [-10, -10], [10, 10], [0, 0]));
-  const c = new Live2DClip(clipData(), P);
+  const c = new Live2DClip(...clipData(), P);
   assert.equal(c.instanceId, -7);
   const v = new Float32Array(2);
   c.write(0.5, v);
@@ -81,15 +84,15 @@ test("a clip writes its streamed cubic keys and constants raw, wrapped past its 
   assert.equal(v[0], 1);                              // segment 1: constant 1
   c.write(2.5, v);                                    // past the length: 0.5 wrapped
   assert.equal(v[0], 0.5);
-  assert.equal(new Live2DClip(clipData({ loopTime: false }), P).localTime(2.5), 2);
-  assert.throws(() => new Live2DClip(clipData({ dense: { curveCount: 1 } }), P), /dense/);
-  assert.throws(() => new Live2DClip(clipData({ bindings: [{ path: "X", class: "Transform", attribute: "m_LocalPosition" }] }), P),
+  assert.equal(new Live2DClip(...clipData({ loopTime: false }), P).localTime(2.5), 2);
+  assert.throws(() => new Live2DClip(...clipData({ dense: { curveCount: 1 } }), P), /dense/);
+  assert.throws(() => new Live2DClip(...clipData({ bindings: [{ path: "X", class: "Transform", attribute: "m_LocalPosition" }] }), P),
                 /binding/);
 });
 
 test("a clip skips unbound curves and writes the model curves' controller fields", () => {
   const P = new Live2DParameters(fakeCore(["A", "B"], [-10, -10], [10, 10], [0, 0]));
-  const c = new Live2DClip(clipData({
+  const c = new Live2DClip(...clipData({
     bindings: [{ path: "", class: "CubismEyeBlinkController", attribute: "EyeOpening" },
                { path: null, class: "CubismParameter", attribute: null },
                { path: "Parameters/B", class: "CubismParameter", attribute: "Value" },

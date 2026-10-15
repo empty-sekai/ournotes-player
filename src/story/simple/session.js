@@ -158,15 +158,15 @@ export class SimpleStorySession {
     const storyLib = gl ? new ShaderLib(gl, "shaders", store) : null;     // the story's shaders (URP post)
     const renderer = this.renderer = gl ? new SimpleCaptureRenderer(gl, loop, { assets: store }) : null;
     // each character's model and the shaders it draws with (models.js)
-    const modelOf = storyModels(gl, store, story, what, { lib: storyLib, resources: scene.resources });
+    const modelOf = storyModels(gl, store, story, what);
     for (const c of episode.commands) {
       if (c.cmd !== "Character" || c.IgnoreData) continue;
       if (characters.has(c.TargetName, c.TargetAssetIndex || 0)) continue;
       const { model, lib } = modelOf(`Character/Live2D/${c.TargetAssetName}`);
-      const ch = new Live2DCharacter(store.json(model.prefab), store.arrayBuffer(model.moc3), loop, { random, motionSync });
+      const ch = new Live2DCharacter(store, model, loop, { random, motionSync });
       ch.setParent(pool);
       characters.add(c.TargetName, c.TargetAssetIndex || 0, ch);
-      if (renderer) renderer.addCharacter(ch, { lib, dir: model.textureDir, resources: model.resources });
+      if (renderer) renderer.addCharacter(ch, { lib, model });
     }
     // one CameraTargetRenderer per slot under the runtime parent (the host manager's transform)
     const desc = cameraTargetDesc(host);

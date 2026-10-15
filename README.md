@@ -152,7 +152,7 @@ nnnotes 从使用者自己的游戏文件生成这样的站点，例如：
 nnnotes web out/site --all --all-live2d --all-stories --player <ournotes-player 目录>
 ```
 
-- 播放器也读取较早格式的数据：未编码的资源，以及把模型文件放在每集剧情之内的剧情清单（`ournotes.story-manifest/1`）。
+- 播放器也读取未编码存放的资源。
 - 托管方式（路径、CORS、编码资源、缓存）：[docs/embedding.md](docs/embedding.md#hosting-the-data)。以 brotli 编码的站点要在 Chromium 系浏览器中播放，需以 `Content-Encoding: br` 提供 `.br` 资源。
 - 校验：`npm run validate-data -- <站点目录>` 按数据格式与 `schema/` 检查谱面、模型与剧情，包括剧情与其模型之间的对应。
 

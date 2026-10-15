@@ -3,6 +3,11 @@ import { Transform } from "./math.js";
 // Prefab: Transform hierarchy and component lookup over an exported prefab node list
 // (hierarchy order, local TRS, components in GameObject order).
 
+// A component's class: a MonoBehaviour's script class (the last part of a prefab.json component's `script`,
+// "assembly|namespace|class"; the `class` of a component in a chart or story file), else the component's type.
+export const componentClass = (c) =>
+  (typeof c.script === "string" ? c.script.slice(c.script.lastIndexOf("|") + 1) : (c.class || c.type));
+
 export class Prefab {
   constructor(exported) {
     this.key = exported.key;
@@ -37,7 +42,7 @@ export class Prefab {
   components(path, cls) {
     const e = this.nodes.get(path);
     if (!e) throw new Error(`${this.key}: no node ${path}`);
-    return e.node.components.filter((c) => (cls ? (c.class || c.type) === cls : true));
+    return e.node.components.filter((c) => (cls ? componentClass(c) === cls : true));
   }
 
   component(path, cls) {
@@ -50,7 +55,7 @@ export class Prefab {
   find(cls) {
     const hits = [];
     for (const [path, e] of this.nodes)
-      for (const c of e.node.components) if ((c.class || c.type) === cls) hits.push({ path, c });
+      for (const c of e.node.components) if (componentClass(c) === cls) hits.push({ path, c });
     if (hits.length !== 1) throw new Error(`${this.key}: ${hits.length} ${cls}`);
     return hits[0];
   }

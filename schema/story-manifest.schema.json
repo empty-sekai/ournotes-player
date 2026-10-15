@@ -4,24 +4,17 @@
   "title": "Story manifest (stories/<advId>.json, or stories/<region>/<advId>.json)",
   "description": "The logical files of one story (common files and one group per language) and where their bytes are; the file entries are those of a chart manifest. See docs/story-data-format.md.",
   "type": "object",
-  "required": ["format", "advId", "story", "language", "audio", "audioFormat", "fonts", "requires", "files", "languages"],
-  "anyOf": [
-    { "properties": { "format": { "const": "ournotes.story-manifest/1" } } },
-    { "properties": { "format": { "const": "ournotes.story-manifest/2" } }, "required": ["root", "models"] }
-  ],
+  "required": ["format", "advId", "root", "models", "story", "language", "audio", "audioFormat", "fonts", "requires", "files", "languages"],
   "properties": {
-    "format": {
-      "description": "ournotes.story-manifest/2: the Live2D models are model manifests of the site (models); /1: the models' files are among the story's files.",
-      "enum": ["ournotes.story-manifest/1", "ournotes.story-manifest/2"]
-    },
+    "format": { "const": "ournotes.story-manifest/2" },
     "advId": { "type": "integer", "minimum": 1 },
     "root": {
-      "description": "Format /2: the site root relative to the manifest: \"../\" for stories/<advId>.json, \"../../\" for stories/<region>/<advId>.json.",
+      "description": "The site root relative to the manifest: \"../\" for stories/<advId>.json, \"../../\" for stories/<region>/<advId>.json.",
       "type": "string",
       "pattern": "^(\\.\\./)+$"
     },
     "models": {
-      "description": "Format /2: model id -> the path of its model manifest relative to the site root (models/<id>.json), keys sorted: the Live2D models the story's Character rows use.",
+      "description": "Model id -> the path of its model manifest (a product manifest of live2d.model) relative to the site root (models/<id>.json), keys sorted: the Live2D models the story's Character rows use.",
       "type": "object",
       "propertyNames": { "pattern": "^[a-z0-9_]+$" },
       "additionalProperties": { "type": "string", "pattern": "^models/[a-z0-9_]+\\.json$" }

@@ -15,19 +15,18 @@ export const LIT_SHADER = "Live2D Cubism/Lit-URP-ADV-optimize";
 export const MASK_SHADER = "Live2D Cubism/Mask";
 export const MASK_SIZE = 1024;
 
-// A drawable's main texture (a mipmapped one as GLTex.load describes).
-const loadTexture = (gl, dir, d, assets) => GLTex.load(gl, dir, d, assets);
-
 export class Live2DDrawing {
-  // lib: the ShaderLib of the model's shaders; resources: {cubismMask, cubismMaskCulling} materials;
-  // dir: directory of the prefab (texture paths are relative to it); white: Texture2D.whiteTexture
-  constructor(gl, lib, character, { dir = "", resources, white, assets }) {
-    this.gl = gl; this.lib = lib; this.ch = character; this.dir = dir; this.white = white; this.assets = assets;
-    if (!resources || !resources.cubismMask || !resources.cubismMaskCulling)
-      throw new Error("model.json: resources.cubismMask / cubismMaskCulling missing");
-    this.maskMats = { 0: resources.cubismMask, 1: resources.cubismMaskCulling };
+  // lib: the ShaderLib of the model's shaders (ShaderLib.fromObjects of model.json shaders); model: its model.json
+  // (the Cubism mask materials of `resources` and the shader table); assets: the AssetStore of its objects (the
+  // drawables' main textures); white: Texture2D.whiteTexture
+  constructor(gl, lib, character, { model, white, assets }) {
+    this.gl = gl; this.lib = lib; this.ch = character; this.white = white; this.assets = assets;
+    this.maskMats = { 0: assets.material(model.resources.cubismMask), 1: assets.material(model.resources.cubismMaskCulling) };
     for (const m of Object.values(this.maskMats))
-      if (!m.shader || m.shader.shader !== MASK_SHADER) throw new Error(`mask material shader ${m.shader && m.shader.shader}`);
+      if (assets.ref(m.shader, "Shader") !== model.shaders[MASK_SHADER]) throw new Error(`mask material ${m.material}: not drawn with ${MASK_SHADER}`);
+    for (const r of character.renderers)
+      if (assets.ref(r.material.shader, "Shader") !== model.shaders[LIT_SHADER])
+        throw new Error(`${r.name}: material ${r.material.material} is not drawn with ${LIT_SHADER}`);
     // CubismMaskTexture: new RenderTexture(1024, 1024, 0, ARGB32), RGBA8 in the gamma-space project
     // ENGINE: the mask RenderTexture's filter and wrap modes are never set (engine defaults); bilinear and clamped here.
     this.maskRT = new GLTarget(gl, MASK_SIZE, MASK_SIZE, { label: `${character.name} mask` });
@@ -63,12 +62,10 @@ export class Live2DDrawing {
     gl.bindVertexArray(null);
   }
 
+  // the drawables' main textures (Texture2D objects; a mipmapped one as GLTex.load describes)
   async loadTextures() {
-    for (const r of this.ch.renderers) {
-      const d = r.textureDesc;
-      if (!d || !d.texture) throw new Error(`${r.name}: no main texture`);
-      if (!this.textures.has(d.texture)) this.textures.set(d.texture, await loadTexture(this.gl, this.dir, d, this.assets));
-    }
+    for (const r of this.ch.renderers)
+      if (!this.textures.has(r.texture)) this.textures.set(r.texture, await GLTex.loadObject(this.gl, r.texture, this.assets));
   }
 
   // compiles every program the model draws with (the Lit variants of its materials, the mask program when it has
@@ -171,7 +168,7 @@ export class Live2DDrawing {
       for (const mi of j.masks) {
         const r = ch.renderers[mi];
         const mat = this.maskMats[r.doubleSided ? 0 : 1];
-        const tex = this.textures.get(r.textureDesc.texture);
+        const tex = this.textures.get(r.texture);
         // ENGINE: _ProjectionParams while a command buffer draws into a render texture is set natively; x = 1 here.
         this._drawSlot(prog, [{ _ProjectionParams: [1, 0.3, 1000, 1 / 1000], cubism_MaskTile: j.tile,
                                 cubism_MaskTransform: j.transform, _MainTex: tex }, mat.floats, mat.colors],
@@ -186,7 +183,7 @@ export class Live2DDrawing {
   _mpb(r) {
     const ch = this.ch, mt = ch.multiplyTexture;
     const sheet = {
-      _MainTex: this.textures.get(r.textureDesc.texture),
+      _MainTex: this.textures.get(r.texture),
       cubism_ModelOpacity: ch.rc.opacity,
       cubism_MultiplyColor: r.multiplyColor,
       cubism_ScreenColor: r.screenColor,

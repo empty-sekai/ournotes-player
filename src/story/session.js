@@ -214,20 +214,20 @@ export class StorySession {
 
     // renderer and characters: the Character rows' preload, keyed TargetName-TargetAssetIndex (the first model of a
     // key is kept); IgnoreData rows are not preloaded. The story's shaders draw the stage and the post-processing,
-    // each model's own shaders its character (the story's in a story of manifest format /1, models.js).
+    // each model's own shaders its character (models.js).
     const storyLib = gl ? new ShaderLib(gl, "shaders", store) : null;
     const renderer = this.renderer = gl ? new StoryRenderer(gl, storyLib, sc, quality, loop, { assets: store }) : null;
     if (renderer) renderer.filmGrain = opts.filmGrain ?? 0;
-    const modelOf = storyModels(gl, store, story, what, { lib: storyLib, resources: scene.resources });
+    const modelOf = storyModels(gl, store, story, what);
     for (const c of episode.commands) {
       if (c.cmd !== "Character" || c.IgnoreData) continue;
       if (characters.has(c.TargetName, c.TargetAssetIndex || 0)) continue;
       const { model, lib } = modelOf(`Character/Live2D/${c.TargetAssetName}`);
-      const ch = new Live2DCharacter(store.json(model.prefab), store.arrayBuffer(model.moc3), loop, { random, motionSync });
+      const ch = new Live2DCharacter(store, model, loop, { random, motionSync });
       ch.setParent(sc.field.poolRoot);
       sc.field.characterRoots.add(ch.root);
       characters.add(c.TargetName, c.TargetAssetIndex || 0, ch);
-      if (renderer) renderer.addCharacter(ch, { lib, dir: model.textureDir, resources: model.resources });
+      if (renderer) renderer.addCharacter(ch, { lib, model });
     }
     if (renderer) await renderer.load("");
     await ui.load();

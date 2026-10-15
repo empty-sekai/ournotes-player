@@ -1,19 +1,42 @@
-// AssetStore: the files of one chart (path -> text or bytes), read synchronously by the session once loaded.
+// AssetStore: the files of one chart or product (path -> text or bytes) and the objects it uses (object id -> class,
+// name and files by role), read synchronously by the session once loaded.
 //
 // Sources:
-//   AssetStore.fromManifest(url)   a chart manifest ({files: {path: {asset, size}}, ...}) and the content-addressed
-//                                  assets it lists, all fetched before the session starts. A large JSON file is listed
-//                                  per top-level key ({parts: [[key, asset, size], ...], size}); its text is rebuilt as
+//   AssetStore.fromManifest(url)   a manifest ({files: {path: {asset, size}}, ...}) and the content-addressed assets
+//                                  it lists, all fetched before the session starts. A large JSON file is listed per
+//                                  top-level key ({parts: [[key, asset, size], ...], size}); its text is rebuilt as
 //                                  {"k1":t1,"k2":t2,...} from the parts' raw texts (numbers stay exactly as stored).
 //                                  An encoded asset (assets/<sha256>.<ext>.gz or .br) has its stored byte count too
 //                                  ({asset, size, stored}, [key, asset, size, stored]); it is decoded here unless the
-//                                  server already did (Content-Encoding).
-//   new AssetStore({ text, bytes, info })   in memory: path -> string and path -> Uint8Array / ArrayBuffer.
-// Text files are the .json and .glsl files; every other file is binary.
+//                                  server already did (Content-Encoding). A product manifest (nnnotes.product/1) also
+//                                  lists its objects ({objects: {id: {class, name, files: {role: {asset, size}}}}}),
+//                                  fetched the same way.
+//   new AssetStore({ text, bytes, objects, info })   in memory: path -> string, path -> Uint8Array / ArrayBuffer, and
+//                                  object id -> {class, name, files: {role: string | Uint8Array | ArrayBuffer}}.
+// Text files are the .json and .glsl files; every other file is binary. An object's file is text when its asset is a
+// .json or .glsl asset (in memory: when it is given as a string).
+//
+// Objects (docs/data-format.md "Objects"): an object id is "<serialized file>:<pathId>", the path id in decimal. Every
+// object has a `json` file; a reference in it, {"$ref": {"file", "pathId"}}, names the object "<file>:<pathId>"
+// (refId). The typed readers (prefab, material, clip, mono, texture) check the object's class.
+
+// the schema of a product manifest
+export const PRODUCT_MANIFEST = "nnnotes.product/1";
 
 export const TEXT_FILE = /\.(json|glsl)$/;
+// the assets whose bytes are text: a .json or .glsl asset, encoded or not
+export const TEXT_ASSET = /\.(json|glsl)(\.(gz|br))?$/;
 
 const entries = (m) => (m instanceof Map ? [...m.entries()] : Object.entries(m || {}));
+
+// The object id a reference names: {"$ref": {file, pathId}} -> "<file>:<pathId>"; null for a null reference.
+export const refId = (v) => {
+  if (v === null || v === undefined) return null;
+  const r = v.$ref;
+  if (!r || typeof r.file !== "string" || typeof r.pathId !== "string")
+    throw new Error(`not a reference to an object of a known file: ${JSON.stringify(v)}`);
+  return `${r.file}:${r.pathId}`;
+};
 
 // the content encoding of an asset by its name: "gzip" (.gz), "br" (.br), or null (stored as it is)
 export const assetEncoding = (asset) => {
@@ -40,11 +63,22 @@ export const decodeAsset = async (bytes, encoding) => {
 const u8 = (b) => (b instanceof Uint8Array ? new Uint8Array(b.buffer, b.byteOffset, b.byteLength) : new Uint8Array(b));
 
 export class AssetStore {
-  // text: path -> string; bytes: path -> Uint8Array | ArrayBuffer; info: the chart manifest without `files` (or null)
-  constructor({ text = {}, bytes = {}, info = null } = {}) {
+  // text: path -> string; bytes: path -> Uint8Array | ArrayBuffer; objects: object id -> {class, name, files: role ->
+  // string | Uint8Array | ArrayBuffer}; info: the manifest without `files` and `objects` (or null)
+  constructor({ text = {}, bytes = {}, objects = {}, info = null } = {}) {
     this._text = new Map(entries(text));
     this._bin = new Map();
     for (const [p, b] of entries(bytes)) this._bin.set(p, b instanceof Uint8Array ? b : new Uint8Array(b));
+    this._objects = new Map();
+    for (const [id, o] of entries(objects)) {
+      if (!o || typeof o.class !== "string") throw new Error(`object ${id}: no class`);
+      const files = new Map();
+      for (const [role, f] of entries(o.files))
+        files.set(role, typeof f === "string" || f instanceof Uint8Array ? f : new Uint8Array(f));
+      if (!files.has("json")) throw new Error(`object ${id}: no json file`);
+      this._objects.set(id, { class: o.class, name: o.name ?? null, files });
+    }
+    this._parsed = new Map();          // "<id>#<role>" -> the parsed JSON of an object's file
     this.info = info;
   }
 
@@ -83,9 +117,15 @@ export class AssetStore {
       };
       const man = await (await get(manifestUrl.href)).json();
       requestSignal.throwIfAborted();
-      if (!man || typeof man.files !== "object") throw new Error(`${manifestUrl.href}: not a chart manifest`);
+      if (!man || typeof man.files !== "object") throw new Error(`${manifestUrl.href}: not a manifest`);
+      if (man.objects !== undefined && (!man.objects || typeof man.objects !== "object"))
+        throw new Error(`${manifestUrl.href}: objects is not an object table`);
+      // every file to fetch: [where, entry]; an object's file is "<id>#<role>"
+      const slots = Object.entries(man.files);
+      for (const [id, o] of Object.entries(man.objects || {}))
+        for (const [role, f] of Object.entries((o && o.files) || {})) slots.push([`${id}#${role}`, f]);
       const jobs = new Map();                                // asset -> {size, stored, path}: each asset fetched once
-      for (const [path, f] of Object.entries(man.files)) {
+      for (const [path, f] of slots) {
         const list = f.parts ? f.parts.map((p) => [p[1], p[2], p[3]]) : [[f.asset, f.size, f.stored]];
         for (const [asset, size, stored] of list) jobs.set(asset, { size, stored, path });
       }
@@ -117,17 +157,30 @@ export class AssetStore {
       };
       await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, list.length)) }, worker));
       requestSignal.throwIfAborted();
-      const text = new Map(), bin = new Map(), enc = new TextEncoder();
-      for (const [path, f] of Object.entries(man.files)) {
+      const enc = new TextEncoder();
+      // a file's text (`asText`, a rebuilt file always) or bytes
+      const content = (path, f, asText) => {
         if (f.parts) {
           const t = `{${f.parts.map(([k, asset]) => `${JSON.stringify(k)}:${dec.decode(got.get(asset))}`).join(",")}}`;
           if (enc.encode(t).byteLength !== f.size) throw new Error(`${path}: rebuilt text is not ${f.size} bytes`);
-          text.set(path, t);
-        } else if (TEXT_FILE.test(path)) text.set(path, dec.decode(got.get(f.asset)));
-        else bin.set(path, got.get(f.asset));
+          return t;
+        }
+        return asText ? dec.decode(got.get(f.asset)) : got.get(f.asset);
+      };
+      const text = new Map(), bin = new Map();
+      for (const [path, f] of Object.entries(man.files)) {
+        const c = content(path, f, TEXT_FILE.test(path));
+        if (typeof c === "string") text.set(path, c); else bin.set(path, c);
       }
-      const { files, ...info } = man;
-      return new AssetStore({ text, bytes: bin, info });
+      const objects = {};
+      for (const [id, o] of Object.entries(man.objects || {})) {
+        const files = {};
+        for (const [role, f] of Object.entries(o.files || {}))
+          files[role] = content(`${id}#${role}`, f, TEXT_ASSET.test(f.asset ?? ""));
+        objects[id] = { class: o.class, name: o.name, files };
+      }
+      const { files: _files, objects: _objects, ...info } = man;
+      return new AssetStore({ text, bytes: bin, objects, info });
     } catch (e) {
       controller.abort(e);
       throw requestSignal.reason;
@@ -171,6 +224,90 @@ export class AssetStore {
 
   list(prefix = "") {
     return [...this._text.keys(), ...this._bin.keys()].filter((k) => k.startsWith(prefix));
+  }
+
+  // ---- objects
+
+  hasObject(id) { return this._objects.has(id); }
+
+  // {id, class, name} of an object; `cls`: the class it must have
+  object(id, cls = null) {
+    const o = this._objects.get(id);
+    if (!o) throw new Error(`object not found: ${id}`);
+    if (cls !== null && o.class !== cls) throw new Error(`${id}: a ${o.class}, not a ${cls}`);
+    return { id, class: o.class, name: o.name };
+  }
+
+  // the roles of an object's files (json, image, index, program:..., blob:...)
+  roles(id) {
+    const o = this._objects.get(id);
+    if (!o) throw new Error(`object not found: ${id}`);
+    return [...o.files.keys()];
+  }
+
+  _file(id, role) {
+    const o = this._objects.get(id);
+    if (!o) throw new Error(`object not found: ${id}`);
+    const f = o.files.get(role);
+    if (f === undefined) throw new Error(`${id} (${o.class}${o.name ? ` ${o.name}` : ""}): no ${role} file`);
+    return f;
+  }
+
+  objectText(id, role) {
+    const f = this._file(id, role);
+    return typeof f === "string" ? f : new TextDecoder("utf-8").decode(f);
+  }
+
+  // the parsed JSON of an object's file, parsed once and shared: callers do not modify it
+  objectJson(id, role = "json") {
+    const k = `${id}#${role}`;
+    let v = this._parsed.get(k);
+    if (v === undefined) { v = JSON.parse(this.objectText(id, role)); this._parsed.set(k, v); }
+    return v;
+  }
+
+  // a copy (callers may transfer or detach it)
+  objectBytes(id, role) {
+    const f = this._file(id, role);
+    return typeof f === "string" ? new TextEncoder().encode(f) : f.slice();
+  }
+
+  // an image file of an object, decoded as image() decodes a PNG
+  async objectImage(id, role = "image") {
+    const blob = new Blob([this.objectBytes(id, role)], { type: "image/png" });
+    return createImageBitmap(blob, { premultiplyAlpha: "none", colorSpaceConversion: "none", imageOrientation: "flipY" });
+  }
+
+  // the object a reference value names (refId), checked to be in the store and of class `cls` when given; null for a
+  // null reference
+  ref(v, cls = null) {
+    const id = refId(v);
+    if (id !== null) this.object(id, cls);
+    return id;
+  }
+
+  // ---- typed readers: an object's JSON, its class checked (shared: callers do not modify it)
+
+  // a root GameObject's prefab.json: {name, nodes: [{path, name, pathId, active, layer, localPosition, localRotation,
+  // localScale, components: [{type, pathId, script, fields}]}]}
+  prefab(id) { this.object(id, "GameObject"); return this.objectJson(id); }
+
+  // material.json: {material, shader (a reference), keywords, floats, colors, textures, ...}
+  material(id) { this.object(id, "Material"); return this.objectJson(id); }
+
+  // clip.json: the Mecanim clip data and its bindings as stored
+  clip(id) { this.object(id, "AnimationClip"); return this.objectJson(id); }
+
+  // mono.json: a MonoBehaviour outside a hierarchy: {$script, m_Name, ...its fields}
+  mono(id) { this.object(id, "MonoBehaviour"); return this.objectJson(id); }
+
+  // a Texture2D: {id, name, width, height, mipCount, colorSpace, settings} from its typetree; its pixels are
+  // objectImage(id)
+  texture(id) {
+    this.object(id, "Texture2D");
+    const t = this.objectJson(id);
+    return { id, name: t.m_Name, width: t.m_Width, height: t.m_Height, mipCount: t.m_MipCount,
+             colorSpace: t.m_ColorSpace, settings: t.m_TextureSettings };
   }
 }
 
