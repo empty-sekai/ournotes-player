@@ -2,6 +2,22 @@
 
 All notable changes to this package. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.1.8](https://github.com/empty-sekai/ournotes-player/compare/v0.1.7..v0.1.8) — 2026-10-16
+
+### Features
+- report fixes for script problems, and pace each line _(story-author)_
+
+
+### Bug Fixes
+- cull per-object lights against the layer of each draw _(story)_
+- refuse nested DOTween Sequences _(story)_
+- play a cue missing from its sheet as silence _(story)_
+
+
+### Documentation
+- list every export of the story and UI entry points
+
+
 ## [0.1.7](https://github.com/empty-sekai/ournotes-player/compare/v0.1.6..v0.1.7) — 2026-10-14
 
 ### Features
