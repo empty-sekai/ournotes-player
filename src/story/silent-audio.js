@@ -1,4 +1,4 @@
-import { SOUND_CATEGORY, SoundCategoryVolumes } from "../engine/audio.js";
+import { MISSING_CUE, SOUND_CATEGORY, SoundCategoryVolumes } from "../engine/audio.js";
 
 // SilentAudio: the SoundManager of a story session without Web Audio (Node, or a page that plays the story muted).
 // It keeps the sounds' timing on the player loop's clock and plays nothing: a cue lasts its length in cues.json
@@ -24,8 +24,7 @@ export class SilentAudio {
 
   cueOf(soundId) {
     const c = this.resolve(soundId);
-    const meta = this.assets.json(`audio/${c.sheet}/cues.json`)[c.cue];
-    if (!meta) throw new Error(`cue ${c.cue} not in ${c.sheet}`);
+    const meta = this.assets.json(`audio/${c.sheet}/cues.json`)[c.cue] || MISSING_CUE;   // a cue the sheet lacks is silence
     return { ...c, meta };
   }
 
