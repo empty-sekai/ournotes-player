@@ -178,3 +178,19 @@ test("timeStretch keeps the length ratio and the pitch of a sine", () => {
     assert.ok(Math.abs(rate - 2 * f) < 0.05 * 2 * f, `speed ${speed}: ${rate} crossings/s`);
   }
 });
+
+test("a cue the sheet lacks plays as an empty sound and ends at once", async () => {
+  const ctx = fakeContext();
+  const row = { _isRandomPitch: false };
+  const cue = { sheet: "S", cue: "gone", category: 2, row };
+  const assets = { json: () => ({}), arrayBuffer: () => { throw new Error("no file to read"); } };
+  const a = new Audio(() => cue, { time: 0 }, { context: ctx, assets });
+  const warn = console.warn;
+  console.warn = () => {};
+  try { await a.preload([1]); } finally { console.warn = warn; }
+  const started = [];
+  const id = a.play(1, { onPlayStart: (info) => started.push(info) });
+  assert.ok(id > 0);
+  assert.equal(started.length, 1);
+  assert.equal(ctx.sources.length, 1);
+});

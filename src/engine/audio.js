@@ -64,6 +64,9 @@ export class SoundCategoryVolumes {
   }
 };
 
+// the meta of a cue the sheet lacks: no file, no samples
+export const MISSING_CUE = Object.freeze({ file: null, sampleRate: 48000, channels: 1, samples: 0, missing: true });
+
 export class Audio {
   constructor(resolve, loop, { context = null, assets = null } = {}) {
     this.ownsContext = !context;
@@ -219,7 +222,14 @@ export class Audio {
       const c = this.cueOf(id), key = `${c.sheet}/${c.cue}`;
       if (this.buffers.has(key)) continue;
       const meta = this.assets.json(`audio/${c.sheet}/cues.json`)[c.cue];
-      if (!meta) throw new Error(`cue ${c.cue} not decoded in ${c.sheet}`);
+      if (!meta) {
+        // a sound row whose cue the sheet does not hold (a line listed with a voice that was never shipped): it
+        // plays as an empty sound, so the line runs on and the rest of the episode is not held back
+        console.warn(`cue ${c.cue} is not in cue sheet ${c.sheet}; it plays as silence`);
+        const rate = this.ctx.sampleRate;
+        this.buffers.set(key, { buf: this.ctx.createBuffer(1, 1, rate), meta: { ...MISSING_CUE, sampleRate: rate } });
+        continue;
+      }
       // decoded at the context's rate; the loop points below are converted to seconds with the cue's own rate
       const buf = await this.ctx.decodeAudioData(this.assets.arrayBuffer(`audio/${c.sheet}/${meta.file}`));
       this.buffers.set(key, { buf, meta });
