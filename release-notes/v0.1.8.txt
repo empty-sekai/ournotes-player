@@ -1,0 +1,8 @@
+ournotes-player 0.1.8 plays a story line whose cue is missing from its cue sheet as silence, and fixes story lighting and DOTween handling.
+
+- A story sound whose cue the cue sheet does not hold no longer stops the episode at preload; the line runs on without that sound.
+- Per-object lights are culled against the layer of each draw.
+- Nested DOTween Sequences are refused.
+- The experimental story author reports fixes for script problems and paces each line.
+
+Validation: type checks, reproducible builds and package checks pass; the unit tests pass.
