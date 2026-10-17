@@ -1,24 +1,17 @@
-// A story site on disk as the story author reads it: the story index, the model index, base stories, models, and the
-// story manifest of a compiled script (ournotes.story-manifest/2 with the base story's files, the script's own
-// story.json, episode.json and ui/fonts.json, and the model manifests of its cast).
+// Story products on disk: the indexes, reusable parts, and the products of a compiled script.
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { AssetStore } from "../../../src/data/assets.js";
-import { STORY_MANIFEST_FORMAT, checkModelManifest } from "../../../src/story/assets.js";
-import { StoryPlayerCore } from "../../../src/story/player-core.js";
+import { STORY_MANIFEST_FORMAT, checkModelManifest, loadStoryStore } from "../../../src/story/assets.js";
+import { StoryData } from "../../../src/story/data.js";
+import { ObjectResources } from "../../../src/engine/objects.js";
 import "../../../src/story/features/index.js";
 import { fileFetch, nodeDecode } from "../headless.mjs";
 import { modelActions, musicChoices, stageBackground, stageChoices, withBrowserFonts } from "./script.js";
 
 export class SiteError extends Error {}
-
-// the common files of a base story a script does not play: the media of the base episode's own rows, its videos and
-// CRI Lips data, and the host screen of an Overlay episode
-const MEDIA = new Set(["frames.json", "effects.json", "posteffects.json", "stills.json", "talkwindows.json", "chat.json"]);
-const skipped = (p) => MEDIA.has(p) || /^(videos|crilips|host)\//.test(p) || p.startsWith("ui/simple/");
-const textureRefs = (text) => [...text.matchAll(/"(textures\/[^"]+)"/g)].map((m) => m[1]);
 
 const sha256 = (b) => crypto.createHash("sha256").update(b).digest("hex");
 const sortKeys = (o) => Object.fromEntries(Object.keys(o).sort().map((k) => [k, o[k]]));
@@ -73,30 +66,29 @@ export class Site {
     return this._bases.get(key);
   }
 
+  languages(manifestPath) {
+    const manifest = this.json(manifestPath);
+    if (manifest.schema !== STORY_MANIFEST_FORMAT || manifest.product !== "story")
+      throw new SiteError(`${manifestPath}: a base story needs a story product`);
+    return Object.keys(this.json(manifest.files["story.json"].asset).parts.ui);
+  }
+
   async _loadBase(manifestPath, lang) {
     const manifest = this.json(manifestPath);
-    if (manifest.format !== STORY_MANIFEST_FORMAT)
-      throw new SiteError(`${manifestPath}: a base story needs a story manifest of format ${STORY_MANIFEST_FORMAT}` +
-                          ` (this one is ${manifest.format})`);
-    if (manifest.story && manifest.story.playbackMode === 1)
-      throw new SiteError(`${manifestPath}: an Overlay episode (home talk, live result) cannot be a base story`);
-    const languages = Object.keys(manifest.languages || {});
-    const language = lang || manifest.language;
-    if (!manifest.languages[language]) throw new SiteError(`${manifestPath}: no language ${language} (${languages.join(", ")})`);
-    const files = {};
-    for (const p of ["story.json", "episode.json", "scene.json"]) {
-      if (!manifest.files[p]) throw new SiteError(`${manifestPath}: no ${p}`);
-      files[p] = manifest.files[p];
-    }
-    const lf = manifest.languages[language].files;
-    if (!lf["ui/fonts.json"]) throw new SiteError(`${manifestPath}: no ui/fonts.json in ${language}`);
-    files["ui/fonts.json"] = lf["ui/fonts.json"];
-    const store = await this.store(files);
-    const story = store.json("story.json"), episode = store.json("episode.json"), scene = store.json("scene.json");
-    const stages = stageChoices(scene, episode, language)
-      .map((s) => ({ ...s, background: stageBackground(scene.stages[s.key]) }));
-    return { path: manifestPath, manifest, language, languages, story, episode, scene, fonts: store.json("ui/fonts.json"),
-             stages, music: musicChoices(episode, story), cast: Object.values(story.models || {}) };
+    if (manifest.schema !== STORY_MANIFEST_FORMAT || manifest.product !== "story")
+      throw new SiteError(`${manifestPath}: a base story needs a story product`);
+    const language = lang || manifest.language || "ja";
+    const store = await loadStoryStore(pathToFileURL(this.file(manifestPath)).href,
+      { lang: language, fetch: fileFetch, decode: nodeDecode });
+    const data = new StoryData(store), { story, episode, scene, fonts } = data;
+    if (episode.master?._playbackMode === 1) throw new SiteError(`${manifestPath}: an Overlay episode cannot be a base story`);
+    const objects = new ObjectResources(store, data.resourceOptions());
+    const stages = stageChoices(story.parts.assets, episode, language).map((s) => {
+      const asset = data.asset(`Adv/Stage/${s.key}`);
+      return { ...s, background: stageBackground(objects.prefab(asset.objects[0]), objects) };
+    });
+    return { path: manifestPath, manifest, language, languages: Object.keys(story.parts.ui), story, episode, scene, fonts,
+      stages, music: musicChoices(episode, story), cast: Object.keys(story.parts.models).map((key) => key.split("/").at(-1)), data, store };
   }
 
   // The model `id` of models.json: {entry, manifest, actions: modelActions}
@@ -117,52 +109,31 @@ export class Site {
     return { entry, manifest, actions: modelActions(store, store.json("model.json")) };
   }
 
-  // the bytes of logical files of a base story (path -> Buffer), from its common files
-  async baseFiles(base, paths) {
-    const files = {};
-    for (const p of paths) if (base.manifest.files[p]) files[p] = base.manifest.files[p];
-    const store = await this.store(files);
-    return new Map(Object.keys(files).map((p) => [p, Buffer.from(store.bytes(p))]));
+  // The image bytes of the background Texture2D objects selected from the base story.
+  async baseFiles(base, ids) {
+    return new Map(ids.map((id) => [id, Buffer.from(base.store.objectBytes(id, "image"))]));
   }
 
   // The story manifest of a compiled script (compileScript) on the base story `base`, played in `language` with its
   // texts drawn in the CSS font family `family`, placed where `root` is the site root seen from the manifest.
   // -> {manifest, assets: Map(asset path -> Buffer)}: the assets it adds to the site (assets/<sha256>.json)
-  async compose(base, compiled, { language, family, title, root = "../" }) {
+  async compose(base, compiled, { language, family, root = "../" }) {
     const assets = new Map();
     const entry = (doc) => {
       const b = Buffer.from(JSON.stringify(doc), "utf8"), asset = `assets/${sha256(b)}.json`;
       assets.set(asset, b);
       return { asset, size: b.length };
     };
-    const sheets = Object.values(compiled.story.audio);
-    const keep = (p) => !skipped(p) && (!p.startsWith("audio/") || sheets.some((d) => p.startsWith(`${d}/`)));
-    // textures: the ones the kept JSON files name
-    const lang = base.manifest.languages[language].files;
-    const kept = { ...Object.fromEntries(Object.entries(base.manifest.files).filter(([p]) => keep(p))), ...lang };
-    const jsonStore = await this.store(Object.fromEntries(Object.entries(kept)
-      .filter(([p]) => p.endsWith(".json") && !["story.json", "episode.json", "ui/fonts.json"].includes(p))));
-    const textures = new Set();
-    for (const p of jsonStore.list()) for (const t of textureRefs(jsonStore.text(p))) textures.add(t);
-    const files = {};
-    for (const [p, f] of Object.entries(base.manifest.files))
-      if (keep(p) && (!p.startsWith("textures/") || textures.has(p))) files[p] = f;
-    files["story.json"] = entry(compiled.story);
-    files["episode.json"] = entry(compiled.episode);
-    const langFiles = { ...lang, "ui/fonts.json": entry(withBrowserFonts(base.fonts, family)) };
-
-    const models = {};
-    for (const id of Object.values(compiled.story.models)) models[id] = (await this.model(id)).entry.manifest;
-    const commands = StoryPlayerCore.requiredCommands(compiled.episode, base.scene.settings.playerSettings);
-    const audio = sheets.length > 0;
-    const facts = { advId: 0, asset: "", playbackMode: 0, titles: title ? { [language]: title } : {}, groups: [], commands,
-                    commandCount: compiled.episode.commandCount, language, languages: [language] };
-    const manifest = {
-      format: STORY_MANIFEST_FORMAT, advId: 0, root, story: facts, language, audio,
-      audioFormat: audio ? base.manifest.audioFormat : null, fonts: base.manifest.fonts,
-      requires: { commands, cubismCore: true, motionSync: false },
-      files: sortKeys(files), models: sortKeys(models), languages: { [language]: { files: sortKeys(langFiles) } },
-    };
+    const story = structuredClone(compiled.story), parts = story.parts;
+    for (const [key, id] of Object.entries(parts.models)) parts.models[key] = (await this.model(id)).entry.manifest;
+    const fonts = withBrowserFonts(base.fonts, family), source = this.json(base.story.parts.fonts[language]);
+    const fontEntry = entry(fonts), fontPath = `storyfonts/0_${language}_${sha256(Buffer.from(JSON.stringify(fonts)))}.json`;
+    assets.set(fontPath, Buffer.from(JSON.stringify({ schema: STORY_MANIFEST_FORMAT, product: "story.fonts", subject: `0/${language}`,
+      files: { ...source.files, "fonts.json": fontEntry }, objects: source.objects })));
+    parts.fonts = { [language]: fontPath };
+    parts.ui = { [language]: base.story.parts.ui[language] };
+    const manifest = { schema: STORY_MANIFEST_FORMAT, product: "story", subject: "0", root, language,
+      files: sortKeys({ "story.json": entry(story), "episode.json": entry(compiled.episode) }), objects: {} };
     return { manifest, assets };
   }
 }

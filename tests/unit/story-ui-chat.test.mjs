@@ -1,3 +1,5 @@
+import { chatWidgetPrefab } from "./story-chat-resources.mjs";
+import { nativeComponent } from "./story-screen-resources.mjs";
 // The chat phone's uGUI pieces on synthetic inputs: stencil states of masks and masked graphics, chat sprites (trimmed
 // sliced inner uv), the Soft Mask parameters, the ScrollRect positions, node copies, the canvas draw list and the
 // Screen Space - Camera globals, the sprite constants in the globals of a canvas.
@@ -17,7 +19,7 @@ const rect = (aMin, aMax, pos, size, pivot = { x: 0.5, y: 0.5 }) => ({ m_AnchorM
 const FULL = rect({ x: 0, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 0 }, { x: 0, y: 0 });
 const C = { x: 0.5, y: 0.5 };
 const node = (path, r = FULL, components = [], active = true) => ({ path, name: path.split("/").pop(), active, layer: 5,
-  localPosition: Z, localRotation: Q, localScale: ONE, rect: r, components });
+  localPosition: Z, localRotation: Q, localScale: ONE, rect: r, components: components.map(nativeComponent) });
 const image = (extra = {}) => ({ type: "MonoBehaviour", class: "Image", m_Enabled: 1, m_Material: null, m_Sprite: null,
   m_Color: { r: 1, g: 1, b: 1, a: 1 }, m_Type: 0, m_PreserveAspect: 0, m_FillCenter: 1, m_PixelsPerUnitMultiplier: 1,
   m_UseSpriteMesh: 0, ...extra });
@@ -34,14 +36,14 @@ test("stencil states: masked graphics at a depth, a mask's push and pop at depth
     pop: { ref: 1, comp: 3, op: 2, read: 1, write: 3, colorMask: 0, alphaClip: true } });
 });
 
-const spriteRec = (over = {}) => ({ sprite: "s", rect: { x: 10, y: 20, width: 100, height: 80 }, border: { x: 10, y: 8, z: 12, w: 6 },
+const spriteRec = (over = {}) => ({ id: "sprite:1", rect: { x: 10, y: 20, width: 100, height: 80 }, border: { x: 10, y: 8, z: 12, w: 6 },
   pixelsToUnits: 100, pivot: C, textureRect: { x: 10, y: 20, width: 100, height: 80 }, textureRectOffset: { x: 0, y: 0 },
-  settingsRaw: 0, texture: { texture: "t.png", width: 256, height: 256 }, ...over });
+  settingsRaw: 0, texture: { id: "texture:1", width: 256, height: 256 }, ...over });
 
 test("chat sprites: the untrimmed inner uv, a trimmed sliced sprite's inner uv from the sprite rect's origin, refusals", () => {
   const a = chatSprite(spriteRec());
   assert.deepEqual(a.inner, [20 / 256, 28 / 256, 98 / 256, 94 / 256]);
-  assert.equal(a.texture.name, "t.png");
+  assert.equal(a.texture.id, "texture:1");
   const b = chatSprite(spriteRec({ textureRect: { x: 12, y: 24, width: 90, height: 70 }, textureRectOffset: { x: 2, y: 4 } }));
   assert.equal(b.trimmed, true);
   // origin (12 - 2, 24 - 4) = (10, 20): the same inner rect as untrimmed
@@ -129,7 +131,7 @@ const widget = () => ({ nodes: [
 ] });
 
 test("the canvas draw list: a mask's push, its masked children at depth 1 with inherited alpha, its pop; hidden objects skipped", () => {
-  const ui = new ChatCanvasUI(widget());
+  const ui = new ChatCanvasUI(chatWidgetPrefab(widget()));
   const top = rect({ x: 0.5, y: 1 }, { x: 0.5, y: 1 }, { x: 0, y: 0 }, { x: 200, y: 400 }, { x: 0.5, y: 1 });
   const recs = [node("win", top), node("win/Mask", FULL, [image(), { type: "MonoBehaviour", class: "Mask", m_Enabled: 1, m_ShowMaskGraphic: 0 }]),
                 node("win/Mask/g", FULL, [{ type: "CanvasGroup", m_Enabled: 1, m_Alpha: 0.5, m_IgnoreParentGroups: 0 }]),

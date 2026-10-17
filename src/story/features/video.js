@@ -1,7 +1,7 @@
 import { F } from "../../engine/core.js";
 import { UIError } from "../../engine/ugui.js";
 import { StoryCommandError } from "../interfaces.js";
-import { CanvasNode } from "./canvas.js";
+import { CanvasNode, compOf } from "./canvas.js";
 import { DT_PLUGIN, dtTo, storyDOTween } from "./dotween-core.js";
 import { SCREEN_CANVAS_PATH, storyScreen, storyUIDoc } from "./screen.js";
 import { featureSlot, featureState } from "./state.js";
@@ -227,8 +227,8 @@ export class VideoTimeline {
 
 // the video system of a story context: queue, current video, view, timeline, flow flags
 export class StoryVideo {
-  constructor(ctx, doc) {
-    this.ctx = ctx; this.doc = doc;
+  constructor(ctx, data) {
+    this.ctx = ctx; this.data = data;
     this.requests = [];                       // _videoRequestQueue
     for (const c of ctx.episode.commands)
       if ((c.cmd === "Movie" || c.cmd === "Clip") && !c.IgnoreData && (c.VideoID || 0) > 0) this.requests.push(c.VideoID);
@@ -265,7 +265,7 @@ export class StoryVideo {
   // EnqueueVideoLoadTask -> PrepareVideoTask
   _enqueue() {
     if (!this.requests.length || this.tasks.length >= MAX_VIDEO_LOAD_TASK) return false;
-    const id = this.requests.shift(), rec = this.doc.videos[id];
+    const id = this.requests.shift(), rec = this.data.videoFor(id);
     if (!rec) throw new StoryCommandError(`video ${id} is not in the story data`);
     let v = null;
     if (rec.master && (rec.master._assetName ?? "").trim()) {
@@ -365,13 +365,13 @@ export class StoryVideo {
   }
 }
 
-// AdvVideoView (ui/ui.json record `videoView`) on VideoCanvas
+// AdvVideoView (story.ui record `videoView`) on VideoCanvas
 export class VideoView {
   constructor(ctx) {
     this.ctx = ctx;
     this.screen = storyScreen(ctx);
     this.mgr = storyDOTween(ctx);
-    const { doc, dir } = storyUIDoc(ctx), canvas = this.screen.canvas.video, base = SCREEN_CANVAS_PATH.video;
+    const { doc, prefab } = storyUIDoc(ctx), canvas = this.screen.canvas.video, base = SCREEN_CANVAS_PATH.video;
     const nodes = new Map();
     for (const rec of doc.nodes) {
       if (!rec.path.startsWith(`${base}/`)) continue;
@@ -379,19 +379,19 @@ export class VideoView {
       const parent = parentPath === base ? canvas.root : nodes.get(parentPath);
       if (!parent) throw new UIError(`${rec.path}: parent not in the story UI data`);
       const n = new CanvasNode(rec, parent);
-      if (rec.image) {
-        const mat = rec.image.material ? doc.materials[rec.image.material] : null;
-        if (rec.image.material && !mat) throw new UIError(`${rec.path}: material ${rec.image.material} not in the story UI data`);
-        n.image = { ...rec.image, m_Enabled: !!rec.image.m_Enabled, m_Color: { ...rec.image.m_Color },
-                    spriteObj: canvas.uiSprite(doc, rec.image.sprite, dir), material: mat ? canvas.material(mat) : null };
+      const image = compOf(rec, "Image");
+      if (image) {
+        n.image = { ...image, m_Enabled: !!image.m_Enabled, m_Color: { ...image.m_Color },
+          spriteObj: canvas.sprite(image.m_Sprite), material: canvas.material(image.m_Material) };
       }
-      if (rec.rawImage || rec.text || rec.animator) throw new UIError(`${rec.path}: component not implemented on the video canvas`);
+      if (compOf(rec, "RawImage") || compOf(rec, "TextMeshProUGUI") || compOf(rec, "Animator"))
+        throw new UIError(`${rec.path}: component not implemented on the canvas`);
       nodes.set(rec.path, n);
     }
-    const viewRec = doc.nodes.find((r) => r.videoView);
+    const viewRec = doc.nodes.find((r) => compOf(r, "AdvVideoView"));
     if (!viewRec || !nodes.has(viewRec.path)) throw new StoryCommandError("the story UI data has no AdvVideoView");
-    const vv = viewRec.videoView, get = (p) => {
-      const n = nodes.get(p);
+    const vv = compOf(viewRec, "AdvVideoView"), get = (p) => {
+      const n = nodes.get(typeof p === "string" ? p : prefab.pathOf(p));
       if (!n) throw new StoryCommandError(`AdvVideoView: ${p} missing`);
       return n;
     };
@@ -535,8 +535,7 @@ const runSeekRespeedLoop = async (v, p) => {
 export const loadVideos = (ctx) => {
   const uses = ctx.episode.commands.some((c) => (c.cmd === "Movie" || c.cmd === "Clip") && !c.IgnoreData);
   if (!uses) return null;
-  const file = ctx.story && ctx.story.videos;
-  const v = featureSlot(ctx, "video", () => new StoryVideo(ctx, file ? ctx.assets.json(file) : { videos: {} }));
+  const v = featureSlot(ctx, "video", () => new StoryVideo(ctx, ctx.data));
   const s = featureState(ctx);
   s.disposers.push(() => v.dispose());
   (s.snapshots = s.snapshots || []).push(() => ({ video: v.snapshot() }));

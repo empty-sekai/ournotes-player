@@ -4,61 +4,144 @@
   "title": "Product manifest (nnnotes.product/1)",
   "description": "A product's files and the files of the objects it uses (its object table), each a content-addressed asset relative to the site root; a Live2D model's manifest models/<id>.json is one, of product live2d.model. See docs/data-format.md.",
   "type": "object",
-  "required": ["schema", "product", "subject", "files", "objects"],
+  "required": [
+    "schema",
+    "product",
+    "subject",
+    "files",
+    "objects"
+  ],
   "additionalProperties": false,
   "properties": {
-    "schema": { "const": "nnnotes.product/1" },
-    "product": { "type": "string", "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9-]*)*$" },
-    "subject": { "type": "string", "minLength": 1 },
+    "schema": {
+      "const": "nnnotes.product/1"
+    },
+    "product": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9-]*)*$"
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 1
+    },
     "files": {
       "description": "The product's own files by logical path.",
       "type": "object",
-      "propertyNames": { "pattern": "^[A-Za-z0-9_][^\\\\]*$" },
-      "additionalProperties": { "$ref": "#/$defs/file" }
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9_][^\\\\]*$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/file"
+      }
     },
     "objects": {
       "description": "Object id (<serialized file>:<path id>) -> the object's class, name and files by role (json, image, index, program:<platform>/<name>, blob:<field>).",
       "type": "object",
-      "propertyNames": { "pattern": "^.+:-?[0-9]+$" },
+      "propertyNames": {
+        "pattern": "^.+:-?[0-9]+$"
+      },
       "additionalProperties": {
         "type": "object",
-        "required": ["class", "files"],
+        "required": [
+          "class",
+          "files"
+        ],
         "additionalProperties": false,
         "properties": {
-          "class": { "type": "string", "minLength": 1 },
-          "name": { "type": "string" },
+          "class": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string"
+          },
           "files": {
             "type": "object",
-            "additionalProperties": { "$ref": "#/$defs/file" }
+            "additionalProperties": {
+              "$ref": "#/$defs/file"
+            }
           }
         }
       }
+    },
+    "root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "language": {
+      "enum": [
+        "ja",
+        "en",
+        "zh-Hant",
+        "zh-Hans",
+        "ko"
+      ]
     }
   },
   "$defs": {
-    "file": { "anyOf": [{ "$ref": "#/$defs/whole" }, { "$ref": "#/$defs/encoded" }] },
-    "asset": { "type": "string", "pattern": "^assets/[0-9a-f]{64}\\.[a-z0-9]+$" },
+    "file": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/whole"
+        },
+        {
+          "$ref": "#/$defs/encoded"
+        }
+      ]
+    },
+    "asset": {
+      "type": "string",
+      "pattern": "^assets/[0-9a-f]{64}\\.[a-z0-9]+$"
+    },
     "encodedAsset": {
       "description": "An asset stored gzip- or brotli-encoded: the SHA-256 of its decoded bytes, the file's extension, then .gz or .br.",
       "type": "string",
       "pattern": "^assets/[0-9a-f]{64}\\.[a-z0-9]+\\.(gz|br)$"
     },
-    "size": { "description": "The byte count of the file (decoded).", "type": "integer", "minimum": 0 },
-    "stored": { "description": "The byte count of an encoded asset as stored (less than size).", "type": "integer", "minimum": 0 },
+    "size": {
+      "description": "The byte count of the file (decoded).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "stored": {
+      "description": "The byte count of an encoded asset as stored (less than size).",
+      "type": "integer",
+      "minimum": 0
+    },
     "whole": {
       "type": "object",
-      "required": ["asset", "size"],
+      "required": [
+        "asset",
+        "size"
+      ],
       "additionalProperties": false,
-      "properties": { "asset": { "$ref": "#/$defs/asset" }, "size": { "$ref": "#/$defs/size" } }
+      "properties": {
+        "asset": {
+          "$ref": "#/$defs/asset"
+        },
+        "size": {
+          "$ref": "#/$defs/size"
+        }
+      }
     },
     "encoded": {
       "type": "object",
-      "required": ["asset", "size", "stored"],
+      "required": [
+        "asset",
+        "size",
+        "stored"
+      ],
       "additionalProperties": false,
       "properties": {
-        "asset": { "$ref": "#/$defs/encodedAsset" },
-        "size": { "$ref": "#/$defs/size" },
-        "stored": { "$ref": "#/$defs/stored" }
+        "asset": {
+          "$ref": "#/$defs/encodedAsset"
+        },
+        "size": {
+          "$ref": "#/$defs/size"
+        },
+        "stored": {
+          "$ref": "#/$defs/stored"
+        }
       }
     }
   }

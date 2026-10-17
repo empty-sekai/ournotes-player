@@ -238,6 +238,7 @@ export class StoryControls {
     const p = this.player, t = this.t;
     if (p.session !== this._session) { this._session = p.session; if (!this.confirm.hidden) this._pauseForConfirm(); }
     this.btnPlay.textContent = p.paused ? t.play : t.pause;
+    for (const [cat, r] of Object.entries(this.vols)) r.value = String(p._volumes?.[cat] ?? 1);
     this.btnAuto.setAttribute("aria-pressed", String(!!p.auto));
     this.btnSpeed.textContent = `${t.speed} ${speedLabel(p.speed)}`;
     this.btnSpeed.setAttribute("aria-pressed", String(p.speed !== 10));

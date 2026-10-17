@@ -281,17 +281,17 @@ export class SimpleAdvView {
 // background, next indicator, auto or fast icon.
 export class SimpleTalkWindow {
   constructor(doc, rootPath, { loop, tweens, language }) {
-    const root = doc.node(rootPath), f = (rel) => root.find(rel);
-    if (!root.rec.talkWindow) throw new UIError(`${rootPath}: no UIAdvTalkWindow record`);
+    const root = doc.node(rootPath), tw = root.fields("UIAdvTalkWindow");
+    if (!tw) throw new UIError(`${rootPath}: no UIAdvTalkWindow component`);
     this.root = root;
     this.part = {
-      window: root, background: null, talkArea: f("TalkArea"), talkText: f("TalkArea/Content/TextWindow/TalkText"),
-      nextIndicator: null, autoIcon: null, fastIcon: null, speaker: f("TalkArea/Content/Speaker"),
-      speakerText: f("TalkArea/Content/Speaker/Back/SpeakerText"),
+      window: root, background: root.ref(tw._talkBackground), talkArea: root.ref(tw.TalkArea), talkText: root.ref(tw.TalkText),
+      nextIndicator: root.ref(tw._talkNextIndicator), autoIcon: root.ref(tw._autoIcon), fastIcon: root.ref(tw._fastIcon),
+      speaker: root.ref(tw._speakerNameObjects?.[0]), speakerText: root.ref(tw.SpeakerText),
     };
-    this.loop = loop; this.tweens = tweens; this.language = language; this.doc = { dotween: doc.doc.dotween };
+    this.loop = loop; this.tweens = tweens; this.language = language; this.dotween = doc.dotween;
     this.setActive = setActive;
-    this.talk = new StoryTalkWindow(this);
+    this.talk = new StoryTalkWindow(this, tw);
     this.speakerName = "";
     setActive(root, false);
   }

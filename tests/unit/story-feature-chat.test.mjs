@@ -1,3 +1,4 @@
+import { chatResources } from "./story-chat-resources.mjs";
 // The chat rows on a real PlayerLoop at 30 fps with a synthetic chat window prefab and a stand-in story UI: opening,
 // closing and reconfiguring the phone, bubbles and read labels, the conversation memory and its restore, the typing
 // box, the waits, the incoming call fit, detaching while shortcutting. Synthetic inputs only.
@@ -100,7 +101,7 @@ const makePlayer = (rows, { auto = false, doc = chatDoc(), phone = false } = {})
   let indicator = false;
   const ui = { isTyping: false, showNextIndicator: () => { indicator = true; }, hideNextIndicator: () => { indicator = false; },
                get indicator() { return indicator; } };
-  if (phone) Object.assign(ui, { language: { mode: 1 }, fonts: { chatTexts: { [W]: {} } },
+  if (phone) Object.assign(ui, { language: { mode: 1 }, fonts: { texts: {} },
                                  doc: { chatWidget: chatWidget(), chatStatusTexts: { call_status: "Calling", lock_status: "Locked" } } });
   const texts = { 60001: "Read", 60004: "[stamp]", 11: "Group", 21: "hello there", 22: "me", 23: "typing!", 31: "Alice", s1_log: "[s1]" };
   const fieldRenderer = { foreground: { count: 0 }, addForegroundEntry() { this.foreground.count++; },
@@ -112,6 +113,7 @@ const makePlayer = (rows, { auto = false, doc = chatDoc(), phone = false } = {})
                             masterIds: { _chatReadTextId: "60001", _chatStampLogTextId: "60004" } },
                 episode: { commands: rows.map((r, i) => ({ i, ...r })), text: texts }, story: { chat: "chat/chat.json" },
                 assets: { json: (p) => { assert.equal(p, "chat/chat.json"); return doc; } } };
+  chatResources(ctx, doc, phone ? ui.doc.chatWidget : null);
   const p = { ctx, playbackSpeed: 10, cancelled: false, shortCutIndex: -1, isAutoPlay: auto, nextStep: 0, autoAdvCancel: null,
               session: { voicePlayIds: [], sePlayIds: [], withVoice: true },
               speedRate() { return this.playbackSpeed / 10; }, get shortcut() { return this.shortCutIndex >= 0; },

@@ -20,7 +20,7 @@ const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..
 
 // ---- synthetic note views
 const TRS = { localPosition: { x: 0, y: 0, z: 0 }, localRotation: { x: 0, y: 0, z: 0, w: 1 }, localScale: { x: 1, y: 1, z: 1 } };
-// a material record as LiveObjects.material gives it: the shader by name
+// a material record as ObjectResources.material gives it: the shader by name
 const mat = (name, shader = "Sprites/Default") => ({ material: name, shader, keywords: [], floats: { _Z: 1 }, colors: {} });
 const sprite = (name) => ({ sprite: name, texture: { texture: `textures/${name}.png` }, rect: { x: 0, y: 0, width: 4, height: 4 } });
 // references in prefab.json fields, resolved by the store stub below by their name

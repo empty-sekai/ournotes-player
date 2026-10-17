@@ -2,9 +2,7 @@
 // Cubism Core and, when given, Live2D's MotionSync Core. The whole story runs: interpreter, camera and field, the
 // Live2D characters (load, warmup, frames), the story UI's timing and layout.
 //
-//   OURNOTES_STORY=<path>       a story manifest of a site (stories/<advId>.json), or a directory with a story's logical
-//                               files (story.json, episode.json, scene.json, ...; its models in story.json modelsDir);
-//                               skipped without it
+//   OURNOTES_STORY=<path>       a story product manifest, or a product layout containing exactly one story
 //   OURNOTES_STORY_LANG=<lang>  the language to load from a manifest (default: the manifest's)
 //   CUBISM_CORE=<file>          Live2D's live2dcubismcore.min.js (skipped without it; not part of this repository)
 //   MOTIONSYNC_CORE=<file>      Live2D's live2dcubismmotionsynccore.min.js (optional: without it lip sync is missing)

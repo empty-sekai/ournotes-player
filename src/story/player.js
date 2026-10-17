@@ -110,6 +110,7 @@ export class StoryPlayer extends EventTarget {
     if (o.assets) this.store = o.assets;
     else {
       this._manifest = await fetchStoryManifest(o.src, { fetch: o.fetch, signal });
+      this._lang ||= this._manifest.manifest.language || (this.languages.includes("ja") ? "ja" : this.languages[0]);
       this._labels();
       this.store = await this._loadStore(this._lang, signal);
     }
@@ -188,7 +189,7 @@ export class StoryPlayer extends EventTarget {
   get paused() { return this._paused; }
   get ended() { return !!this.session && this.session.ended; }
   get lang() { return this._lang; }
-  get languages() { return this._manifest ? Object.keys(this._manifest.manifest.languages) : [this._lang].filter(Boolean); }
+  get languages() { return this._manifest ? Object.keys(this._manifest.story.parts.ui) : [this._lang].filter(Boolean); }
   get info() { return this.store ? this.store.info : null; }
   // while a seek within a clip runs, the position it goes to
   get video() {
@@ -255,6 +256,7 @@ export class StoryPlayer extends EventTarget {
   setVolume(category, v) {
     this._volumes[category] = Math.min(1, Math.max(0, Number(v) || 0));
     if (this.session) this.session.setVolume(category, this._volumes[category]);
+    this._sync();
   }
 
   // restarts the episode at line i with the game's shortcut (the rows before it run instantly)
@@ -320,6 +322,7 @@ export class StoryPlayer extends EventTarget {
     const line = Math.max(0, this._startLine || 0, this.line), playing = this.session && this.session.started;
     this._stopClipSeek();
     await this._replace(async () => { this.store = store; this._lang = lang; await this._startSession(line, playing); });
+    this._status("");
   }
 
   // replaces the session (fn starts the new one)

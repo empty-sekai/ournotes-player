@@ -1,3 +1,4 @@
+import { screenResources } from "./story-screen-resources.mjs";
 // Coffee UIParticle on the frame canvas (uiparticle.js) with synthetic frame prefabs, particle systems and UI camera:
 // the baked quad on the canvas for each auto scaling mode and simulation space, the driven scale, the generated
 // renderer nodes, activity, the checks at load and the headless path. Synthetic inputs only.
@@ -98,6 +99,7 @@ const setup = async (doc, { uiCamera = UI_CAMERA } = {}) => {
   const ctx = { loop, ui: { layers: createStoryUILayers() }, episode: { commands: [{ i: 0, cmd: "Frame", TargetAssetName: "f" }] },
                 story: { frames: "frames.json", ui: "ui/ui.json" }, gl: null, localize: (id) => `text ${id}`,
                 assets: { json: (p) => { assert.ok(docs[p], p); return docs[p]; } } };
+  screenResources(ctx, docs["ui/ui.json"], { f: doc });
   const p = { ctx, playbackSpeed: 10, cancelled: false, shortCutIndex: -1, speedRate() { return 1; }, get shortcut() { return false; },
               calcDuration(d, def = 0) { return d ? Math.max(d, 0) : def; }, delay: (sec) => loop.delay(sec),
               ease(s, def = EASE.OutQuad) { return def; }, noWait(c, task) { return task; } };
@@ -133,7 +135,7 @@ test("UIParticle: a Transform-scaled system is baked with the UI camera into a c
   const it = items[0];
   assert.equal(it.node.name, "[generated] UIParticleRenderer");
   assert.equal(fx.children[fx.children.length - 1], it.node);         // the last child of the UIParticle
-  assert.equal(it.material, MAT);
+  assert.equal(it.material, t.ctx.objects.material(MAT));
   assert.equal(it.texture, "textures/glow.png");
   assert.ok(t.canvas.materials.has("glow") && t.canvas.textures.has("textures/glow.png"));
   near(corners(it), fxQuad(t.canvas));
@@ -203,7 +205,7 @@ test("UIParticle: checks at load and at the first draw", async () => {
   const t = await setup(frame([uip(), ps(), psr()]), { uiCamera: null });
   await t.show();
   t.screen.layoutAll(2340, 1080);
-  assert.throws(() => t.screen.frameParticles.refresh(t.loop), /no UI camera \(uiCamera\)/);
+  assert.throws(() => t.screen.frameParticles.refresh(t.loop), /0 Camera/);
   disposeStoryFeatures(t.ctx);
 });
 

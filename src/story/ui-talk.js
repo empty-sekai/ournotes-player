@@ -72,12 +72,12 @@ export const countRenderedCharacters = (text) => {
 };
 
 export class StoryTalkWindow {
-  constructor(ui) {
+  constructor(ui, record = ui.part.window.fields("UIAdvTalkWindow")) {
     this.ui = ui;
     const p = ui.part;
     this.p = p;
     if (p.background && !p.background.canvasGroup) throw new UIError("TalkBackground has no CanvasGroup");
-    const tw = p.window.rec.talkWindow;
+    const tw = record;
     if (!tw) throw new UIError(`${p.window.path}: no UIAdvTalkWindow record`);
     this.rec = tw;
     this.useBackdropFilter = !!tw._useBackdropFilter;   // UIAdvTalkWindow.UseBackdropFilter
@@ -118,7 +118,7 @@ export class StoryTalkWindow {
   // CanvasGroup.DOFade(to, d): DOTween.To on alpha with the default ease (DOTweenSettings defaultEaseType), start
   // value read on the first update
   _fade(cg, to, duration) {
-    return new UITween(this.ui.tweens, { duration, getFrom: () => cg.alpha, to, ease: this.ui.doc.dotween.defaultEaseType,
+    return new UITween(this.ui.tweens, { duration, getFrom: () => cg.alpha, to, ease: this.ui.dotween.defaultEaseType,
                                          apply: (v) => { cg.alpha = v; } });
   }
 

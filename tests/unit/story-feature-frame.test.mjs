@@ -1,3 +1,4 @@
+import { screenResources } from "./story-screen-resources.mjs";
 // Frame (AdvFrameCommand) on a real PlayerLoop at 30 fps with synthetic frame prefabs: the toggle, Show / Hide
 // states, named states, the CanvasGroup fade, sibling order, the pre-delay, canvas size and the comment texts.
 // Synthetic inputs only.
@@ -122,6 +123,7 @@ const makePlayer = (rows, frames) => {
   const ctx = { loop, ui, episode: { commands: rows.map((r, i) => ({ i, ...r })) }, story: { frames: "frames.json", ui: "ui/ui.json" },
                 assets: { json: (p) => { assert.ok(docs[p], p); return docs[p]; } }, gl: null,
                 localize: (id) => `text ${id}` };
+  screenResources(ctx, docs["ui/ui.json"], frames);
   const p = {
     ctx, playbackSpeed: 10, cancelled: false, shortCutIndex: -1, delayOk: true,
     speedRate() { return this.playbackSpeed / 10; },
@@ -362,7 +364,14 @@ const textUI = ({ mode = 0, skip = [], problem = null } = {}) => {
 const ROW = { cmd: "Frame", TargetAssetName: SC, Parameter2: "p1", TargetTextIDs: ["1", "2", "3"] };
 const commentPlayer = (ui, frame = commentFrame()) => {
   const t = makePlayer([ROW], { [SC]: frame });
-  t.ctx.ui = { ...ui, layers: ui.layers };
+  const texts = {};
+  for (const n of t.ctx.assets.prefab(`fixture:${SC}`).nodes) {
+    const b = ui.fonts.frameTexts[SC][n.path];
+    if (!b) continue;
+    const c = n.components.find((c) => c.script?.endsWith("|TextMeshProUGUI"));
+    texts[`fixture:${c.pathId}`] = { font: b.localized };
+  }
+  t.ctx.ui = { ...ui, fonts: { texts }, layers: ui.layers };
   return t;
 };
 
@@ -402,24 +411,17 @@ test("Frame: the comment texts go through the UIText setter; the header lays out
   disposeStoryFeatures(t.ctx);
 });
 
-test("Frame: comment text bindings in English wrap; unbound texts refuse to draw; the load refuses texts the fonts cannot lay out", async () => {
+test("Frame: comment text bindings in English wrap; unbound texts fail at load; the load refuses texts the fonts cannot lay out", async () => {
   const en = commentPlayer(textUI({ mode: 1 }));
   await installStoryFeatures(en.ctx, en.p);
   assert.equal(frameView(en.ctx).loaded(SC).prefab.node(TEXT_PATHS.body).text.wrapping, 1);   // LocalizeText.OnFontChanged
   disposeStoryFeatures(en.ctx);
   const bare = commentPlayer(textUI({ skip: [TEXT_PATHS.body] }));
-  await installStoryFeatures(bare.ctx, bare.p);
-  const f = frameView(bare.ctx).loaded(SC);
-  assert.equal(f.prefab.node(TEXT_PATHS.body).text, undefined);
-  await settle(bare.loop, run(bare, ROW));
-  assert.equal(f.prefab.node(TEXT_PATHS.body).tmp.text, "text 3");
-  const screen = frameView(bare.ctx).screen;
-  screen.layoutAll(2340, 1080);
-  assert.throws(() => screen.canvas.frame.drawItems(), /canvas text without a text binding/);
+  await assert.rejects(installStoryFeatures(bare.ctx, bare.p), /no font binding/);
   disposeStoryFeatures(bare.ctx);
-  const drawing = commentPlayer(textUI({ skip: [TEXT_PATHS.body] }));      // a session that draws refuses it at load
+  const drawing = commentPlayer(textUI({ skip: [TEXT_PATHS.body] }));
   drawing.ctx.gl = {};
-  await assert.rejects(installStoryFeatures(drawing.ctx, drawing.p), /frame sc: texts without a text binding \(ui\/fonts.json frameTexts\): sc\/Root\/Camera\/Coments\/P1\/Card\/Body$/);
+  await assert.rejects(installStoryFeatures(drawing.ctx, drawing.p), /no font binding/);
   const bad = commentPlayer(textUI({ problem: "Test SDF: U+0021 not in the font data" }));
   await assert.rejects(installStoryFeatures(bad.ctx, bad.p), /frame sc: texts the story UI cannot lay out: Test SDF: U\+0021/);
 });

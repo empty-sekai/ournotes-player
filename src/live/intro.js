@@ -344,7 +344,7 @@ export class LiveLaneInEffect {
 // root bone; the same world positions).
 // ENGINE: the mesh has no colour channel; the missing COLOR input is taken as (1, 1, 1, 1).
 export class LiveSkinnedMesh {
-  // smr: the SkinnedMeshRenderer's fields; objects: LiveObjects (its mesh and material)
+  // smr: the SkinnedMeshRenderer's fields; objects: ObjectResources (its mesh and material)
   constructor(prefab, path, smr, layer, objects) {
     this.pf = prefab; this.path = path; this.smr = smr; this.layer = layer;
     const m = objects.mesh(smr.m_Mesh);

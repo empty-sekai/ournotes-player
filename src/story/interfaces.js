@@ -93,13 +93,13 @@ export const checkEpisodeCommands = (commands, what = "episode") => {
 //   gl             the WebGL2 context (null when headless)
 export const STORY_CONTEXT_FIELDS = Object.freeze(["loop", "camera", "field", "background", "fieldRenderer", "volume",
   "characters", "stages", "ui", "audio", "quality", "settings", "localize", "lang", "playbackMode", "titleTextId",
-  "episode", "story", "assets", "renderer", "gl"]);
+  "episode", "story", "assets", "renderer", "gl", "data", "objects"]);
 
 export const createStoryContext = (parts) => {
-  const ctx = {};
+  const ctx = {}, values = { data: null, objects: null, ...parts };
   for (const k of STORY_CONTEXT_FIELDS) {
-    if (!(k in parts)) throw new TypeError(`StoryContext: "${k}" missing`);
-    ctx[k] = parts[k];
+    if (!(k in values)) throw new TypeError(`StoryContext: "${k}" missing`);
+    ctx[k] = values[k];
   }
   for (const k of Object.keys(parts))
     if (!STORY_CONTEXT_FIELDS.includes(k)) throw new TypeError(`StoryContext: unknown field "${k}"`);

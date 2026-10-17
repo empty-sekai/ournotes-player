@@ -170,45 +170,43 @@ export function advViewport(screenWidth: number, screenHeight: number): { x: num
 /** The Talk rows that show a line, in order. */
 export function storyLines(episode: any): StoryCommand[];
 
-/** A story manifest without its file lists. */
+/** The identity, language and product directories of a loaded story store. */
 export interface StoryManifestInfo {
-  format?: string;
-  advId?: number;
-  /** The facts of the story (its listing entry). */
-  story?: { advId?: number; titles?: Record<string, string>; commands?: string[]; playbackMode?: 0 | 1;
-            [key: string]: unknown };
-  /** The default language. */
-  language?: StoryLanguage;
+  schema: "nnnotes.product/1";
+  product: "story";
+  subject: string;
+  advId: number;
+  story: { advId: number; playbackMode: 0 | 1; titles: Partial<Record<StoryLanguage, string>> };
+  language: StoryLanguage;
   /** The language this store holds. */
-  loadedLanguage?: StoryLanguage;
-  audio?: boolean;
-  requires?: { commands?: string[]; cubismCore?: boolean; motionSync?: boolean };
+  loadedLanguage: StoryLanguage;
+  languages: Partial<Record<StoryLanguage, Record<string, never>>>;
+  /** The story's own file directory within the store. */
+  dir: string;
+  /** Product kind -> subject -> file directory within the store. */
+  products: Record<string, Record<string, string>>;
   /** The site root, relative to the manifest. */
   root?: string;
-  /** Model id -> the path of its model manifest (a product manifest of live2d.model), relative to the site root. */
-  models?: Record<string, string>;
   [key: string]: unknown;
 }
 
 /** The story manifest format. */
-export const STORY_MANIFEST_FORMAT: "ournotes.story-manifest/2";
+export const STORY_MANIFEST_FORMAT: "nnnotes.product/1";
 /** The story manifest formats the player reads. */
-export const STORY_MANIFEST_FORMATS: readonly ["ournotes.story-manifest/2"];
+export const STORY_MANIFEST_FORMATS: readonly ["nnnotes.product/1"];
 
 /** Fetches a story manifest; refuses a story whose commands this player lacks. */
-export function fetchStoryManifest(url: string | URL, options?: { fetch?: typeof globalThis.fetch; signal?: AbortSignal | null }):
-  Promise<{ url: string; manifest: any }>;
+export function fetchStoryManifest(url: string | URL, options?: Pick<FromManifestOptions, "fetch" | "signal" | "base" | "decode">):
+  Promise<{ url: string; manifest: any; story: any; episode: any; root: string; fetch: typeof globalThis.fetch }>;
 
 export interface LoadStoryOptions extends FromManifestOptions {
   /** The language to load (default: the manifest's). */
   lang?: StoryLanguage | null;
   /** A manifest already fetched with fetchStoryManifest. */
-  manifest?: { url: string; manifest: any } | null;
+  manifest?: Awaited<ReturnType<typeof fetchStoryManifest>> | null;
 }
 
-/** The AssetStore of one language of a story: the manifest's common files and that language's files, the model.json
- *  of every model manifest it lists under live2d/<id>/ and their objects in one object table. `base` defaults to the
- *  manifest's `root`. */
+/** Load the story product and its scene, media, models, UI and fonts for one language into one object store. */
 export function loadStoryStore(url: string | URL, options?: LoadStoryOptions): Promise<AssetStore>;
 
 /** A talk log entry (AdvTalkHelper.AddLogEntry): Talk, Location, subtitles and chat rows, also those the shortcut

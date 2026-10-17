@@ -2,6 +2,7 @@ import { F } from "./core.js";
 import { applyState } from "./glsl.js";
 import { AnimClip, Animator } from "./anim.js";
 import { easeF } from "./tween.js";
+import { componentClass } from "./prefab.js";
 
 // uGUI subset on WebGL2 with the game's UI shaders, for the live UI canvases (judgement text, combo counter,
 // canvas.js) and the story's front canvas: RectTransform layout, Image simple / sliced meshes, sprites, CanvasGroup,
@@ -75,6 +76,27 @@ export class UIClip extends AnimClip {
 // empty "Idle" clips (AdvLocation / AdvTitle); such a state writes nothing.
 // ENGINE: what an empty state writes with Write Defaults is native; the states here write nothing (Write Defaults off).
 export class UIAnimator extends Animator {
+  static fromObjects(node, objects, controller, prefab, path) {
+    const ctrl = objects.controller(controller, prefab, path);
+    const animator = new Animator(ctrl, (b) => {
+      const target = b.path ? node.find(b.path) : node;
+      const attr = b.attr.replace("localEulerAnglesRaw", "localEulerAngles");
+      const set = UI_CLIP_TARGET[`${b.cls}.${attr}`];
+      if (!set) throw new UIError(`${node.path}: animation property ${b.cls}.${b.attr} not implemented`);
+      const get = () => {
+        if (b.cls === "CanvasGroup") return target.canvasGroup.alpha;
+        const [field, axis] = attr.split(".");
+        if (field === "localEulerAngles") return target.euler?.[axis] ?? (axis === "z" ? target.rotationZ : 0);
+        const key = field.replace(/^m_/, "");
+        return target[key[0].toLowerCase() + key.slice(1)][axis];
+      };
+      return { get, set: (v) => set(target, v) };
+    });
+    Object.setPrototypeOf(animator, UIAnimator.prototype);
+    animator.node = node;
+    return animator;
+  }
+
   constructor(node, ctrl, clips) {
     const states = ctrl.states.map((s) => {
       const key = `${ctrl.name}/${s.clip}`;
@@ -125,12 +147,17 @@ export class UINode {
     this.rotationZ = 2 * Math.atan2(q.z, q.w) * 180 / Math.PI;
     this.euler = null;                  // set by an Animator (Transform.localEulerAngles)
     this.localScale = { x: rec.localScale.x, y: rec.localScale.y };
-    this.canvasGroup = rec.canvasGroup && rec.canvasGroup.m_Enabled
-      ? { alpha: rec.canvasGroup.m_Alpha, ignoreParentGroups: !!rec.canvasGroup.m_IgnoreParentGroups } : null;
+    const group = rec.components?.find((c) => componentClass(c) === "CanvasGroup")?.fields || rec.canvasGroup;
+    this.canvasGroup = group && group.m_Enabled
+      ? { alpha: group.m_Alpha, ignoreParentGroups: !!group.m_IgnoreParentGroups } : null;
     this.rec = rec;
+    this.ignoreLayout = !!(this.fields("LayoutElement")?.m_IgnoreLayout || rec.layoutElement?.m_IgnoreLayout);
     this.rect = null;                   // {x, y, w, h} in own local space (after layout)
     this.matrix = null;                 // local -> canvas space
   }
+
+  component(cls) { return this.rec.components?.find((c) => componentClass(c) === cls) || null; }
+  fields(cls) { return this.component(cls)?.fields || null; }
 
   setEuler(axis, v) {
     if (!this.euler) this.euler = { x: 0, y: 0, z: this.rotationZ };

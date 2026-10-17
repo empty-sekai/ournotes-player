@@ -187,14 +187,13 @@ test("analyzer: shared readers in one frame and a paused voice keep the last val
   assert.equal(a.getOpenInfo().openY, last);
 });
 
-test("story voice hook: one analyzer per voice from story.json crilips, the voice's PCM without it", async () => {
+test("story voice hook: one analyzer per voice from the CRI Lips product, the voice's PCM without it", async () => {
   const { startVoiceLipSync } = await import("../../src/story/commands/talk.js");
   const { CriLipsAnalyzer } = await import("../../src/live2d/crilips/index.js");
   const { desc, blob } = synthParts();
   const session = (crilips) => {
     const src = { sampleRate: 48000, pull: () => new Float32Array(0) };
-    const p = { ctx: { story: { crilips }, audio: { pcmSource: () => src },
-                       assets: { json: () => desc, arrayBuffer: () => blob.buffer.slice(0) } },
+    const p = { ctx: { data: { crilips }, audio: { pcmSource: () => src } },
                 session: { activeVoiceLipSync: new Map(), motionSyncVoices: new Map() } };
     const character = () => {
       const c = { isMotionSyncEnabled: false, analyzer: undefined, setLipSyncPresentationMode() {}, setLipSyncEnabled() {} };
@@ -203,7 +202,7 @@ test("story voice hook: one analyzer per voice from story.json crilips, the voic
     };
     return { p, src, character };
   };
-  const on = session({ descriptor: "crilips/crilips.json", data: "crilips/crilips.bin" });
+  const on = session({ descriptor: desc, data: blob.buffer.slice(0) });
   const info = { id: 1 }, a = on.character(), b = on.character();
   startVoiceLipSync(on.p, a, info, false);
   startVoiceLipSync(on.p, b, info, false);

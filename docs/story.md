@@ -182,14 +182,11 @@ with the distance: from the current time forward, from the clip's start backward
 
 ## Episodes the player refuses
 
-The player refuses an episode it cannot play as the game does, naming what is missing: a command without a handler
-(the command registry below; checked from the manifest before the story's files download), a stage feature it does
-not draw (stage shadow textures), a talk window the story UI does not provide, a text the story UI cannot lay out, and
-in a session that draws, a chat episode without the story UI's chat data (`ui/ui.json` `chatWidget` and `chatTexts`,
-`ui/fonts.json` `chatTexts`) and a frame text without the story UI's frame text bindings (`ui/fonts.json`
-`frameTexts`). Such an episode is never played
-halfway. The one exception is a graphic found only while drawing: a still canvas that shows a UIParticle effect
-stops the session at that frame with an error that names the node and the component.
+The loader checks the episode's command set before downloading media. Sessions report unsupported settings and
+missing resources with the command, node or object identity: an unavailable talk window, stage shadow textures,
+text layout features outside the supported subset, or a TMP text without a font-product binding. A resource first
+needed by a later command or draw can fail at that point. Supported feature subsets are listed in
+[story-features.md](story-features.md).
 
 ## Extending: the command registry
 

@@ -25,18 +25,9 @@
 // Without charts.json the manifests are charts/*.json and charts/<region>/*.json. A models.json entry's id, key and
 // group must be those of its manifest's subject, its canvas and textures those of model.json, its bytes and files those
 // of the manifest's files and its objects' files.
-// Stories (stories.json, stories/<advId>.json, stories/<region>/<advId>.json; docs/story-data-format.md): the manifest
-// (schema, root, language groups, agreement with stories.json), every asset of the common files and of each language
-// group, story.json, episode.json, the required commands against the episode's rows and the player settings, the cue
-// sheets (cues.json, waveform files and their FLAC / MP4 headers), the Live2D models (the model manifests the manifest
-// lists, each valid as a model, one per model story.json names; no story file under live2d/), the Animator controller
-// and clip references of the media files, both
-// shader directories, texture
-// descriptors, and per language ui/ui.json, ui/languages.json and ui/fonts.json (text bindings, the dialog, chat
-// window and frame bindings, font assets with their fallbacks and missing glyph, fallback materials, sprite assets,
-// glyph pages, text material shaders). An Overlay story built with open fonts: its host (host/host.json and, per
-// language, ui/simple/ui.json with ui/simple/fonts.json). A story id is the manifest path below stories/ without .json
-// (`10462`, `tw/10462`).
+// Stories (stories/<id>.json): story products and their part graph, every selected language's UI and font bindings,
+// scene and media object references, cue waveforms, CRI Lips bounds, and model products. Products share objects;
+// their files and checks are cached by content while each language is validated against its own bindings.
 // Prints the failures and a summary; exits 1 when a live, a chart, a model or a story fails. No dependencies.
 
 import crypto from "node:crypto";
@@ -49,8 +40,16 @@ import { LiveData } from "../src/live/data.js";
 import { legacyLive } from "../src/live/legacy.js";
 import { LiveOptionContext } from "../src/live/settings.js";
 import { LIVE_PARTS, LIVE_PRODUCT, liveManifest, productDir } from "../src/live/store.js";
-import { animRecordProblems } from "../src/story/features/clips.js";
-import { ADV_COMMAND } from "../src/story/interfaces.js";
+import { storyPartRequests } from "../src/story/store.js";
+import { StoryData } from "../src/story/data.js";
+import { StoryPlayerCore } from "../src/story/player-core.js";
+import { simpleUnsupportedCommands } from "../src/story/simple/validator.js";
+import { ObjectResources } from "../src/engine/objects.js";
+import { HomeScene } from "../src/story/simple/home/objects.js";
+import { spotLighting } from "../src/story/simple/home/host.js";
+import { hostUIRoots } from "../src/story/simple/objects.js";
+import { SimpleUIDoc } from "../src/story/simple/ui.js";
+import { mergeProductManifests } from "../src/data/products.js";
 import { compile } from "./lib/json-schema.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -61,9 +60,19 @@ const S = {
   noteeffect: schema("live-noteeffect"), sounds: schema("live-sounds"), music: schema("live-music"), models: schema("models"), product: schema("product"), modelJson: schema("model-json"),
   stories: schema("stories"), storyManifest: schema("story-manifest"), story: schema("story"), episode: schema("episode"),
   storyFonts: schema("story-fonts"), storyLanguage: schema("story-language"),
+  storyScene: schema("story-scene"), storyUI: schema("story-ui"), storySimpleUI: schema("story-simple-ui"),
+  storyHost: schema("story-host"), storyAsset: schema("story-asset"),
 };
 
-const STORY_HOST_FORMAT = "ournotes.story-host/1";
+const SCHEMA_STORY_FONTS = S.storyFonts;
+const STORY_DOCS = { "story.scene": ["scene.json", "storyScene"], "story.ui": ["ui.json", "storyUI"],
+  "story.simpleui": ["ui.json", "storySimpleUI"], "story.host": ["host.json", "storyHost"], "story.asset": ["asset.json", "storyAsset"] };
+const GRAPHICS_CLASSES = { graphics: "GraphicsSettings", player: "PlayerSettings", quality: "QualitySettings" };
+const STORY_REFS = { "story.scene": { scene: "GameObject", renderSettings: "RenderSettings", prefabs: "GameObject" },
+  "story.ui": { widget: "GameObject", chatWidget: "GameObject", uiManager: "GameObject", talkWindows: "GameObject", dialogs: "GameObject",
+    letterbox: "Sprite", clips: "AnimationClip", controllers: "AnimatorController" },
+  "story.simpleui": { talkWindow: "GameObject", systemMessage: "GameObject", uiManager: "GameObject" },
+  "story.host": { cameraTarget: "GameObject", dotween: "MonoBehaviour", prefabs: "GameObject" } };
 const extOf = (p) => (p.match(/\.([A-Za-z0-9]+)$/) || [])[1]?.toLowerCase() ?? "";
 // encoded assets (assets/<sha256>.<ext>.gz / .br): the encoding, the logical file's extension, the extensions that may
 // be encoded (every other file is stored as it is)
@@ -551,12 +560,13 @@ class LiveChecks {
 
   // every object of the store: its JSON files parse; a Texture2D's image is a PNG of its size; a Shader's parsed form
   // and variant index, and the GLES3 programs of the shaders its Materials use; a Mesh's arrays
-  objects() {
+  objects({ selectedPrograms = false, materialKeywords = new Map() } = {}) {
     const drawn = new Set();
+    const materials = new Map();
     for (const id of objectIds(this.S)) {
       if (this.S.object(id).class !== "Material") continue;
-      const r = this.ofObject("materialshader", id, "json", (b) => { try { return { shader: refOf(JSON.parse(b).shader) }; } catch { return {}; } });
-      if (r.shader) drawn.add(r.shader);
+      const r = this.ofObject("materialshader", id, "json", (b) => { try { const m = JSON.parse(b); return { shader: refOf(m.shader), keywords: m.keywords || [] }; } catch { return {}; } });
+      if (r.shader) { drawn.add(r.shader); if (!materials.has(r.shader)) materials.set(r.shader, []); materials.get(r.shader).push(...(materialKeywords.get(id) || [r.keywords])); }
     }
     for (const id of objectIds(this.S)) {
       const o = this.S.object(id), roles = this.S.roles(id), where = `${o.class} ${id}${o.name ? ` (${o.name})` : ""}`;
@@ -583,14 +593,24 @@ class LiveChecks {
         report(json("json", parsedShaderErrors));
         const ix = report(json("index", (v) => (isObj(v) && typeof v.name === "string" && Array.isArray(v.variants) ? [] : ["index: not a variant index"])));
         if (!ix || !drawn.has(id)) continue;
+        if (selectedPrograms) for (const keywords of materials.get(id) || []) {
+          const selected = variantFor([{ name: ix.v.name, variants: ix.v.variants.filter((v) => v.platform === SHADER_PLATFORM && v.type === SHADER_PROGRAM_TYPE && v.stage === "vertex") }], ix.v.name, keywords);
+          if (selected.error) this.err(where, selected.error);
+          else if (!roles.includes(selected.variant.role)) this.err(where, `material [${keywords.join(" ")}]: no ${selected.variant.role} file`);
+        }
         for (const v of ix.v.variants) {
           if (v.platform !== SHADER_PLATFORM || v.type !== SHADER_PROGRAM_TYPE) continue;
+          if (selectedPrograms && !roles.includes(v.role)) continue;
           if (!roles.includes(v.role)) { this.err(where, `no ${v.role} file`); continue; }
           for (const e of this.ofObject("glsl", id, v.role, (b) => glslStages(b.toString("utf8")))) this.err(`${where} ${v.role}`, e);
         }
       } else if (o.class === "Mesh") {
         report(json("json"));
-        if (!roles.includes("arrays")) { this.err(where, "no arrays file"); continue; }
+        if (!roles.includes("arrays")) {
+          const mesh = this.S.objectJson(id);
+          if (mesh.m_VertexData?.m_VertexCount !== 0 || mesh.m_SubMeshes?.some((s) => s.indexCount > 0)) this.err(where, "no arrays file");
+          continue;
+        }
         report(json("arrays", (v) => (isObj(v) && Array.isArray(v.positions) && Array.isArray(v.submeshes)
           && v.submeshes.every((s) => isObj(s) && typeof s.topology === "string" && (s.indices === null || Array.isArray(s.indices)))
           ? [] : ["arrays: needs positions and submeshes [{topology, indices}]"])));
@@ -641,26 +661,6 @@ function nodeList(pf, where, errs) {
     if (cut >= 0 && !paths.has(n.path.slice(0, cut))) { errs.push(`${where}: parent of ${n.path} is not listed before it`); return; }
     for (const k of ["localPosition", "localRotation", "localScale"]) if (!isObj(n[k])) { errs.push(`${where}: ${n.path} has no ${k}`); return; }
     paths.add(n.path);
-  }
-}
-
-const isDescriptor = (o) => isObj(o) && typeof o.texture === "string" && /\.png$/i.test(o.texture) &&
-  Number.isInteger(o.width) && Number.isInteger(o.height);
-const desc = (o) => ({ texture: o.texture, width: o.width, height: o.height, mipCount: o.mipCount ?? 1, name: o.name });
-const dirOf = (p) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
-const inDir = (dir, p) => (dir ? `${dir}/${p}` : p);
-
-// every object inside v (skipping the top-level keys in `skip`)
-function walk(v, fn, skip = []) {
-  const stack = [v];
-  let top = true;
-  while (stack.length) {
-    const o = stack.pop();
-    if (Array.isArray(o)) { for (const x of o) if (x && typeof x === "object") stack.push(x); continue; }
-    if (!o || typeof o !== "object") continue;
-    fn(o);
-    for (const [k, x] of Object.entries(o)) if (x && typeof x === "object" && !(top && skip.includes(k))) stack.push(x);
-    top = false;
   }
 }
 
@@ -780,7 +780,7 @@ class Product extends Chart {
   doc(kind, id, role, where, check = () => []) {
     const p = this.role(id, role, where);
     if (!p) return null;
-    const r = this.json(kind, p, (v) => { const errs = check(v); return { errs, v: errs.length ? null : v }; });
+    const r = this.json(`product:${kind}`, p, (v) => { const errs = check(v); return { errs, v: errs.length ? null : v }; });
     return r ? r.v : null;
   }
 }
@@ -1015,7 +1015,6 @@ class Live extends Product {
 // LanguageMode and text field per language (ui/languages.json)
 const STORY_LANGUAGES = { ja: [0, "japanese"], en: [1, "english"], "zh-Hant": [2, "traditionalChinese"],
   "zh-Hans": [3, "simplifiedChinese"], ko: [4, "korean"] };
-const STORY_MEDIA = ["frames", "effects", "postEffects", "stills", "talkWindows", "chat", "videos"];
 const TMP_TEXT_CLASSES = new Set(["TextMeshProUGUI", "RubyTextMeshProUGUI", "RubyEmojiTextMeshProUGUI"]);
 const TMP_SPRITE_SHADER = "TextMeshPro/Sprite";
 // TMP_Text.SetArraySizes: TMP_Settings.missingGlyphCharacter 0 is U+25A1; without it U+0020, then U+0003 (a control
@@ -1044,24 +1043,11 @@ const scaleRatios = (fl, keywords) => {
   return { a, c };
 };
 const mainTexName = (m) => (isObj(m.textures) && isObj(m.textures._MainTex) && isObj(m.textures._MainTex.texture) ? m.textures._MainTex.texture.name : null);
-// the text nodes of frames.json: frame name -> {node path: node} of the nodes with a TextMeshPro component (frames
-// without one left out)
-const frameTextNodes = (doc) => {
-  const out = {};
-  for (const [name, rec] of Object.entries(isObj(doc) && isObj(doc.frames) ? doc.frames : {})) {
-    const nodes = isObj(rec) && Array.isArray(rec.nodes) ? rec.nodes : [];
-    const texts = nodes.filter((n) => isObj(n) && Array.isArray(n.components) && n.components.some((c) => isObj(c) && TMP_TEXT_CLASSES.has(c.class)));
-    if (texts.length) out[name] = Object.fromEntries(texts.map((n) => [n.path, n]));
-  }
-  return out;
-};
 const WAVE_EXT = { aac: "m4a", flac: "flac" };
 // JSON text with object keys sorted (comparison independent of key order)
 const canon = (v) => JSON.stringify(v, (k, x) => (isObj(x) ? Object.fromEntries(Object.keys(x).sort().map((y) => [y, x[y]])) : x));
 const sameJson = (a, b) => canon(a) === canon(b);
 const sizeOf = (files) => Object.values(files).reduce((n, f) => n + (isObj(f) && Number.isInteger(f.size) ? f.size : 0), 0);
-const truthy = (v) => (Array.isArray(v) ? v.length > 0 : isObj(v) ? Object.keys(v).length > 0 : Boolean(v));
-const commandName = (v) => ADV_COMMAND[v] || `Cmd${v}`;
 
 // the variant of shader `name` in a parsed shader index that draws a material with `keywords`: the variant of sub
 // shader 0, pass 0 whose keywords equal the material's keywords that the shader's variants use
@@ -1085,414 +1071,281 @@ function storyVariant(list, keywords) {
   return { error: `${LIT_SHADER}: no variant for [${want}] (the story renderer's keywords at quality 4)` };
 }
 
-class Story extends Chart {
-  constructor(site, id, man, where = null) {
-    super(site, id, man, where);
-    this.common = this.files;
-    this.groups = isObj(man.languages) ? man.languages : {};
-    this.lang = null;                 // the language group being checked (error prefix)
-    this.fallbackSeen = new Set();    // the fallback materials checked (document, text material, fallback asset)
+// A story and the products its part index selects. Each language is checked through the same StoryData view as playback.
+class Story extends Product {
+  constructor(...args) { super(...args); this.lang = null; this.fallbackSeen = new Set(); this.partCache = new Map(); }
+
+  err(where, message) { this.errs.push(`${this.lang ? `[${this.lang}] ` : ""}${where}: ${message}`); }
+
+  readDoc(path, check = () => []) {
+    const r = this.json("story-document", path, (v) => ({ v, errs: check(v) }));
+    return r && !r.errs.length ? r.v : null;
   }
 
-  err(where, msg) { this.errs.push(`${this.lang ? `[${this.lang}] ` : ""}${where}: ${msg}`); }
-
-  // the parsed JSON of a logical file (not cached: story documents are large and mostly per story), or null
-  doc(p, check) {
-    if (!this.has(p)) { this.err(p, "not in the manifest"); return null; }
-    this.checked.add(p);
-    let v;
-    try { v = JSON.parse(this.text(p)); } catch (e) { this.err(p, `not valid JSON (${e.message})`); return null; }
-    const errs = check ? check(v) : [];
-    for (const e of errs.slice(0, 20)) this.err(p, e);
-    return errs.length ? null : v;
-  }
-
-  // every JSON file of the current file set not parsed by a check must parse
-  parseRest(paths) {
-    for (const p of paths) if (p.endsWith(".json") && !this.checked.has(p)) this.json("parse", p, () => ({ errs: [] }));
-  }
-
-  png(p, d, singleLevel) {
-    const asset = this.files[p].asset;
-    const info = this.site.once("png", asset, () => { try { return pngInfo(this.site.bytes(asset)); } catch (e) { return { error: e.message }; } });
-    if (info.error) { this.err(p, info.error); return; }
-    if (info.width !== d.width || info.height !== d.height)
-      this.err(p, `PNG is ${info.width}x${info.height}, descriptor ${d.name || ""} says ${d.width}x${d.height}`);
-    if (singleLevel && (d.mipCount ?? 1) !== 1) this.err(p, `descriptor ${d.name || ""}: mipCount ${d.mipCount}`);
-  }
-
-  // texture descriptors anywhere in a document: the ones whose PNG is in the file set (relative to `dir`) agree with it
-  descriptors(v, dir) {
-    const seen = new Set();
-    walk(v, (o) => {
-      if (!isDescriptor(o)) return;
-      const p = inDir(dir, o.texture), k = `${p}|${o.width}|${o.height}`;
-      if (seen.has(k) || !this.has(p)) return;       // described but not part of this story
-      seen.add(k);
-      this.png(p, desc(o), false);
-    });
+  part(path, identity) {
+    if (this.partCache.has(path)) {
+      const m = this.partCache.get(path);
+      if (m && (m.product !== identity.product || m.subject !== identity.subject)) {
+        this.err(path, `expected ${identity.product} product of ${identity.subject}`); return null;
+      }
+      return m;
+    }
+    let product;
+    try {
+      const m = JSON.parse(fs.readFileSync(this.site.file(path), "utf8"));
+      product = new Product(this.site, identity.subject, m, path);
+      for (const e of S.product(m)) product.err("manifest", e);
+      if (m.product !== identity.product || m.subject !== identity.subject)
+        product.err("manifest", `expected ${identity.product} product of ${identity.subject}`);
+      if (!product.errs.length) product.checkAssets();
+      for (const e of product.errs) this.err(path, e);
+    } catch (e) { this.err(path, e.message); }
+    const result = product && !product.errs.length ? product.man : null;
+    this.partCache.set(path, result);
+    return result;
   }
 
   run(entry) {
-    const m = this.man;
-    for (const e of S.storyManifest(m)) this.err("manifest", e);
-    if (!isObj(m.files) || !isObj(m.languages)) return this.errs;
-    this.checkGroups();
-    if (entry) this.crossCheck(entry);
+    for (const e of S.storyManifest(this.man)) this.err("manifest", e);
+    if (this.errs.length) return this.errs;
+    const root = "../".repeat(this.where.split("/").length - 1);
+    if ((this.man.root || "../") !== root) this.err("manifest", `root ${this.man.root || "../"}, expected ${root}`);
     this.checkAssets();
-    for (const [lang, g] of Object.entries(this.groups)) {
-      if (!isObj(g) || !isObj(g.files)) continue;
-      this.lang = lang; this.files = g.files;
-      this.checkAssets();
+    if (this.errs.length) return this.errs;
+    const story = this.readDoc("story.json", S.story), episode = this.readDoc("episode.json", S.episode);
+    if (!story || !episode) return this.errs;
+    if (String(story.advId) !== this.man.subject || episode.advId !== story.advId)
+      this.err("story.json", "story index, episode and product subject disagree");
+    if (episode.commands.length !== episode.commandCount) this.err("episode.json", "commandCount differs from the number of rows");
+    const languages = Object.keys(story.parts.ui);
+    if (!languages.length) this.err("story.json", "no UI language");
+    for (const name of ["fonts", ...(story.parts.simpleui ? ["simpleui"] : [])])
+      if (!sameJson(Object.keys(story.parts[name]).sort(), [...languages].sort())) this.err("story.json", `parts.${name}: languages differ from parts.ui`);
+    if (this.man.language && !languages.includes(this.man.language)) this.err("manifest", `default language ${this.man.language} not in parts.ui`);
+    if (entry) {
+      if (entry.id !== String(story.advId) || entry.advId !== story.advId) this.err("stories.json", "id differs from the story product");
+      if (entry.playbackMode !== (episode.master?._playbackMode || 0)) this.err("stories.json", "playbackMode differs from the episode");
+      if (!sameJson([...(entry.languages || [])].sort(), [...languages].sort())) this.err("stories.json", "languages differ from parts.ui");
     }
-    this.lang = null; this.files = this.common;
-    if (this.errs.length) return this.errs;       // content checks need every asset in place
-
-    const langs = Object.keys(this.groups);
-    if (!langs.length) { this.err("manifest", "no language group"); return this.errs; }
-    this.files = { ...this.common, ...this.groups[langs[0]].files };
-    const story = this.checkCommon();
-    if (story) {
-      this.parseRest(Object.keys(this.common));
-      for (const lang of langs) {
-        this.lang = lang;
-        this.files = { ...this.common, ...this.groups[lang].files };
-        this.checkLanguage(lang, story);
-        this.parseRest(Object.keys(this.groups[lang].files));
-      }
+    const dir = productDir(`stories/${story.advId}.json`);
+    const selected = this.site.storyLanguages || languages;
+    for (const lang of selected) {
+      this.lang = lang;
+      if (!languages.includes(lang)) { this.err("story.json", `no UI language ${lang}`); continue; }
+      try {
+        const requests = storyPartRequests(story, lang), loaded = [[dir, this.man]];
+        for (const [path, identity] of requests) {
+          const m = this.part(path, identity);
+          if (m) loaded.push([productDir(path), m]);
+        }
+        if (loaded.length !== requests.size + 1) continue;
+        const merged = mergeProductManifests(loaded);
+        const store = new SiteStore(this.site, merged.files, merged.objects, { ...merged, loadedLanguage: lang });
+        const data = new StoryData(store), objects = new ObjectResources(store, data.resourceOptions());
+        const checks = new LiveChecks(this.site, store, (w, m) => this.err(w, m));
+        this.store = store; this.data = data; this.objectsView = objects; this.checks = checks;
+        this.checkParts(requests);
+        checks.objects({ selectedPrograms: true, materialKeywords: this.materialKeywords() });
+        this.checkEpisode();
+        this.checkFonts(data.fonts, data.ui);
+        this.checkModels();
+        if (entry?.commands) {
+          const commands = StoryPlayerCore.requiredCommands(episode, data.playerSettings).sort();
+          if (!sameJson([...entry.commands].sort(), commands)) this.err("stories.json", "commands differ from the episode and player settings");
+        }
+      } catch (e) { this.err("story", e.message); }
     }
-    this.lang = null; this.files = this.common;
+    this.lang = null;
     return this.errs;
   }
 
-  checkGroups() {
-    const m = this.man;
-    // root: the site root seen from the manifest (stories/<advId>.json, stories/<region>/<advId>.json)
-    if (this.where) {
-      const root = "../".repeat(this.where.split("/").length - 1);
-      if (m.root !== root) this.err("manifest", `root ${JSON.stringify(m.root)}, the site root from ${this.where} is ${JSON.stringify(root)}`);
-    }
-    // the store the player builds: the common files, one group and each model's model.json under live2d/<id>/
-    for (const [where, files] of [["files", m.files], ...Object.entries(m.languages).map(([l, g]) => [`languages.${l}`, isObj(g) ? g.files : null])])
-      for (const p of Object.keys(isObj(files) ? files : {}))
-        if (p.startsWith("live2d/")) this.err("manifest", `${where}: ${p}: live2d/ holds the files of the models (manifest models)`);
-    if (!has(m.languages, m.language)) this.err("manifest", `language ${m.language} is not a key of languages`);
-    for (const [lang, g] of Object.entries(m.languages)) {
-      if (!isObj(g) || !isObj(g.files)) continue;
-      for (const p of Object.keys(g.files)) if (has(m.files, p)) this.err("manifest", `languages.${lang}: ${p} is also a common file`);
-      for (const p of ["ui/fonts.json", "ui/languages.json"]) if (!has(g.files, p)) this.err("manifest", `languages.${lang}: ${p} missing`);
-      if (isObj(m.host) && !has(g.files, "ui/simple/fonts.json")) this.err("manifest", `languages.${lang}: ui/simple/fonts.json missing (the story has a host)`);
-    }
-    if (!isObj(m.story)) return;
-    const s = m.story;
-    if (s.advId !== m.advId) this.err("manifest", `story.advId ${s.advId}, advId ${m.advId}`);
-    if (s.language !== m.language) this.err("manifest", `story.language ${s.language}, language ${m.language}`);
-    if (!sameJson([...(s.languages || [])].sort(), Object.keys(m.languages).sort())) this.err("manifest", "story.languages differ from the keys of languages");
-    if (isObj(m.requires) && !sameJson(m.requires.commands, s.commands)) this.err("manifest", "requires.commands differ from story.commands");
-  }
-
-  crossCheck(e) {
-    const m = this.man;
-    if (e.id !== String(m.advId)) this.err("stories.json", `id ${e.id}, manifest advId ${m.advId}`);
-    for (const k of ["audio", "audioFormat", "fonts"]) if (e[k] !== m[k]) this.err("stories.json", `${k} ${JSON.stringify(e[k])}, manifest ${JSON.stringify(m[k])}`);
-    if (isObj(m.story)) for (const [k, v] of Object.entries(m.story)) if (!sameJson(e[k], v)) this.err("stories.json", `${k} differs from the manifest's story.${k}`);
-    if ((has(e, "regions") || has(m, "regions")) && !sameJson(e.regions, m.regions)) this.err("stories.json", "regions differ from the manifest");
-    const size = { common: sizeOf(m.files), models: this.modelsSize(),
-                   languages: Object.fromEntries(Object.entries(this.groups).map(([l, g]) => [l, sizeOf(g.files || {})])) };
-    if (size.models !== null && !sameJson(e.size, size)) this.err("stories.json", `size ${JSON.stringify(e.size)}, manifest files ${JSON.stringify(size)}`);
-  }
-
-  // the sum of size over the files of the listed model manifests and of their objects, an object several of them list
-  // counted once (null while one of them is missing or unreadable)
-  modelsSize() {
-    const files = {};
-    for (const [id, p] of Object.entries(isObj(this.man.models) ? this.man.models : {})) {
-      const r = p === `models/${id}.json` ? this.site.model(id, p) : null;
-      if (!r || !r.model) return null;
-      for (const [k, f] of Object.entries(r.model.files)) files[k.includes("#") ? k : `${id}/${k}`] = f;
-    }
-    return sizeOf(files);
-  }
-
-  // the files every language shares: story.json, episode.json, scene.json, commands, sounds, models, shaders, textures
-  // a shader directory: its index, the parsed shader files, the GLSL stage blocks of every program
-  checkShaders(dir) {
-    const idx = `${dir}/shaders.json`;
-    const r = this.json("shaders", idx, (list) => {
-      const errs = [];
-      if (!Array.isArray(list)) return { errs: ["not an array"] };
-      const names = new Set();
-      for (const [i, rec] of list.entries()) {
-        if (!isObj(rec) || typeof rec.name !== "string" || typeof rec.parsed !== "string" || !Array.isArray(rec.variants)) { errs.push(`[${i}]: needs name, parsed, variants`); continue; }
-        if (names.has(rec.name)) errs.push(`shader ${rec.name} twice`);
-        names.add(rec.name);
-        for (const v of rec.variants)
-          if (!isObj(v) || typeof v.file !== "string" || !Number.isInteger(v.subShader) || !Number.isInteger(v.pass) || !Array.isArray(v.keywords))
-            errs.push(`${rec.name}: a variant needs file, subShader, pass, keywords`);
+  checkParts(requests) {
+    const C = this.checks, data = this.data, objects = this.objectsView;
+    for (const [path, { product }] of requests) {
+      const spec = STORY_DOCS[product];
+      if (!spec) continue;
+      const [file, check] = spec, where = `${productDir(path)}/${file}`, doc = C.doc(where, S[check]);
+      if (!doc) continue;
+      if (doc.bindings) C.tables(where, doc);
+      for (const [key, cls] of Object.entries(STORY_REFS[product] || {})) {
+        const value = doc[key];
+        for (const id of typeof value === "string" ? [value] : Array.isArray(value) ? value : Object.values(value || {}))
+          if (cls === "GameObject") C.prefab(id, `${where} ${key}`); else C.object(id, cls, `${where} ${key}`);
       }
-      return { errs, list: errs.length ? [] : list.map((x) => ({ name: x.name, parsed: x.parsed, files: x.variants.map((v) => v.file) })) };
-    });
-    if (!r || r.errs.length) return;
-    for (const rec of r.list) {
-      const pp = `${dir}/${rec.parsed}`;
-      this.json("shaderinfo", pp, (s) => ({ errs: parsedShaderErrors(s) }));
-      for (const f of rec.files) {
-        const fp = `${dir}/${f}`;
-        if (!this.has(fp)) { this.err(idx, `${rec.name}: ${fp} not in the manifest`); continue; }
-        if (!fp.endsWith(".glsl")) { this.err(fp, "a variant file must be .glsl"); continue; }
-        const errs = this.site.once("glsl", this.files[fp].asset, () => glslStages(this.text(fp)));
-        for (const e of errs) this.err(fp, e);
+      for (const [key, id] of Object.entries(doc.settings || {})) {
+        if (this.store.hasObject(id)) C.object(id, "MonoBehaviour", `${where} settings.${key}`);
+        else {
+          const cut = id.lastIndexOf(":"), ref = { $ref: { file: id.slice(0, cut), pathId: id.slice(cut + 1) } };
+          try { if (this.store.contained(ref).component?.type !== "MonoBehaviour") this.err(where, `settings.${key}: not a MonoBehaviour`); }
+          catch (e) { this.err(where, `settings.${key}: ${e.message}`); }
+        }
+      }
+      for (const [key, id] of Object.entries(doc.graphics || {})) C.object(id, GRAPHICS_CLASSES[key], `${where} graphics.${key}`);
+      if (doc.language) {
+        if (doc.language.code !== this.lang || doc.language.field !== STORY_LANGUAGES[this.lang][1] || doc.language.mode !== STORY_LANGUAGES[this.lang][0]) this.err(where, "language code/field differs from selected language");
+        for (const id of Object.keys(doc.texts || {})) if (!has(data.fonts.texts, id)) this.err(where, `text ${id} has no font binding`);
+      }
+      if (product === "story.asset") {
+        if (doc.key !== this.partCache.get(path).subject) this.err(where, "key differs from product subject");
+        for (const id of doc.objects) if (!this.store.hasObject(id)) this.err(where, `object ${id} missing`);
+      }
+      if (product === "story.host") {
+        const node = (ref) => {
+          if (!C.object(ref.prefab, "GameObject", where)) return;
+          const prefab = objects.prefab(ref.prefab);
+          if (!prefab.nodes.has(ref.path)) this.err(where, `node ${ref.path} not in ${ref.prefab}`);
+        };
+        for (const ref of [doc.overlayRoot, doc.layoutRoot, ...doc.openedSequences]) node(ref);
+        if (doc.kind !== data.story.host?.kind) this.err(where, "kind differs from the episode host");
+        if (doc.kind === "home") {
+          if (!doc.home) { this.err(where, "home settings missing"); continue; }
+          for (const key of ["background", "situation"]) C.prefab(doc.home[key], `${where} home.${key}`);
+          for (const [key, names] of [["room", "rooms"], ["spot", "spots"]])
+            if (!Object.values(data.parts[names] || {}).includes(doc.home.parts[key])) this.err(where, `home.parts.${key} not in story.parts.${names}`);
+        } else if (!doc.afterlive) this.err(where, "afterlive settings missing");
+        else { node(doc.afterlive.rewardPanel); node(doc.afterlive.backgroundImage); C.sprite(doc.afterlive.backgroundSprite, where); }
       }
     }
   }
 
-  checkCommon() {
-    const m = this.man;
-    const story = this.doc("story.json", S.story);
-    if (!story) return null;
-    if (story.advId !== m.advId) this.err("story.json", `advId ${story.advId}, manifest ${m.advId}`);
-    for (const p of [story.episode, story.scene, ...STORY_MEDIA.map((k) => story[k]).filter((p) => p !== null)])
-      if (!has(this.common, p)) { this.err("story.json", `${p} is not a common file`); return null; }
-    const episode = this.doc(story.episode, S.episode);
-    const scene = this.doc(story.scene, (v) => (isObj(v) && isObj(v.settings) && isObj(v.settings.playerSettings) ? [] : ["settings.playerSettings missing"]));
-    if (!episode || !scene) return null;
-    const s = isObj(m.story) ? m.story : {};
-    if (episode.advId !== m.advId) this.err(story.episode, `advId ${episode.advId}, manifest ${m.advId}`);
-    if (episode.commandCount !== episode.commands.length) this.err(story.episode, `commandCount ${episode.commandCount}, ${episode.commands.length} rows`);
-    if (s.commandCount !== episode.commandCount) this.err("manifest", `story.commandCount ${s.commandCount}, episode ${episode.commandCount}`);
-    if (isObj(episode.master) && s.playbackMode !== episode.master._playbackMode) this.err("manifest", `story.playbackMode ${s.playbackMode}, episode master row ${episode.master._playbackMode}`);
-
-    // the commands the player runs: the rows without IgnoreData, the player settings' initialize and finalize rows
-    const ps = scene.settings.playerSettings, names = new Set();
-    for (const c of episode.commands) if (!truthy(c.IgnoreData)) names.add(c.cmd);
-    for (const k of ["_initializeEpisodes", "_finalizeEpisodes"]) for (const r of ps[k] || []) names.add(commandName(r.Command));
-    const want = [...names].sort();
-    if (!sameJson(m.requires.commands, want)) this.err("manifest", `requires.commands ${JSON.stringify(m.requires.commands)}, the episode runs ${JSON.stringify(want)}`);
-    const lipSync = episode.commands.some((c) => c.cmd === "Talk" && truthy(c.TargetName) && truthy(c.VoiceIDs) && !truthy(c.IgnoreLipSync) && !truthy(c.IgnoreData));
-    if (m.requires.motionSync !== lipSync) this.err("manifest", `requires.motionSync ${m.requires.motionSync}, the episode ${lipSync ? "has" : "has no"} lip-synced Talk rows`);
-
-    this.checkSounds(story, episode);
-    const models = this.checkModels(story, episode);
-    if (this.has("shaders/shaders.json")) this.checkShaders("shaders");
-    else if (models.length) this.err("shaders/shaders.json", "not in the manifest");
-    this.descriptors(scene, "");
-    this.frameTexts = {};
-    for (const k of STORY_MEDIA) if (story[k] !== null && k !== "videos") {
-      const v = this.doc(story[k]);
-      if (v) this.descriptors(v, "");
-      if (v) for (const e of animRecordProblems(v)) this.err(story[k], e);
-      if (v && k === "frames") this.frameTexts = frameTextNodes(v);
+  checkEpisode() {
+    const d = this.data, e = d.episode, C = this.checks;
+    const names = StoryPlayerCore.requiredCommands(e, d.playerSettings);
+    const unsupported = e.master?._playbackMode === 1 ? simpleUnsupportedCommands(names)
+      : names.filter((n) => !StoryPlayerCore.supportedCommands().includes(n));
+    if (unsupported.length) this.err("episode.json", `unsupported commands: ${unsupported.join(", ")}`);
+    if (e.master?._playbackMode === 1 && !d.simpleui) this.err("story.json", "Overlay episode requires parts.simpleui");
+    if (d.story.host && !d.host) this.err("story.json", "episode host has no host product");
+    for (const row of e.commands) if (!row.IgnoreData && row.cmd === "Character") {
+      const address = `Character/Live2D/${row.TargetAssetName}`;
+      if (!d.parts.models[address]) this.err("episode.json", `row ${row.i}: model ${address} not in parts.models`);
     }
-    if (this.has("ui/shaders/shaders.json")) this.checkShaders("ui/shaders");
-    else this.err("ui/shaders/shaders.json", "not in the manifest");
-    this.checkHost();
-    this.checkCriLips(story);
-    return story;
+    for (const [id, row] of Object.entries(e.sounds)) {
+      const sheet = e.cuesheets[row._soundCueSheetID]?._cueSheetName;
+      if (!sheet || !d.parts.sounds[sheet]) this.err("episode.json", `sound ${id}: cue sheet not in parts.sounds`);
+      else if (!d.cues(sheet)[row._cueName]) this.warn("episode.json", `sound ${id}: cue ${row._cueName} not in ${sheet}; it plays as silence`);
+    }
+    for (const [sheet, path] of Object.entries(d.parts.sounds)) for (const [name, cue] of Object.entries(d.cues(sheet))) {
+      const where = `${productDir(path)}/cues.json ${name}`;
+      if (!Number.isInteger(cue.sampleRate) || !Number.isInteger(cue.samples) || !(cue.sampleRate > 0) || cue.samples < 0) { this.err(where, "invalid sampleRate/samples"); continue; }
+      if (!Array.isArray(cue.categories) || cue.categories.some((c) => typeof c !== "string")) this.err(where, "categories must be an array of names");
+      if ((cue.loopStart == null) !== (cue.loopEnd == null) || (cue.loopStart != null && !(cue.loopStart >= 0 && cue.loopStart < cue.loopEnd && cue.loopEnd <= cue.samples))) this.err(where, "loop points outside the waveform");
+      if (cue.encoderDelay !== undefined && (extOf(cue.file) !== "m4a" || !Number.isInteger(cue.encoderDelay) || cue.encoderDelay < 0)) this.err(where, "invalid encoderDelay");
+      if (!this.store.has(cue.file)) this.err(where, `${cue.file} missing`);
+      else { const error = C.ofFile(`story-wave|${cue.sampleRate}|${cue.samples}|${cue.channels}`, cue.file, (b) => waveCheck(b, cue)); if (error) this.err(where, error); }
+    }
+    if (d.parts.crilips) {
+      const { descriptor: desc, data } = d.crilips, floats = data.byteLength / 4;
+      if (desc.dtype !== "float32" || desc.order !== "LE") this.err("crilips.json", "expected float32 LE");
+      if (floats !== desc.total_floats) this.err("crilips.bin", `length ${floats} differs from total_floats ${desc.total_floats}`);
+      for (const block of desc.blocks || []) if (!Number.isInteger(block.offset) || !Number.isInteger(block.count) || block.offset < 0 || block.count < 0 || block.offset + block.count > floats)
+        this.err("crilips.json", `block ${block.name} outside weights`);
+      if (!Array.isArray(desc.blocks) || !isObj(desc.constants) || !isObj(desc.frontend)) this.err("crilips.json", "blocks/constants/frontend missing");
+    }
+    for (const [id, row] of Object.entries(e.videos)) if (row._assetName?.trim()) {
+      try { const v = d.videoFor(id); if (!this.store.has(v.file)) this.err("video.json", `${v.file} missing`); } catch (error) { this.err("episode.json", error.message); }
+    }
   }
 
-  // the CRI Lips data (story.json crilips, docs/crilips.md): both files common, a float32 LE descriptor whose blocks lie
-  // inside the weights file, in a story with audio
-  checkCriLips(story) {
-    const c = story.crilips;
-    if (c === undefined || c === null) return;
-    if (this.man.audio === false) this.err("story.json", "crilips in a story without audio");
-    for (const p of [c.descriptor, c.data]) if (!has(this.common, p)) { this.err("story.json", `crilips ${p} is not a common file`); return; }
-    const d = this.doc(c.descriptor, (v) => (isObj(v) && Array.isArray(v.blocks) && isObj(v.constants) && isObj(v.frontend)
-      ? [] : ["not a CRI Lips descriptor (blocks, constants, frontend)"]));
-    if (!d) return;
-    if (d.dtype !== "float32" || d.order !== "LE") this.err(c.descriptor, `dtype ${d.dtype}, order ${d.order}: expected float32 LE`);
-    const floats = this.common[c.data].size / 4;
-    if (floats !== d.total_floats) this.err(c.data, `${this.common[c.data].size} bytes, the descriptor has ${d.total_floats} floats`);
-    for (const b of d.blocks)
-      if (!(Number.isInteger(b.offset) && Number.isInteger(b.count) && b.offset >= 0 && b.offset + b.count <= floats))
-        this.err(c.descriptor, `block ${b.name} [${b.offset}, +${b.count}) outside the ${floats} floats`);
-  }
-
-  // the host of an Overlay story: present exactly for playbackMode 1 with open fonts, host.json common, its kind
-  checkHost() {
-    const m = this.man, s = isObj(m.story) ? m.story : {}, host = m.host;
-    const overlay = s.playbackMode === 1;
-    if (!isObj(host)) {
-      if (overlay && m.fonts === "open") this.err("manifest", "an Overlay story (playbackMode 1) with open fonts has no host");
-      return;
-    }
-    if (!overlay) { this.err("manifest", `host on a story of playbackMode ${s.playbackMode}`); return; }
-    if (m.fonts !== "open") this.err("manifest", `host on a story with ${m.fonts} fonts`);
-    if (!has(this.common, host.doc)) { this.err("manifest", `host.doc ${host.doc} is not a common file`); return; }
-    const doc = this.doc(host.doc, (v) => (isObj(v) ? [] : ["not an object"]));
-    if (!doc) return;
-    if (doc.format !== STORY_HOST_FORMAT) this.err(host.doc, `format ${JSON.stringify(doc.format)}, expected ${STORY_HOST_FORMAT}`);
-    if (doc.kind !== host.kind) this.err(host.doc, `kind ${doc.kind}, manifest host.kind ${host.kind}`);
-    if (typeof doc.ui === "string" && !has(this.common, doc.ui)) this.err(host.doc, `ui ${doc.ui} is not a common file`);
-  }
-
-  checkSounds(story, episode) {
-    const m = this.man, sheets = story.audio;
-    if (m.audio === false) {
-      if (Object.keys(sheets).length) this.err("story.json", "audio is not empty in a story without audio");
-      for (const p of Object.keys(this.common)) if (/\.(m4a|flac)$/.test(p)) this.err(p, "a waveform file in a story without audio");
-      return;
-    }
-    for (const cs of Object.values(episode.cuesheets || {}))
-      if (isObj(cs) && !has(sheets, cs._cueSheetName)) this.err("story.json", `cue sheet ${cs._cueSheetName} of the episode has no audio directory`);
-    for (const [name, dir] of Object.entries(sheets)) {
-      const cp = `${dir}/cues.json`;
-      if (!has(this.common, cp)) { this.err("story.json", `audio.${name}: ${cp} is not a common file`); continue; }
-      const cues = this.doc(cp, (v) => (isObj(v) ? [] : ["not an object"]));
-      if (!cues) continue;
-      for (const [cue, c] of Object.entries(cues)) {
-        if (!isObj(c) || typeof c.file !== "string" || !Number.isInteger(c.sampleRate) || !Number.isInteger(c.samples)) { this.err(cp, `${cue}: needs file, sampleRate, samples`); continue; }
-        if (extOf(c.file) !== WAVE_EXT[m.audioFormat]) this.err(cp, `${cue}: ${c.file} does not match audioFormat ${m.audioFormat}`);
-        if ((c.loopStart === undefined) !== (c.loopEnd === undefined)) this.err(cp, `${cue}: loopStart and loopEnd must both be set or both absent`);
-        else if (c.loopStart !== undefined && !(c.loopStart < c.loopEnd && c.loopEnd <= c.samples)) this.err(cp, `${cue}: loop points outside the waveform`);
-        if (c.categories !== undefined && !(Array.isArray(c.categories) && c.categories.every((x) => typeof x === "string"))) this.err(cp, `${cue}: categories must be an array of strings`);
-        if (c.encoderDelay !== undefined && (extOf(c.file) !== "m4a" || !Number.isInteger(c.encoderDelay) || c.encoderDelay < 0)) this.err(cp, `${cue}: encoderDelay ${c.encoderDelay}`);
-        const p = `${dir}/${c.file}`;
-        if (!has(this.common, p)) { this.err(cp, `${cue}: ${p} is not a common file`); continue; }
-        const asset = this.files[p].asset;
-        const e = this.site.once("wave", `${asset}|${c.sampleRate}|${c.channels}|${c.samples}`, () => {
-          const b = this.site.bytes(asset);
-          if (extOf(p) === "m4a") return isMp4(b) ? null : "not an MP4 file";
-          try {
-            const i = flacInfo(b);
-            if (i.sampleRate !== c.sampleRate) return `FLAC sample rate ${i.sampleRate}, described ${c.sampleRate}`;
-            if (c.channels !== undefined && i.channels !== c.channels) return `FLAC channels ${i.channels}, described ${c.channels}`;
-            if (i.samples !== c.samples) return `FLAC total samples ${i.samples}, described ${c.samples}`;
-            return null;
-          } catch (err) { return err.message; }
-        });
-        if (e) this.err(p, e);
+  // The home camera contributes its pipeline's lighting keywords to the room and Spine materials at each quality.
+  materialKeywords() {
+    const data = this.data, objects = this.objectsView, result = new Map();
+    if (data.host?.kind !== "home") return result;
+    const scene = new HomeScene(data, objects), home = data.host.home, graphics = data.scene.graphics;
+    const hostManifest = this.partCache.get(Object.values(data.parts.host)[0]);
+    // The host retains the prefab dependency graph. Only room renderers and selected UI subtrees are drawn.
+    for (const [id, object] of Object.entries(hostManifest.objects)) if (object.class === "Material") result.set(id, []);
+    const ui = new SimpleUIDoc(null, null, data.host, { objects, roots: hostUIRoots(data.host, objects) });
+    for (const [id, material] of ui.uiMaterials) if (this.store.hasObject(id)) result.set(id, [material.keywords || []]);
+    const materials = new Map(data.document(home.parts.room, "room.json").materialIds.map((id) => [id, objects.material(id)]));
+    const spot = data.document(home.parts.spot, "spot.json");
+    for (const c of spot.spineCharacters) if (c.skeletonData && c.animation && c.world)
+      for (const m of scene.spine(c.path).pages.values()) materials.set(m.id, m);
+    for (const quality of this.store.objectJson(graphics.quality).m_QualitySettings) {
+      const pipeline = objects.mono(quality.customRenderPipeline || this.store.objectJson(graphics.graphics).m_CustomRenderPipeline);
+      const renderer = objects.mono(pipeline.m_RendererDataList[0]);
+      const lighting = spotLighting({ pipeline, renderer: { ...renderer, m_RendererFeatures: renderer.m_RendererFeatures.map((id) => objects.mono(id)) },
+        renderSettings: scene.renderSettings, lights: scene.lights, lightmaps: scene.lightmaps });
+      for (const [id, m] of materials) {
+        if (!result.has(id)) result.set(id, []);
+        result.get(id).push([...(m.keywords || []), ...lighting.keywords]);
       }
     }
+    return result;
   }
 
-  // the Live2D models (story.json models: address -> id; the manifest's models: id -> models/<id>.json): the same ids
-  // in both, keys sorted, each Character row's model among them, each model manifest present (listed in models.json
-  // when the site has one) and valid as a model (with the programs the story renderer draws its materials with at
-  // every quality). Returns the valid models.
-  checkModels(story, episode) {
-    const m = this.man, listed = isObj(m.models) ? m.models : {}, out = [];
-    const ids = Object.keys(listed);
-    if (ids.some((k, i) => i > 0 && k <= ids[i - 1])) this.err("manifest", "models: keys not sorted");
-    for (const [address, id] of Object.entries(story.models))
-      if (typeof id !== "string") this.err("story.json", `models.${address}: not a model id`);
-      else if (!has(listed, id)) this.err("story.json", `models.${address}: model ${id} is not in the manifest's models`);
-    const named = new Set(Object.values(story.models));
-    for (const id of ids) if (!named.has(id)) this.err("manifest", `models.${id}: no model address of story.json names it`);
-    const rows = new Set();
-    for (const c of episode.commands) {
-      if (c.cmd !== "Character" || truthy(c.IgnoreData)) continue;
-      const address = `Character/Live2D/${c.TargetAssetName}`;
-      if (!has(story.models, address) && !rows.has(address)) this.err(story.episode, `row ${c.i}: model ${address} is not in story.json models`);
-      rows.add(address);
+  checkModels() {
+    for (const [key, path] of Object.entries(this.data.parts.models)) {
+      const id = key.split("/").at(-1), result = this.site.model(id, path);
+      if (this.site.modelIds && !this.site.modelIds.has(id)) this.err(path, `model ${id} not in models.json`);
+      for (const e of result.errs) this.err(path, e);
     }
-    for (const [id, p] of Object.entries(listed)) {
-      if (p !== `models/${id}.json`) { this.err("manifest", `models.${id}: ${p}, expected models/${id}.json`); continue; }
-      if (this.site.modelIds && !this.site.modelIds.has(id)) this.err("manifest", `models.${id}: not in models.json`);
-      const r = this.site.model(id, p);
-      if (r.missing) { this.err("manifest", `models.${id}: ${p} missing`); continue; }
-      if (r.errs.length) {
-        this.err(p, `not a valid model (${r.errs.length} problem${r.errs.length > 1 ? "s" : ""}): ${r.errs.slice(0, 3).join("; ")}`);
-        continue;
-      }
-      out.push(r.model);
+  }
+
+  checkFonts(fonts, ui) {
+    const F = `${this.data.fontDir}/fonts.json`, C = this.checks, S = this.store;
+    const schemaErrors = C.doc(F, SCHEMA_STORY_FONTS);
+    if (!schemaErrors) return;
+    if (fonts.language !== this.lang) this.err(F, `language ${fonts.language}`);
+    const texts = new Map();
+    for (const id of S.ids()) if (S.object(id).class === "GameObject") {
+      const pf = S.prefab(id), file = id.slice(0, id.lastIndexOf(":"));
+      for (const node of pf.nodes) for (const component of node.components)
+        if (TMP_TEXT_CLASSES.has(classOf(component))) texts.set(`${file}:${component.pathId}`, component);
     }
-    return out;
-  }
-
-  // one language: ui/ui.json, ui/languages.json, ui/fonts.json
-  checkLanguage(lang, story) {
-    const m = this.man;
-    const ui = this.doc(story.ui, (v) => {
-      if (!isObj(v) || !Array.isArray(v.nodes)) return ["nodes is not an array"];
-      if (!v.nodes.every((n) => isObj(n) && typeof n.path === "string")) return ["a node needs path"];
-      // every parent that is a node of the list comes before its children (the canvases' parent is not listed)
-      const all = new Set(v.nodes.map((n) => n.path)), seen = new Set();
-      for (const n of v.nodes) {
-        const cut = n.path.lastIndexOf("/");
-        if (cut >= 0 && all.has(n.path.slice(0, cut)) && !seen.has(n.path.slice(0, cut))) return [`parent of ${n.path} is not listed before it`];
-        seen.add(n.path);
-      }
-      return [];
-    });
-    const lj = this.doc("ui/languages.json", S.storyLanguage);
-    const fj = this.doc("ui/fonts.json", S.storyFonts);
-    if (!ui || !lj || !fj) return;
-    this.descriptors(ui, "ui");
-    let uiShaders = null;
-    if (this.has("ui/shaders/shaders.json")) try { uiShaders = JSON.parse(this.text("ui/shaders/shaders.json")); } catch { uiShaders = null; }
-    const shaderOf = (where, mats, keywords) => {
-      for (const [n, mat] of Object.entries(mats || {})) {
-        const sh = isObj(mat) && isObj(mat.shader) ? mat.shader.shader : null;
-        if (typeof sh !== "string") { this.err(where, `material ${n} names no shader`); continue; }
-        if (!Array.isArray(uiShaders)) continue;
-        const kw = isObj(keywords) && Array.isArray(keywords[n]) ? keywords[n] : null;
-        if (!kw) { this.err(where, `material ${n} has no materialKeywords`); continue; }
-        const v = variantFor(uiShaders, sh, kw);
-        if (v.error) this.err(where, `material ${n}: ui/shaders/shaders.json: ${v.error}`);
-      }
-    };
-    shaderOf(story.ui, ui.materials, ui.materialKeywords);
-
-    const [mode, field] = STORY_LANGUAGES[lang] || [];
-    if (lj.language !== lang) this.err("ui/languages.json", `language ${lj.language}`);
-    if (lj.mode !== mode || lj.field !== field) this.err("ui/languages.json", `mode ${lj.mode} / field ${lj.field}, ${lang} is ${mode} / ${field}`);
-    if (lj.fonts !== m.fonts) this.err("ui/languages.json", `fonts ${lj.fonts}, manifest ${m.fonts}`);
-    for (const [role, r] of Object.entries(lj.roles)) if (!has(fj.fonts, r.fontAsset)) this.err("ui/languages.json", `roles.${role}: font asset ${r.fontAsset} not in ui/fonts.json`);
-
-    this.checkFonts("ui/fonts.json", fj, ui, story.ui, "ui", lang, shaderOf);
-    // the dialog, chat window and frame texts: with open fonts a binding per text node of ui.json dialogs (fonts.json
-    // dialogTexts), per text of ui.json chatTexts (fonts.json chatTexts) and per text node of the frames of
-    // frames.json (fonts.json frameTexts)
-    const F = "ui/fonts.json";
-    const dialogs = {};
-    for (const [d, rec] of Object.entries(isObj(ui.dialogs) ? ui.dialogs : {}))
-      dialogs[d] = Object.fromEntries((Array.isArray(rec.nodes) ? rec.nodes : []).filter((n) => has(n, "textStyle")).map((n) => [n.path, n]));
-    const groups = [["dialogTexts", "dialog", dialogs, `${story.ui} dialogs`],
-                    ["chatTexts", "chat window", isObj(ui.chatTexts) ? ui.chatTexts : {}, `${story.ui} chatTexts`],
-                    ["frameTexts", "frame", this.frameTexts || {}, `${story.frames || "frames.json"} frames`]];
-    for (const [key, what, wanted, source] of groups) {
-      if (m.fonts !== "open") {
-        if (has(fj, key)) this.err(F, `${key} in ${m.fonts}-font data`);
-        continue;
-      }
-      const bound = isObj(fj[key]) ? fj[key] : {};
-      for (const [w, texts] of Object.entries(wanted)) for (const p of Object.keys(texts)) if (!has(bound[w], p)) this.err(F, `${what} ${w}: text ${p} has no binding in ${key}`);
-      for (const [w, texts] of Object.entries(bound)) for (const [p, t] of Object.entries(texts)) {
-        if (!has(wanted[w], p)) this.err(F, `${key}.${w}.${p}: not a text of ${source}`);
-        this.binding(F, `${key}.${w}.${p}`, t, fj);
-      }
+    for (const [id, binding] of Object.entries(fonts.texts)) {
+      if (!texts.has(id)) this.err(F, `text ${id} is not a TMP component of the story's prefabs`);
+      const loc = binding.font;
+      if (!has(fonts.fonts, loc.fontAsset)) this.err(F, `text ${id}: font asset ${loc.fontAsset} not in fonts`);
+      if (!has(fonts.materials, loc.material)) this.err(F, `text ${id}: material ${loc.material} not in materials`);
+      this.fallbackMaterials(F, loc, fonts);
     }
-    if (isObj(m.host)) this.checkSimple(lang, shaderOf);
+    for (const [name, tex] of Object.entries(fonts.textures)) {
+      const path = `${this.data.fontDir}/${tex.texture}`;
+      if (!S.has(path)) { this.err(F, `texture ${name}: ${path} missing`); continue; }
+      const info = C.ofFile("png", path, (b) => { try { return pngInfo(b); } catch (e) { return { error: e.message }; } });
+      if (info.error) this.err(path, info.error);
+      else if (info.width !== tex.width || info.height !== tex.height || tex.mipCount !== 1) this.err(path, "glyph page dimensions/mip count differ from descriptor");
+    }
+    const shaderIndex = Object.entries(fonts.shaders).map(([name, id]) => ({ name, variants: S.objectJson(id, "index").variants.filter((v) => v.platform === "gles3" && v.type === "GLES3" && v.stage === "vertex") }));
+    for (const [name, mat] of Object.entries(fonts.materials)) {
+      if (!has(fonts.materialKeywords, name)) this.err(F, `material ${name}: no materialKeywords`);
+      const selected = variantFor(shaderIndex, mat.shader.shader, fonts.materialKeywords[name] || []);
+      if (selected.error) this.err(F, `material ${name}: ${selected.error}`);
+      else if (!S.roles(fonts.shaders[mat.shader.shader]).includes(selected.variant.role)) this.err(F, `material ${name}: selected shader program missing`);
+      else for (const error of C.ofObject("glsl", fonts.shaders[mat.shader.shader], selected.variant.role, (b) => glslStages(b.toString("utf8")))) this.err(F, `material ${name}: ${error}`);
+    }
+    for (const name of Object.keys(fonts.materialKeywords)) if (!has(fonts.materials, name)) this.err(F, `materialKeywords.${name}: not in materials`);
+    const tmp = this.objectsView.mono(ui.settings.tmpSettings);
+    for (const [name, font] of Object.entries(fonts.fonts)) {
+      const where = `${F} fonts.${name}`;
+      if (!has(fonts.materials, font.material)) this.err(where, `material ${font.material} not in materials`);
+      for (const f of font.fallbacks) if (!has(fonts.fonts, f)) this.err(where, `fallback ${f} not in fonts`);
+      if (font.fallbacks.includes(name) || new Set(font.fallbacks).size !== font.fallbacks.length) this.err(where, "fallbacks list the asset itself or an asset twice");
+      for (const [u, char] of Object.entries(font.characters)) if (!has(font.glyphs, char.glyph)) this.err(where, `character ${u}: glyph ${char.glyph} not in glyphs`);
+      this.glyphPages(where, font.glyphs, fonts.textures);
+      if (font.missingGlyph) this.missingGlyph(where, font, { ...fonts, tmpSettings: tmp });
+    }
+    const substituted = [...new Set(Object.values(fonts.fonts).flatMap((f) => f.missingGlyph?.characters || []))].sort((a,b) => a-b).map((u) => String.fromCodePoint(u));
+    if (!sameJson(fonts.coverage.missingGlyph || [], substituted)) this.err(F, "coverage.missingGlyph differs from the font assets' missingGlyph characters");
+    for (const [name, asset] of Object.entries(fonts.spriteAssets || {})) {
+      if (!has(fonts.materials, asset.material)) this.err(F, `sprite asset ${name}: material ${asset.material} not in materials`);
+      else if (fonts.materials[asset.material].shader.shader !== TMP_SPRITE_SHADER) this.err(F, `sprite asset ${name}: material is not TextMeshPro/Sprite`);
+      this.glyphPages(`${F} spriteAssets.${name}`, asset.glyphs, fonts.textures);
+      for (const char of asset.characters) if (!has(asset.glyphs, char.glyph)) this.err(F, `sprite ${char.name}: glyph ${char.glyph} missing`);
+    }
+    for (const [id, binding] of Object.entries(fonts.sprites)) {
+      if (!has(fonts.texts, id)) this.err(F, `sprites.${id}: no text binding`);
+      if (!has(fonts.spriteAssets || {}, binding.spriteAsset) || binding.spriteAsset !== fonts.emojiSpriteAsset) this.err(F, `sprites.${id}: not the emoji sprite asset`);
+      if (texts.has(id) && texts.get(id).fields.m_tintAllSprites === undefined) this.err(F, `sprites.${id}: TMP component has no m_tintAllSprites`);
+    }
+    if (fonts.coverage.sprites) {
+      const all = Object.values(fonts.spriteAssets || {}).flatMap((a) => a.characters.map((c) => [c, a.glyphs[c.glyph]]));
+      if (fonts.coverage.sprites.characters !== all.length) this.err(F, "coverage.sprites.characters differs from sprite assets");
+      for (const name of fonts.coverage.sprites.missing) if (!all.some(([c,g]) => c.name === name && !g?.packed)) this.err(F, `coverage.sprites.missing: ${name} is not a missing sprite`);
+    }
   }
 
-  // ui/simple/ui.json and ui/simple/fonts.json of a story with a host
-  checkSimple(lang, shaderOf) {
-    const m = this.man, U = m.host.ui;
-    const ui = this.doc(U, (v) => (isObj(v) && Array.isArray(v.nodes) && v.nodes.every((n) => isObj(n) && typeof n.path === "string") ? [] : ["nodes is not an array of nodes"]));
-    const fj = this.doc("ui/simple/fonts.json", S.storyFonts);
-    if (!ui || !fj) return;
-    this.descriptors(ui, dirOf(U));
-    this.checkFonts("ui/simple/fonts.json", fj, ui, U, dirOf(U), lang, shaderOf);
-  }
-
-  // a text binding's localized font asset and material are in the fonts document; its sprite asset (a text a UIText
-  // drives) is the emoji sprite asset, with m_tintAllSprites
-  binding(F, where, t, fj) {
-    if (!isObj(t) || !isObj(t.localized)) { this.err(F, `${where}: no localized record`); return; }
-    if (!has(fj.fonts, t.localized.fontAsset)) this.err(F, `${where}: font asset ${t.localized.fontAsset} not in fonts`);
-    if (!has(fj.materials, t.localized.material)) this.err(F, `${where}: material ${t.localized.material} not in materials`);
-    this.fallbackMaterials(F, t.localized, fj);
-    if (!has(t, "spriteAsset")) return;
-    if (!has(fj.spriteAssets, t.spriteAsset)) this.err(F, `${where}: sprite asset ${t.spriteAsset} not in spriteAssets`);
-    else if (t.spriteAsset !== fj.emojiSpriteAsset) this.err(F, `${where}: sprite asset ${t.spriteAsset}, emojiSpriteAsset ${fj.emojiSpriteAsset}`);
-    if (!has(t, "m_tintAllSprites")) this.err(F, `${where}: a sprite asset without m_tintAllSprites`);
-  }
-
-  // the fallback materials of a text material M of font asset P (TMP_MaterialManager.GetFallbackMaterial with
-  // TMP_Settings.matchMaterialPreset): per fallback F of P the material "M + F", with M's shader, keywords and values
-  // except F's default material's _MainTex, _GradientScale, _WeightNormal and _WeightBold, and the ratios
-  // UpdateShaderRatios gives for those
   fallbackMaterials(F, loc, fj) {
     const f = fj.fonts[loc.fontAsset], m = fj.materials[loc.material];
     if (!isObj(f) || !isObj(m)) return;
@@ -1552,74 +1405,6 @@ class Story extends Chart {
     }
   }
 
-  // a fonts document F (ui/fonts.json, ui/simple/fonts.json) of the UI document `ui` (path U, texture paths relative
-  // to `dir`): language, source, a binding per text node, materials, glyph pages, font assets
-  checkFonts(F, fj, ui, U, dir, lang, shaderOf) {
-    const m = this.man, group = this.groups[lang].files;
-    if (fj.language !== lang) this.err(F, `language ${fj.language}`);
-    if (fj.source !== m.fonts) this.err(F, `source ${fj.source}, manifest fonts ${m.fonts}`);
-    const textNodes = new Set(ui.nodes.filter((n) => has(n, "textStyle")).map((n) => n.path));
-    for (const p of textNodes) if (!has(fj.texts, p)) this.err(F, `text node ${p} has no binding in texts`);
-    for (const [p, t] of Object.entries(fj.texts)) {
-      if (!textNodes.has(p)) this.err(F, `texts.${p}: not a text node of ${U}`);
-      this.binding(F, `texts.${p}`, t, fj);
-    }
-    for (const n of Object.keys(fj.materialKeywords)) if (!has(fj.materials, n)) this.err(F, `materialKeywords.${n}: not in materials`);
-    shaderOf(F, fj.materials, fj.materialKeywords);
-    // glyph pages: listed in the group (never common: page names differ between languages), PNG as described
-    for (const [n, t] of Object.entries(fj.textures)) {
-      const p = inDir(dir, t.texture);
-      if (!has(group, p)) { this.err(F, `textures.${n}: ${p} not in the language group`); continue; }
-      this.png(p, desc(t), true);
-    }
-    for (const [name, f] of Object.entries(fj.fonts)) {
-      const where = `${F} fonts.${name}`;
-      if (!has(fj.materials, f.material)) this.err(where, `material ${f.material} not in materials`);
-      for (const fb of f.fallbacks) if (!has(fj.fonts, fb)) this.err(where, `fallback ${fb} not in fonts`);
-      if (f.fallbacks.includes(name) || new Set(f.fallbacks).size !== f.fallbacks.length) this.err(where, "fallbacks list the asset itself or an asset twice");
-      let bad = 0;
-      for (const [u, c] of Object.entries(f.characters)) if (!has(f.glyphs, String(c.glyph)) && bad++ < 5) this.err(where, `character ${u}: glyph ${c.glyph} not in glyphs`);
-      this.glyphPages(where, f.glyphs, fj.textures);
-      if (has(f, "missingGlyph")) this.missingGlyph(where, f, fj);
-    }
-    // coverage.missingGlyph: the characters of the font assets' missingGlyph, ascending (absent without any)
-    const substituted = [...new Set(Object.values(fj.fonts).flatMap((f) => (isObj(f.missingGlyph) ? f.missingGlyph.characters : [])))].sort((a, b) => a - b);
-    const covered = has(fj.coverage, "missingGlyph") ? fj.coverage.missingGlyph : [];
-    if (!sameJson(covered, substituted.map((u) => String.fromCodePoint(u))))
-      this.err(F, `coverage.missingGlyph ${JSON.stringify(covered)}, the font assets' missingGlyph characters ${substituted.map(hexU).join(" ") || "none"}`);
-    // sprite assets: emojiSpriteAsset one of them; each with its sprite material, characters in table order and on
-    // glyphs, glyph pages; coverage.sprites with them: the characters held and the sprites without an image
-    const sprites = isObj(fj.spriteAssets) ? fj.spriteAssets : null;
-    if (sprites && !has(sprites, fj.emojiSpriteAsset)) this.err(F, `emojiSpriteAsset ${fj.emojiSpriteAsset} not in spriteAssets`);
-    if (!sprites && has(fj, "emojiSpriteAsset")) this.err(F, "emojiSpriteAsset without spriteAssets");
-    if (!!sprites !== has(fj.coverage, "sprites")) this.err(F, sprites ? "spriteAssets without coverage.sprites" : "coverage.sprites without spriteAssets");
-    for (const [name, sa] of Object.entries(sprites || {})) {
-      const where = `${F} spriteAssets.${name}`;
-      const mat = fj.materials[sa.material];
-      if (!mat) this.err(where, `material ${sa.material} not in materials`);
-      else if (mat.shader.shader !== TMP_SPRITE_SHADER) this.err(where, `material ${sa.material}: shader ${mat.shader.shader}, not ${TMP_SPRITE_SHADER}`);
-      if (sa.characters.some((c, i) => i > 0 && c.index <= sa.characters[i - 1].index)) this.err(where, "characters not in the order of their index");
-      let bad = 0;
-      for (const c of sa.characters) if (!has(sa.glyphs, String(c.glyph)) && bad++ < 5) this.err(where, `character ${c.name}: glyph ${c.glyph} not in glyphs`);
-      this.glyphPages(where, sa.glyphs, fj.textures);
-    }
-    if (sprites && isObj(fj.coverage.sprites)) {
-      const all = Object.values(sprites).flatMap((sa) => sa.characters.map((c) => [c, sa.glyphs[String(c.glyph)]]));
-      const cs = fj.coverage.sprites;
-      if (cs.characters !== all.length) this.err(F, `coverage.sprites.characters ${cs.characters}, the sprite assets hold ${all.length}`);
-      for (const n of cs.missing) {
-        const hit = all.filter(([c]) => c.name === n);
-        if (!hit.length) this.err(F, `coverage.sprites.missing: ${n} is not a sprite character`);
-        else if (hit.some(([, g]) => isObj(g) && has(g, "packed"))) this.err(F, `coverage.sprites.missing: ${n} has an image`);
-      }
-    }
-    // without sprite assets no binding has one (binding() checks the name otherwise)
-    if (!sprites) {
-      const groups = [fj.texts, ...["dialogTexts", "chatTexts", "frameTexts"].flatMap((k) => Object.values(isObj(fj[k]) ? fj[k] : {}))];
-      const hit = groups.flatMap((g) => Object.entries(g)).find(([, t]) => has(t, "spriteAsset"));
-      if (hit) this.err(F, `${hit[0]}: a sprite asset without spriteAssets`);
-    }
-  }
 }
 
 // ------------------------------------------------------------------------------------------------ main
@@ -1691,9 +1476,16 @@ function runAll(site, list, Kind) {
 }
 
 function main(argv) {
-  const [dir, ...only] = argv;
+  const [dir, ...args] = argv, only = [], languages = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--lang") languages.push(...String(args[++i] || "").split(","));
+    else if (args[i].startsWith("--lang=")) languages.push(...args[i].slice(7).split(","));
+    else only.push(args[i]);
+  }
+  if (languages.some((lang) => !Object.hasOwn(STORY_LANGUAGES, lang))) { console.error("--lang: unknown story language"); return 2; }
   if (!dir) { console.error("usage: node scripts/validate-data.mjs <site dir> [live id | chart id | model id | story id ...]"); return 2; }
   const site = new Site(dir);
+  site.storyLanguages = languages.length ? [...new Set(languages)] : null;
   const out = [];
   let entries;
   const indexPath = site.file("charts.json");
@@ -1762,7 +1554,7 @@ function main(argv) {
   if (liveList.length) console.log(`${okLives}/${liveList.length} lives valid`);
   if (entries.length || (!liveList.length && !models.length && !stories.length)) console.log(`${ok}/${entries.length} charts valid`);
   if (models.length) console.log(`${okModels}/${models.length} models valid`);
-  if (stories.length) console.log(`${okStories}/${stories.length} stories valid`);
+  if (stories.length) console.log(`${okStories}/${stories.length} stories valid${site.storyLanguages ? ` (languages: ${site.storyLanguages.join(", ")})` : ""}`);
   return okLives === liveList.length && ok === entries.length && okModels === models.length && okStories === stories.length
     && !out.length ? 0 : 1;
 }

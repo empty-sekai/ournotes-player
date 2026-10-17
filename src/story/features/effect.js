@@ -1,12 +1,11 @@
 import { AnimTargets, Animator } from "../../engine/anim.js";
 import { F } from "../../engine/core.js";
 import { mat4, quat, Transform } from "../../engine/math.js";
-import { Prefab } from "../../engine/prefab.js";
+import { Prefab, componentClass } from "../../engine/prefab.js";
 import { FxMaterials, FxParticleSystem, PS_STOP } from "../../engine/particles.js";
 import { UnityRandom } from "../../engine/random.js";
 import { FxSpriteRenderer } from "../../live/fx-effects.js";
 import { StoryCommandError } from "../interfaces.js";
-import { AnimRecords } from "./clips.js";
 import { featureSlot, featureState } from "./state.js";
 
 // Particle / Animator effects of the Effect command (AdvParticleEffect instances of effects.json, one per TargetName:
@@ -32,9 +31,9 @@ const CAMERA_LAYER = { 1: 6, 3: 7, 5: 8, 7: 9, 9: 10 };          // AdvPositionT
 // ENGINE: a mesh without vertex colours reads colour (1, 1, 1, 1) (FxMaterial's constant white).
 export class EffectMeshRenderer {
   constructor(filter, renderer, transform, { materials = null, name = "" } = {}) {
-    const m = filter.m_Mesh;
+    const m = materials ? materials.mesh(filter.m_Mesh) : filter.m_Mesh;
     if (!m || !m.vertices || !m.submeshes) throw new StoryCommandError(`${name}: MeshFilter without mesh data`);
-    const mats = renderer.m_Materials || [];
+    const mats = (renderer.m_Materials || []).map((m) => materials ? materials.record(m) : m);
     if (!mats.length || mats.some((x) => !x)) throw new StoryCommandError(`${name}: MeshRenderer without its materials`);
     if (m.submeshes.length > mats.length) throw new StoryCommandError(`${name}: more submeshes than materials`);
     this.name = name;
@@ -43,8 +42,9 @@ export class EffectMeshRenderer {
     this.sortingLayer = renderer.m_SortingLayer | 0;
     this.sortingOrder = renderer.m_SortingOrder | 0;
     this.materialRecords = mats.slice(0, m.submeshes.length);
+    this.materialRefs = renderer.m_Materials.slice(0, m.submeshes.length);
     this.materials = materials;
-    if (materials) for (const r of this.materialRecords) materials.get(r);
+    if (materials) for (const r of this.materialRefs) materials.get(r);
     const n = m.vertices.length, has = (k) => Array.isArray(m[k]) && m[k].length === n;
     const streams = [["in_POSITION0", 3, m.vertices], has("normals") && ["in_NORMAL0", 3, m.normals],
                      has("colors") && ["in_COLOR0", 4, m.colors], has("uv0") && ["in_TEXCOORD0", 2, m.uv0]].filter(Boolean);
@@ -77,7 +77,7 @@ export class EffectMeshRenderer {
     if (!this.enabled) return null;
     const M = this.transform.localToWorld(), c = this.worldCenter(M);
     const distance = camPos ? Math.hypot(c[0] - camPos[0], c[1] - camPos[1], c[2] - camPos[2]) : 0;
-    const mat = this.materials ? this.materials.get(this.materialRecords[0]) : null;
+    const mat = this.materials ? this.materials.get(this.materialRefs[0]) : null;
     const rq = this.materialRecords[0].renderQueue;
     return { sortingLayer: this.sortingLayer, sortingOrder: this.sortingOrder, queue: mat ? mat.queue : (rq >= 0 ? rq : null),
              distance, name: this.name, draw: (ctx) => this.draw(ctx, M) };
@@ -85,7 +85,7 @@ export class EffectMeshRenderer {
 
   draw(ctx, M = this.transform.localToWorld()) {
     if (!this.materials) return;
-    this.parts.forEach((part, i) => this.materials.get(this.materialRecords[i]).draw(ctx, part, M, {}));
+    this.parts.forEach((part, i) => this.materials.get(this.materialRefs[i]).draw(ctx, part, M, {}));
   }
 }
 
@@ -94,13 +94,13 @@ export const CHARACTER_SORT_STRIDE = 1000;
 
 // AdvParticleEffect with its prefab instance
 export class AdvParticleEffect {
-  // exported: the prefab record ({key, nodes}); opts {materials: FxMaterials | null, rng: UnityRandom, parent: Transform,
-  // records: AnimRecords of the data file}. A stage's particle group effect is a GameObject inside the stage prefab:
+  // prefab: the canonical Prefab; objects: the shared ObjectResources. A stage's particle group effect is a GameObject inside the stage prefab:
   // opts.prefab (the stage's engine/prefab.js Prefab) and opts.rootPath (the effect's GameObject path) build it over
   // that subtree; setParentActive() then carries the activity of the GameObjects above it.
-  constructor(name, exported, { materials = null, rng = null, parent = null, records = null, prefab = null, rootPath = null } = {}) {
+  constructor(name, prefab, { materials = null, rng = null, parent = null, objects, rootPath = null } = {}) {
     this.name = name;
-    const pf = this.prefab = prefab || new Prefab(exported);
+    const pf = this.prefab = prefab;
+    this.objects = objects;
     const rootKey = rootPath ?? pf.root.name;
     const root = pf.transform(rootKey);
     if (parent) root.setParent(parent);
@@ -120,7 +120,7 @@ export class AdvParticleEffect {
       this.order.push(e);
     }
     this.rootEntry = this.entries.get(rootKey);
-    const cls = (c) => c.class || c.type;
+    const cls = componentClass;
     this.systems = []; this.renderers = [];
     let comp = null, animatorComp = null;
     for (const e of this.order) {
@@ -129,23 +129,23 @@ export class AdvParticleEffect {
         const k = cls(c);
         if (k === "ParticleSystem") {
           const r = comps.find((x) => cls(x) === "ParticleSystemRenderer") || null;
-          e.system = new FxParticleSystem(c, r, e.transform, { rng, materials, name: `${name}:${e.path}` });
+          e.system = new FxParticleSystem(c.fields, r && r.fields, e.transform, { rng, materials, name: `${name}:${e.path}` });
           this.systems.push(e.system);
           if (r) this.renderers.push({ kind: "particle", entry: e, target: e.system });
         } else if (k === "SpriteRenderer") {
-          e.sprite = new FxSpriteRenderer(c, e.transform, { materials, name: `${name}:${e.path}` });
+          e.sprite = new FxSpriteRenderer(c.fields, e.transform, { materials, name: `${name}:${e.path}` });
           this.renderers.push({ kind: "sprite", entry: e, target: e.sprite });
         } else if (k === "MeshFilter") {
           const r = comps.find((x) => cls(x) === "MeshRenderer");
           if (!r) throw new StoryCommandError(`${name}:${e.path}: MeshFilter without a MeshRenderer not implemented`);
-          e.mesh = new EffectMeshRenderer(c, r, e.transform, { materials, name: `${name}:${e.path}` });
+          e.mesh = new EffectMeshRenderer(c.fields, r.fields, e.transform, { materials, name: `${name}:${e.path}` });
           this.renderers.push({ kind: "mesh", entry: e, target: e.mesh });
         } else if (k === "MeshRenderer") {
           if (!comps.some((x) => cls(x) === "MeshFilter")) throw new StoryCommandError(`${name}:${e.path}: MeshRenderer without a MeshFilter`);
         } else if (k === "Animator") {
-          if (!animatorComp) { animatorComp = c; this.animatorEntry = e; }      // GetComponentInChildren<Animator>(true)
+          if (!animatorComp) { animatorComp = c.fields; this.animatorEntry = e; }      // GetComponentInChildren<Animator>(true)
         } else if (k === "AdvParticleEffect") {
-          comp = c;
+          comp = c.fields;
         } else if (k !== "ParticleSystemRenderer") {
           throw new StoryCommandError(`${name}:${e.path}: component ${k} not implemented`);
         }
@@ -155,15 +155,15 @@ export class AdvParticleEffect {
     // ParticleSystem.Play / Stop (withChildren): the nearest systems below each system, hierarchy order
     const below = (e, out) => { for (const c of e.children) { if (c.system) out.push(c.system); else below(c, out); } return out; };
     for (const e of this.order) if (e.system) e.system.children = below(e, []);
-    for (const e of this.order) if (e.system && e.system.subEmitters.length) e.system.linkSubEmitters((ref) => { const x = this.entries.get(ref.gameObject); return x ? x.system : null; });
-    const main = this.entries.get(comp._particleSystem && comp._particleSystem.gameObject);
+    for (const e of this.order) if (e.system && e.system.subEmitters.length) e.system.linkSubEmitters((ref) => { const x = this.entries.get(pf.pathOf(ref)); return x ? x.system : null; });
+    const main = this.entries.get(pf.pathOf(comp._particleSystem));
     if (!main || !main.system) throw new StoryCommandError(`${name}: _particleSystem missing`);
     this.particleSystem = main.system;
     // CacheParticleSystems: every system (inactive included) with its serialized simulation speed
     this.defaultSpeeds = this.systems.map((s) => s.main.simulationSpeed);
     // CacheAnimator
     this.animator = null; this.animatorOn = false; this.defaultAnimatorSpeed = 1;
-    if (animatorComp) this._buildAnimator(animatorComp, records || new AnimRecords(exported || {}, StoryCommandError));
+    if (animatorComp) this._buildAnimator(animatorComp);
     // CacheRenderers: default sort orders and their relative ranks
     this.defaultSortOrders = this.renderers.map((r) => r.target.sortingOrder);
     const pos = [...new Set(this.defaultSortOrders.filter((o) => o >= 1))].sort((a, b) => a - b);
@@ -176,12 +176,11 @@ export class AdvParticleEffect {
     for (const e of this.order) this._propagate(e);
   }
 
-  _buildAnimator(c, records) {
+  _buildAnimator(c) {
     if (c.m_UpdateMode !== 0 || c.m_ApplyRootMotion || c.m_KeepAnimatorStateOnDisable)
       throw new StoryCommandError(`${this.name}: Animator settings not implemented`);
-    const raw = records.controller(c.m_Controller, this.name);
-    if (!raw) return;                                                   // no controller: no states
-    const ctrl = records.controllerOf(raw, this.name);
+    const ctrl = this.objects.controller(c.m_Controller, this.prefab.ids[0], this.animatorEntry.path);
+    if (!ctrl) return;
     this.animator = new Animator(ctrl, (b) => this._bind(b), `${this.name}:${ctrl.name}`);
     this.animator.enabled = false;
     this.animatorComponentEnabled = !!c.m_Enabled;
@@ -428,11 +427,10 @@ export class StoryEffects {
   constructor(ctx) {
     this.ctx = ctx;
     this.resourceParent = new Transform("ResourceParent");              // AdvEpisodeResourceLoader.ResourceParent
-    this.materials = new FxMaterials(ctx.gl || null, "");
+    this.materials = FxMaterials.fromObjects(ctx.gl || null, ctx.objects);
     this.byName = new Map();                                            // TargetName -> AdvParticleEffect
     this.list = [];                                                     // command effects, load order
     this.stageEffects = [];                                             // stage particle group effects
-    this.records = null;
     this._hooks = [];
     this.installed = false;
   }
@@ -472,16 +470,15 @@ export class StoryEffects {
 
   // AdvEpisodeResourceLoader.LoadParticleEffect for every Effect row (one instance per TargetName; IgnoreData rows are
   // not preloaded), Init(token) with speed 1
-  load(doc) {
-    this.records = new AnimRecords(doc, StoryCommandError);
+  load() {
     for (const c of this.ctx.episode.commands) {
       if (c.cmd !== "Effect" || c.IgnoreData || !(c.TargetName ?? "") || this.byName.has(c.TargetName)) continue;
-      const asset = doc.instances[c.TargetName];
-      if (!asset) continue;
-      const ex = doc.effects[asset];
-      if (!ex) throw new StoryCommandError(`effect ${asset} is not in the story data`);
-      const e = new AdvParticleEffect(c.TargetName, ex, { materials: this.materials, rng: effectParticleRandom(this.ctx),
-                                                          parent: this.resourceParent, records: this.records });
+      if (!c.TargetAssetName) continue;
+      const asset = this.ctx.data.asset(`Adv/Effect/${c.TargetAssetName}`);
+      if (asset.objects.length !== 1) throw new StoryCommandError(`${c.TargetAssetName}: expected one effect root`);
+      const prefab = Prefab.fromObjects(this.ctx.assets, asset.objects);
+      const e = new AdvParticleEffect(c.TargetName, prefab, { materials: this.materials, rng: effectParticleRandom(this.ctx),
+        parent: this.resourceParent, objects: this.ctx.objects });
       e.init(1);
       this.byName.set(c.TargetName, e);
       this.list.push(e);
@@ -525,10 +522,8 @@ export const storyEffects = (ctx) => featureSlot(ctx, "effects", () => new Story
 export const loadEffects = (ctx) => {
   const uses = ctx.episode.commands.some((c) => c.cmd === "Effect" && !c.IgnoreData);
   if (!uses) return null;
-  const file = ctx.story && ctx.story.effects;
-  if (!file) throw new StoryCommandError("the story data has no effects.json");
   const fx = storyEffects(ctx);
-  fx.load(ctx.assets.json(file));
+  fx.load();
   const s = featureState(ctx);
   (s.speedListeners = s.speedListeners || []).push((rate) => fx.setPlaybackSpeed(rate));
   return fx;
@@ -537,20 +532,20 @@ export const loadEffects = (ctx) => {
 // AdvStage particle groups (AdvParticleEffectGroupCollection._groups[i]._particleEffects): one AdvParticleEffect per
 // referenced component over the stage prefab's subtree, Init(token) at stage load (stopped, cleared, hidden), then
 // updated and drawn with the command effects (their random stream). prefab: the stage's engine/prefab.js Prefab;
-// records: AnimRecords of the scene data file. Returns the groups (arrays of effects): AdvStage.PlayParticleEffects(i) =
+// objects: the shared ObjectResources. Returns the groups (arrays of effects): AdvStage.PlayParticleEffects(i) =
 // each play(), StopParticleEffects(i) = each stop(false, ctx.loop), SetPlaybackSpeed(r) = each setPlaybackSpeed(r) over
 // all groups.
-export const createStageParticleGroups = (ctx, stageName, prefab, collection, records) => {
+export const createStageParticleGroups = (ctx, stageName, prefab, collection, objects) => {
   const fx = storyEffects(ctx), rng = effectParticleRandom(ctx);
   const byPath = new Map();                     // a component referenced by several groups is one effect
   const groups = collection._groups.map((g, gi) => g._particleEffects.map((ref, k) => {
-    if (!ref || ref.class !== "AdvParticleEffect" || typeof ref.gameObject !== "string")
+    const path = prefab.pathOf(ref);
+    if (!path || !prefab.components(path, "AdvParticleEffect").length)
       throw new StoryCommandError(`stage ${stageName}: particle group ${gi} entry ${k} is not an AdvParticleEffect`);
-    let e = byPath.get(ref.gameObject);
+    let e = byPath.get(path);
     if (!e) {
-      e = new AdvParticleEffect(`${stageName}:${ref.gameObject}`, null, { materials: fx.materials, rng, records, prefab,
-                                                                          rootPath: ref.gameObject });
-      byPath.set(ref.gameObject, e);
+      e = new AdvParticleEffect(`${stageName}:${path}`, prefab, { materials: fx.materials, rng, objects, rootPath: path });
+      byPath.set(path, e);
     }
     return e;
   }));

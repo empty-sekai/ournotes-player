@@ -6,7 +6,7 @@ import { LIVE_JSON_FORMAT, MUSIC_FORMAT, NOTEEFFECT_FORMAT, NOTES_FORMAT, NOTESK
 // `schema` whose files are a live.json index, the score, audio/live-audio.json with its waveforms, livescene/ and
 // livenotes/. legacyLive() reads such a store as the store of a live: the documents of the live, scene, notes, note
 // skin, note effect, sounds and music products, and the objects they name, so ChartSession reads both through
-// LiveData and LiveObjects.
+// LiveData and ObjectResources.
 //
 // The chart's scene.json and notes.json hold their objects inline: prefabs as node lists, materials, sprites, meshes,
 // MonoBehaviour assets and clips where they are used, textures as file descriptors, clips and controllers of the note

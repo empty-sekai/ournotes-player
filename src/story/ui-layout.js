@@ -52,7 +52,7 @@ export class StoryLayout {
   // PerformLayoutCalculation: a node without layout elements and without a layout group ends the walk; the layout
   // elements' inputs are computed on demand, the layout group's CalcAlongAxis here
   _calc(n, axis) {
-    if (!(this._hasElements(n) || n.rec.layoutGroup)) return;
+    if (!(this._hasElements(n) || n.layoutGroup)) return;
     for (const c of n.children) this._calc(c, axis);
     if (n.layoutGroup && n.activeInHierarchy) this._calcAlongAxis(n, axis);
   }
@@ -154,7 +154,7 @@ export class StoryLayout {
   // LayoutGroup.rectChildren: children active in the hierarchy, without an ILayoutIgnorer that ignores layout
   // (LayoutElement.ignoreLayout, read whether or not the component is enabled)
   _rectChildren(n) {
-    return n.children.filter((c) => c.activeInHierarchy && !(c.rec.layoutElement && c.rec.layoutElement.m_IgnoreLayout));
+    return n.children.filter((c) => c.activeInHierarchy && !c.ignoreLayout);
   }
 
   // GetChildSizes: not controlled -> min = preferred = sizeDelta, flexible 0; force expand -> flexible >= 1
@@ -236,4 +236,3 @@ export class StoryLayout {
     n.layoutIn(n.parent.rect, n.parent.matrix);
   }
 }
-

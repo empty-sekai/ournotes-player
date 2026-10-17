@@ -24,7 +24,7 @@ export class SilentAudio {
 
   cueOf(soundId) {
     const c = this.resolve(soundId);
-    const meta = this.assets.json(`audio/${c.sheet}/cues.json`)[c.cue] || MISSING_CUE;   // a cue the sheet lacks is silence
+    const meta = c.meta || MISSING_CUE;
     return { ...c, meta };
   }
 
