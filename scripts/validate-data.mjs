@@ -940,6 +940,7 @@ class Story extends Chart {
         if (extOf(c.file) !== WAVE_EXT[m.audioFormat]) this.err(cp, `${cue}: ${c.file} does not match audioFormat ${m.audioFormat}`);
         if ((c.loopStart === undefined) !== (c.loopEnd === undefined)) this.err(cp, `${cue}: loopStart and loopEnd must both be set or both absent`);
         else if (c.loopStart !== undefined && !(c.loopStart < c.loopEnd && c.loopEnd <= c.samples)) this.err(cp, `${cue}: loop points outside the waveform`);
+        if (c.categories !== undefined && !(Array.isArray(c.categories) && c.categories.every((x) => typeof x === "string"))) this.err(cp, `${cue}: categories must be an array of strings`);
         if (c.encoderDelay !== undefined && (extOf(c.file) !== "m4a" || !Number.isInteger(c.encoderDelay) || c.encoderDelay < 0)) this.err(cp, `${cue}: encoderDelay ${c.encoderDelay}`);
         const p = `${dir}/${c.file}`;
         if (!has(this.common, p)) { this.err(cp, `${cue}: ${p} is not a common file`); continue; }
