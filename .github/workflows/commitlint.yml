@@ -3,7 +3,6 @@ name: lint-commits
 # Enforces conventional commit titles so git-cliff can drive the release notes. See cliff.toml for the type groups.
 on:
   pull_request:
-    branches: [main]
   push:
     branches: [main]
 
