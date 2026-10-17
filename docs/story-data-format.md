@@ -332,6 +332,7 @@ Other keys are not read.
 | `sampleRate`, `channels`, `samples` | As in a live's [sound layers](data-format.md#sounds-audiolive-audiojson): `samples` counts frames at `sampleRate`, without encoder padding. |
 | `loopStart`, `loopEnd` | Optional: loop points in sample frames. |
 | `encoderDelay` | Optional, AAC only: the priming samples at the start of the stream, handled as for a live's layers. |
+| `categories` | Optional: the CRI category names the cue plays in, from its cue sheet (`["Voice", "VoiceConfig"]`). The cue plays on the bus of the first of `Bgm`, `Se` and `Voice` among them; without it, on the bus of its `-Sound` row's `_category`. The row's `_category` still decides which sounds a stop of a category and a BGM crossfade reach. |
 
 A sound id of a row (`BgmID`, `SeID`, `VoiceIDs`) resolves through `episode.json`: `sounds[id]` gives the cue name (`_cueName`) and
 the cue sheet id (`_soundCueSheetID`), `cuesheets[<cue sheet id>]._cueSheetName` the directory `story.json` `audio` names. Lip sync reads the

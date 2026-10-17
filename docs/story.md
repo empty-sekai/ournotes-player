@@ -253,3 +253,8 @@ story player in their host screen ([story-simple.md](story-simple.md)).
 
 Behaviour of the engine (Unity, URP, CRI) that the game's code does not show is marked `ENGINE:` in the sources, as in
 the rest of the player ([fidelity.md](fidelity.md)).
+
+- Which volume governs a sound: the CRI category volumes (music, sound effect, voice) reach a cue through the
+  categories its cue sheet puts it in (`categories` of the cue in `cues.json`), not through the `_category` of its
+  `-Sound` row; the row's `_category` decides which sounds a stop of a category and a BGM crossfade reach. The voices
+  of the linkstory episodes ADV 10579–10608 are rows of category Bgm in cue sheets of category Voice.
