@@ -1,4 +1,6 @@
 import { AssetStore, PRODUCT_MANIFEST, decodeAsset } from "../data/assets.js";
+import { isProduct, mergeProductManifests, productDir } from "../data/products.js";
+export { productDir } from "../data/products.js";
 
 // Loading a live: the product manifest of the live (lives/<musicId>_<difficulty>.json, the `live` product of nnnotes'
 // product layout), the manifests of the products its live.json `parts` names, and any further products of note skins,
@@ -16,16 +18,6 @@ export const LIVE_PARTS = Object.freeze({
 export const LIVE_VARIANTS = Object.freeze(["live.noteskin", "live.noteeffect", "live.sounds"]);
 
 const here = () => (globalThis.document ? globalThis.document.baseURI : globalThis.location ? globalThis.location.href : undefined);
-
-// the directory of a product's files in a live store: its manifest path without ".json"
-export const productDir = (manifestPath) => {
-  const p = String(manifestPath);
-  if (!/^[^/]+\/[^/]+\.json$/.test(p)) throw new Error(`${p}: not a product manifest path <directory>/<file>.json`);
-  return p.slice(0, -".json".length);
-};
-
-const isProduct = (m, product) => !!m && m.schema === PRODUCT_MANIFEST && m.product === product
-  && !!m.files && typeof m.files === "object" && !!m.objects && typeof m.objects === "object";
 
 // A chart manifest of the site layout (docs/data-format.md "Chart manifest"): no `schema`, a `live.json` file. Its
 // store is read through legacy.js.
@@ -86,23 +78,4 @@ export const loadLiveStore = async (url, { variants = [], fetch = globalThis.fet
 // first: the live manifest without its file lists, `dir` and `products` (as the store's `info` of loadLiveStore), every
 // product's files under its directory and the objects of all of them in one table (an object in several manifests
 // must be the same in each).
-export const liveManifest = (loaded) => {
-  const files = {}, objects = {}, products = {};
-  for (const [dir, m] of loaded) {
-    const subjects = (products[m.product] ||= {});
-    if (m.subject in subjects) {
-      if (subjects[m.subject] !== dir) throw new Error(`${m.product} ${m.subject}: two manifests (${subjects[m.subject]}, ${dir})`);
-      continue;                                            // a variant that is also a part
-    }
-    subjects[m.subject] = dir;
-    for (const [p, f] of Object.entries(m.files)) files[`${dir}/${p}`] = f;
-    for (const [id, o] of Object.entries(m.objects)) {
-      if (id in objects && JSON.stringify(objects[id]) !== JSON.stringify(o))
-        throw new Error(`object ${id} differs between the manifests of the live's products`);
-      objects[id] = o;
-    }
-  }
-  const [liveDir, man] = loaded[0];
-  const { files: _f, objects: _o, ...info } = man;
-  return { ...info, dir: liveDir, products, files, objects };
-};
+export const liveManifest = mergeProductManifests;
