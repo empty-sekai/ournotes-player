@@ -246,19 +246,19 @@ export class DirStore extends AssetStore {
   }
 }
 
-// a story directory (story.json, episode.json, ...) as a store: with story.json `modelsDir` (the models directory,
-// relative to the story directory), its models' files under live2d/<model id>/
-export const storyDirStore = (dir, info = null) => {
-  const index = JSON.parse(fs.readFileSync(path.join(dir, "story.json"), "utf8"));
-  const mounts = typeof index.modelsDir === "string" ? { live2d: path.resolve(dir, ...index.modelsDir.split("/")) } : {};
-  return new DirStore(dir, info, { mounts });
-};
-
-// a story: a manifest file (site/stories/<advId>.json, the site's models and assets beside it) loaded in one language
-// (default: the manifest's), or a story directory (storyDirStore)
+// A story product manifest, or a product layout containing exactly one story manifest.
 export const openStory = async (where, { lang = null } = {}) => {
-  const p = path.resolve(where);
-  if (fs.statSync(p).isDirectory()) return headlessImages(storyDirStore(p));
+  let p = path.resolve(where);
+  if (fs.statSync(p).isDirectory()) {
+    const dir = path.join(p, "stories"), files = [];
+    const scan = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const f = path.join(d, e.name);
+      if (e.isDirectory()) scan(f); else if (e.isFile() && e.name.endsWith(".json")) files.push(f);
+    } };
+    if (fs.existsSync(dir)) scan(dir);
+    if (files.length !== 1) throw new Error(`${p}: choose a story product manifest (found ${files.length} in stories/)`);
+    p = files[0];
+  }
   const { loadStoryStore } = await import("../../src/story/assets.js");
   return headlessImages(await loadStoryStore(pathToFileURL(p).href, { fetch: fileFetch, lang, decode: nodeDecode }));
 };

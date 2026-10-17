@@ -2,18 +2,16 @@
 // particles, videos, chat, ...) through StorySession in Node (gl = null: nothing is drawn, no sound is played), with
 // Live2D Cubism Core. Every row of the episodes runs, the feature commands included.
 //
-//   OURNOTES_STORY_DIRS=<dir>,<dir>,...   story directories (story.json, episode.json, scene.json, ...; the models in
-//                                         story.json modelsDir); or
-//   OURNOTES_STORY_ROOT=<dir> [OURNOTES_STORY_IDS=<id>,<id>,...]   a directory of story directories named by ADV id
+//   OURNOTES_STORY_DIRS=<dir>,<dir>,...   story product manifests or single-story product layouts; or
+//   OURNOTES_STORY_ROOT=<dir> [OURNOTES_STORY_IDS=<id>,<id>,...]   a product layout with stories/<id>.json
 //                                         (all of them without OURNOTES_STORY_IDS); skipped without either
 //   CUBISM_CORE=<file>                    Live2D's live2dcubismcore.min.js (skipped without it; not in this repository)
 //   MOTIONSYNC_CORE=<file>                Live2D's MotionSync Core (optional)
 //   OURNOTES_STORY_TRACE=<dir>            writes <id>.json (feature command trace, state hashes) per episode
 //   OURNOTES_STORY_TIMEOUT=<seconds>      time limit per episode (both runs), default 3600
 //
-// A story directory without the story UI's font data (ui/fonts.json), or any with OURNOTES_STORY_STAND_IN_UI=1, plays
-// with a timing-only stand-in for the story UI (every UI call completes at once, text reveals at once): the feature
-// commands and the scene still run exactly.
+// OURNOTES_STORY_STAND_IN_UI=1 selects a timing-only stand-in for the story UI; otherwise the product's UI and fonts
+// are used. OURNOTES_STORY_LANG selects the language (ja by default).
 // Checks per episode: it plays to its end in auto mode; every feature command it uses ran; two runs with the same seed
 // give the same trace and the same per-frame feature state.
 import assert from "node:assert/strict";
@@ -22,15 +20,16 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { test } from "node:test";
-import { storyDirStore } from "../../scripts/lib/headless.mjs";
+import { openStory } from "../../scripts/lib/headless.mjs";
+import { StoryData } from "../../src/story/data.js";
 import { createStoryUILayers } from "../../src/story/interfaces.js";
 
 const CORE = process.env.CUBISM_CORE || "", MS = process.env.MOTIONSYNC_CORE || "";
 const ROOT = process.env.OURNOTES_STORY_ROOT || "";
+const LANG = process.env.OURNOTES_STORY_LANG || "ja";
 const DIRS = process.env.OURNOTES_STORY_DIRS ? process.env.OURNOTES_STORY_DIRS.split(",").map((s) => s.trim()).filter(Boolean)
-  : ROOT ? (process.env.OURNOTES_STORY_IDS ? process.env.OURNOTES_STORY_IDS.split(",").map((s) => s.trim())
-    : fs.readdirSync(ROOT).filter((n) => fs.existsSync(path.join(ROOT, n, "story.json"))).sort()).map((n) => path.join(ROOT, n))
-    : [];
+  : ROOT ? (process.env.OURNOTES_STORY_IDS ? process.env.OURNOTES_STORY_IDS.split(",").map((id) => `${id}.json`)
+    : fs.readdirSync(path.join(ROOT, "stories")).filter((n) => n.endsWith(".json")).sort()).map((n) => path.join(ROOT, "stories", n)) : [];
 const SKIP = !DIRS.length ? "OURNOTES_STORY_DIRS / OURNOTES_STORY_ROOT is not set"
   : !CORE ? "CUBISM_CORE is not set (path of Live2D's live2dcubismcore.min.js)" : false;
 const OUT = process.env.OURNOTES_STORY_TRACE || "";
@@ -88,12 +87,12 @@ const run = async (dir, { seed = 1, maxFrames = 30 * 60 * 40 } = {}) => {
   const { StorySession } = await import("../../src/story/session.js");
   const features = await import("../../src/story/features/index.js");
   const names = new Set(await FEATURE_NAMES());
-  const store = storyDirStore(dir);
+  const store = await openStory(dir, { lang: LANG });
   const trace = [], states = [];
   let s = null;
   s = await StorySession.create(null, store, {
     seed, auto: true, sound: false, autoplay: true,
-    ui: !STAND_IN && store.has("ui/fonts.json") ? undefined : standInUI(),
+    ui: STAND_IN ? standInUI() : undefined,
     onCommand: (c) => { if (names.has(c.cmd)) trace.push(`${s ? s.frame : 0} #${c.i} ${c.cmd}`); },
   });
   for (let n = 0; !s.ended && n < maxFrames; n++) {
@@ -113,7 +112,7 @@ const T = { skip: SKIP, timeout: TIMEOUT_S * 1000 };
 
 for (const dir of DIRS) {
   test(`story features: ${path.basename(dir)} plays to its end, deterministically`, T, async () => {
-    const episode = JSON.parse(fs.readFileSync(path.join(dir, "episode.json"), "utf8"));
+    const episode = new StoryData(await openStory(dir, { lang: LANG })).episode;
     const names = new Set(await FEATURE_NAMES());
     const used = [...new Set(episode.commands.filter((c) => !c.IgnoreData && names.has(c.cmd)).map((c) => c.cmd))].sort();
     const a = await run(dir, { seed: 7 }), b = await run(dir, { seed: 7 });

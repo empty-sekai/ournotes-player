@@ -179,7 +179,7 @@ const checkSchemas = () => {
 
 // ------------------------------------------------------------------------------------------------ formats
 
-const FORMAT_ID = /\bournotes\.[a-z][a-z0-9-]*\/\d+\b/g;
+const FORMAT_ID = /\b(?:ournotes|nnnotes)\.[a-z][a-z0-9.-]*\/\d+\b/g;
 
 const checkFormats = () => {
   const ids = (files) => {

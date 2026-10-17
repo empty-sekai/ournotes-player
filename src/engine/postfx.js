@@ -1,3 +1,4 @@
+import { refId } from "../data/assets.js";
 import { F } from "./core.js";
 import { applyState } from "./glsl.js";
 import { mat4 } from "./math.js";
@@ -198,25 +199,28 @@ export class URPPost {
 
   // the textures the overridden texture parameters of `profiles` name (FilmGrain.texture of a Custom grain), by exported
   // file; the Uber shader samples the grain with its inline sampler_LinearRepeat (other textures: bilinear, clamp)
-  async loadVolumeTextures(base, profiles, assets) {
+  async loadVolumeTextures(profiles, objects) {
     const gl = this.gl;
     for (const p of profiles) {
       for (const comp of (p && p.components) || []) {
         for (const [k, v] of Object.entries(comp)) {
           const d = v && typeof v === "object" && v.m_OverrideState ? v.m_Value : null;
-          if (!d || typeof d !== "object" || typeof d.texture !== "string" || this.volumeTextures.has(d.texture)) continue;
-          const t = await GLTex.load(gl, base, d, assets);
+          if (!d?.$ref) continue;
+          const id = objects.id(d, "Texture2D");
+          if (!id || this.volumeTextures.has(id)) continue;
+          const t = await objects.texture(id);
           const repeat = comp.asset === "FilmGrain" && k === "texture";
+          gl.bindTexture(gl.TEXTURE_2D, t.glTexture);
           GLTex.sampler(gl, { m_FilterMode: 1, m_WrapU: repeat ? 0 : 1, m_WrapV: repeat ? 0 : 1 }, 1);
-          this.volumeTextures.set(d.texture, t);
+          this.volumeTextures.set(id, t);
         }
       }
     }
   }
 
   _volumeTexture(desc) {
-    const t = this.volumeTextures.get(desc.texture);
-    if (!t) throw new Error(`volume texture ${desc.name || desc.texture} not loaded (URPPost.loadVolumeTextures)`);
+    const t = this.volumeTextures.get(refId(desc));
+    if (!t) throw new Error(`volume texture ${refId(desc)} not loaded (URPPost.loadVolumeTextures)`);
     return t;
   }
 

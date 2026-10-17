@@ -66,7 +66,7 @@ const makeStory = (commands, { auto = true, speed = 10, shortCutIndex = -1 } = {
   const ui = checkStoryUI(new TimingUI(loop, log));
   const episode = { advId: 1, commands, text: TEXT, sounds: SOUNDS, cuesheets: { 1: { _cueSheetName: "s" } } };
   const assets = { json: () => CUES };
-  const resolve = (id) => { const s = SOUNDS[id]; return { sheet: "s", cue: s._cueName, category: s._category, row: s }; };
+  const resolve = (id) => { const s = SOUNDS[id]; return { sheet: "s", cue: s._cueName, category: s._category, row: s, meta: CUES[s._cueName] }; };
   const audio = new SilentAudio(resolve, loop, { assets });
   loop.on("update", () => audio.update());
   const stub = { stopAlwaysUpdate() {}, markUpdateOnce() {} };
@@ -575,26 +575,29 @@ test("AdvGlobalVolume.applyStageAllVolume: the stage's profile by index, else di
 });
 
 test("Overlay episodes go to the simple player (manifest and session)", async () => {
-  const { STORY_MANIFEST_FORMAT, fetchStoryManifest } = await import("../../src/story/assets.js");
+  const { fetchStoryManifest } = await import("../../src/story/assets.js");
   const { StorySession } = await import("../../src/story/session.js");
   const { SimpleStorySession } = await import("../../src/story/simple/session.js");
-  const man = { format: STORY_MANIFEST_FORMAT, advId: 5, story: { playbackMode: 1 },
-                requires: { commands: ["In", "LookTarget", "Stage", "Talk"] } };
-  const fetch = async () => ({ ok: true, json: async () => man });
-  assert.equal((await fetchStoryManifest("https://example.org/stories/5.json", { fetch })).manifest.advId, 5);
-  man.requires.commands.push("Effect");                       // the one row of the simple set not reproduced
-  await assert.rejects(fetchStoryManifest("https://example.org/stories/5.json", { fetch }),
-                       (e) => e instanceof StoryCommandError && /story 5: .*Effect/.test(e.message));
+  const { storyFixture, STORY_ROOT } = await import("./story-product-fixture.mjs");
+  const fixture = storyFixture({ overlay: true });
+  assert.equal((await fetchStoryManifest(`${STORY_ROOT}stories/7.json`, { fetch: fixture.fetch })).story.advId, 7);
+  const effect = storyFixture({ overlay: true, command: "Effect" });
+  await assert.rejects(fetchStoryManifest(`${STORY_ROOT}stories/7.json`, { fetch: effect.fetch }),
+    (e) => e instanceof StoryCommandError && /story 7: .*Effect/.test(e.message));
   const files = {
     "story.json": { episode: "episode.json", scene: "scene.json", ui: "ui/ui.json" },
     "episode.json": { advId: 5, master: { _playbackMode: 1 }, commands: [{ i: 0, cmd: "Stage" }, { i: 1, cmd: "Talk", AdvTextID: "1" }], text: {} },
     "scene.json": { settings: { playerSettings: {} } },
   };
-  const store = { info: {}, has: (n) => n in files, json: (n) => files[n] };
+  files["story.json"].parts = { scene: "scenes/default.json" };
+  files["scene.json"].format = 1;
+  files["scene.json"].settings.playerSettings = "settings:1";
+  const store = { info: { product: "story", dir: "stories/5", products: {} }, mono: () => ({}),
+    has: (n) => n in files, json: (n) => files[n.split("/").at(-1)] };
   assert.equal(SimpleStorySession.isSimpleStory(store), true);
   assert.deepEqual(StorySession.requirements(store),
                    { commands: ["Talk"], skipped: ["Stage"], unsupported: [], invalid: null });
   // the simple session loads: without its talk window data it refuses the story
   await assert.rejects(StorySession.create(null, store),
-                       (e) => e instanceof StoryCommandError && /story 5: the simple talk window/.test(e.message));
+                       (e) => e instanceof StoryCommandError && /story 5: the simple UI product/.test(e.message));
 });

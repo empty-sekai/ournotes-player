@@ -1,7 +1,7 @@
 import { F } from "../engine/core.js";
+import { componentClass } from "../engine/prefab.js";
 import { UnityProgram, applyState } from "../engine/glsl.js";
 import { mat4 } from "../engine/math.js";
-import { GLTex } from "../engine/texture.js";
 import { UIAffine, UIDraw, UIError, UIImage, UINode, UISprite, UI_ATTRIBS, UI_STRIDE, uiCanvasSize } from "../engine/ugui.js";
 import { TMPText } from "../engine/uitext.js";
 import { StoryCommandError } from "./interfaces.js";
@@ -12,14 +12,14 @@ import { StoryText } from "./ui-ruby.js";
 // CanvasScaler ScaleWithScreenSize / Expand) with AdvChatView and its Target, and the AdvChatWindow prefab instances
 // (chat.json `windows`) attached under Target, laid out and drawn like the other story canvases: RectTransforms and
 // the auto layout (ui-layout.js), Image meshes (engine/ugui.js), TextMesh Pro text (engine/uitext.js) with the chat
-// windows' text bindings (ui/fonts.json `chatTexts`), CanvasGroup, CanvasRenderer alpha, the stencil Mask, the
+// windows' text bindings (story.fonts `texts`), CanvasGroup, CanvasRenderer alpha, the stencil Mask, the
 // ScrollRect content position and Soft Mask for uGUI's SoftMask / SoftMaskable. features/chat.js drives it as
 // AdvChatView does.
 //
 // Prefab records: {path, name, active, localPosition, localRotation, localScale, rect, components}, components with
 // `type` (engine) or `class` (MonoBehaviour), in hierarchy order.
 
-export const compOf = (rec, cls) => (rec.components || []).find((c) => (c.class || c.type) === cls) || null;
+export const compOf = (rec, cls) => (rec.components || []).find((c) => componentClass(c) === cls)?.fields || null;
 
 const LANGUAGE_ENGLISH = 1;                  // Fwk.Localization.LanguageMode.English
 // components of the chat window prefabs that draw nothing and change no layout here
@@ -35,12 +35,12 @@ const PASSIVE = new Set(["CanvasRenderer", "UIText", "LocalizeText", "GraphicCol
 // the untrimmed formula of UISprite when nothing is trimmed.
 export const chatSprite = (s) => {
   const tex = s.texture;
-  if (!tex || !tex.texture) throw new UIError(`sprite ${s.sprite}: no texture`);
-  if (s.downscaleMultiplier !== undefined && s.downscaleMultiplier !== 1) throw new UIError(`sprite ${s.sprite}: atlas variant scale`);
-  if (((s.settingsRaw | 0) >> 2) & 15) throw new UIError(`sprite ${s.sprite}: packing rotation not implemented`);
-  const sp = new UISprite(s.sprite, { rect: s.rect, border: s.border, pixelsPerUnit: s.pixelsToUnits, pivot: s.pivot,
+  if (!tex || !tex.id) throw new UIError(`sprite ${s.id}: no texture`);
+  if (s.downscaleMultiplier !== undefined && s.downscaleMultiplier !== 1) throw new UIError(`sprite ${s.id}: atlas variant scale`);
+  if (((s.settingsRaw | 0) >> 2) & 15) throw new UIError(`sprite ${s.id}: packing rotation not implemented`);
+  const sp = new UISprite(s.id, { rect: s.rect, border: s.border, pixelsPerUnit: s.pixelsToUnits, pivot: s.pivot,
                                       textureRect: s.textureRect, textureRectOffset: s.textureRectOffset },
-                          { width: tex.width, height: tex.height, name: tex.texture });
+                          tex);
   if (sp.trimmed && sp.hasBorder) {
     const tr = s.textureRect, off = s.textureRectOffset, b = s.border, W = tex.width, H = tex.height;
     const ox = tr.x - off.x, oy = tr.y - off.y;
@@ -59,20 +59,25 @@ export class ChatUINode extends UINode {
   constructor(rec, parent, host, src = rec.path) {
     super({ ...rec, canvasGroup: compOf(rec, "CanvasGroup") }, parent);
     this.src = src;
+    this.prefabId = host.prefabId;
+    this.sourcePath = src;
+    this.pathOf = host.pathOf;
+    this.componentId = (c) => `${this.prefabId.slice(0, this.prefabId.lastIndexOf(":"))}:${c.pathId}`;
     this.raw = rec;
     this.rendererAlpha = 1;                                // CanvasRenderer.GetAlpha (SetAlpha on the read label)
     const lg = compOf(rec, "HorizontalLayoutGroup") || compOf(rec, "VerticalLayoutGroup");
     const lgClass = lg ? (compOf(rec, "HorizontalLayoutGroup") ? "HorizontalLayoutGroup" : "VerticalLayoutGroup") : null;
     const le = compOf(rec, "LayoutElement"), csf = compOf(rec, "ContentSizeFitter");
     // the node record the auto layout reads (layout group / element present, enabled or not)
-    this.rec = { ...rec, layoutGroup: lg ? { ...lg, class: lgClass } : undefined, layoutElement: le || undefined };
+    this.rec = rec;
+    this.ignoreLayout = !!le?.m_IgnoreLayout;
     if (lg && lg.m_Enabled) this.layoutGroup = { ...lg, class: lgClass, m_Padding: { ...lg.m_Padding } };
     if (le && le.m_Enabled) this.layoutElement = { ...le };
     if (csf && csf.m_Enabled) this.contentSizeFitter = csf;
     if (host.visual === false) return;
     for (const c of rec.components || []) {
-      const cls = c.class || c.type;
-      if (!PASSIVE.has(cls) && c.m_Enabled !== 0) throw new UIError(`${rec.path}: ${cls} not implemented`);
+      const cls = componentClass(c);
+      if (!PASSIVE.has(cls) && c.fields.m_Enabled !== 0) throw new UIError(`${rec.path}: ${cls} not implemented`);
     }
     const im = compOf(rec, "Image");
     if (im) {
@@ -95,7 +100,7 @@ export class ChatUINode extends UINode {
     if (sr && sr.m_Enabled) this.scrollRect = sr;
     const tmp = compOf(rec, "TextMeshProUGUI");
     if (tmp) {
-      const b = host.binding(src);
+      const b = host.binding(src, this);
       if (b) {
         this.text = new TMPText(host.textHost, this, b);
         this.text.enabled = !!b.enabled;
@@ -363,7 +368,7 @@ export const softMaskParams = (maskNode, refPPU) => {
     if (img.m_PreserveAspect) throw new UIError(`${maskNode.path}: SoftMask with preserveAspect not implemented`);
     const sw = sp.rect.width, sh = sp.rect.height, w = full[2] - full[0], h = full[3] - full[1];
     const rect = [full[0] + pad[0] / sw * w, full[1] + pad[1] / sh * h, full[2] - pad[2] / sw * w, full[3] - pad[3] / sh * h];
-    return { rect, uvRect: outer, border: rect, uvBorder: outer, sliced: false, texture: sp.texture.name };
+    return { rect, uvRect: outer, border: rect, uvBorder: outer, sliced: false, texture: sp.texture.id };
   }
   if (!sp.inner) throw new UIError(`${maskNode.path}: SoftMask sprite without inner uv`);
   const scale = refPPU / (sp.pixelsPerUnit * img.m_PixelsPerUnitMultiplier);
@@ -375,27 +380,28 @@ export const softMaskParams = (maskNode, refPPU) => {
     if (size[axis] < sum && sum !== 0) { const k = size[axis] / sum; b[axis] *= k; b[axis + 2] *= k; }
   }
   const border = [full[0] + b[0], full[1] + b[1], full[2] - b[2], full[3] - b[3]];
-  return { rect, uvRect: outer, border, uvBorder: sp.inner, sliced: true, texture: sp.texture.name };
+  return { rect, uvRect: outer, border, uvBorder: sp.inner, sliced: true, texture: sp.texture.id };
 };
 
 // ------------------------------------------------------------------------------------------------ the canvas
-// UIAdvChatWidget's ChatCanvas with AdvChatView and Target (ui/ui.json `chatWidget`), the chat windows under Target.
+// UIAdvChatWidget's ChatCanvas with AdvChatView and Target (story.ui `chatWidget`), the chat windows under Target.
 // host: {textHost (fontAsset / material: the story UI), binding(window, src), languageMode}.
 export class ChatCanvasUI {
-  constructor(widget) {
+  constructor(prefab) {
+    const widget = { nodes: [...prefab.nodes.values()].map((e) => e.node) };
     const byPath = new Map(widget.nodes.map((n) => [n.path, n]));
-    const canvasRec = widget.nodes.find((n) => n.canvas);
+    const canvasRec = widget.nodes.find((n) => compOf(n, "Canvas"));
     if (!canvasRec) throw new UIError("chatWidget: no canvas node");
-    const c = canvasRec.canvas, s = canvasRec.canvasScaler;
+    const c = compOf(canvasRec, "Canvas"), s = compOf(canvasRec, "CanvasScaler");
     if (!c.m_Enabled || c.m_RenderMode !== 1 || c.m_PixelPerfect || c.m_OverrideSorting)
       throw new UIError("ChatCanvas: canvas settings outside the prefab values (Screen Space - Camera)");
     if (!s || !s.m_Enabled || s.m_UiScaleMode !== 1 || s.m_ScreenMatchMode !== 1)
       throw new UIError("ChatCanvas: CanvasScaler is not ScaleWithScreenSize / Expand");
     this.sortingOrder = c.m_SortingOrder; this.planeDistance = c.m_PlaneDistance; this.scaler = s;
-    const viewRec = widget.nodes.find((n) => n.chatView);
+    const viewRec = widget.nodes.find((n) => compOf(n, "AdvChatView"));
     if (!viewRec) throw new UIError("chatWidget: no AdvChatView");
-    this.chatView = viewRec.chatView;
-    const targetPath = this.chatView._windowParentRect;
+    this.chatView = compOf(viewRec, "AdvChatView");
+    const targetPath = prefab.pathOf(this.chatView._windowParentRect);
     const targetRec = byPath.get(targetPath);
     if (!targetRec) throw new UIError(`chatWidget: ${targetPath} (_windowParentRect) not in the data`);
     const host = { sprite: () => { throw new UIError("chatWidget: sprites not implemented"); }, binding: () => null };
@@ -404,7 +410,7 @@ export class ChatCanvasUI {
     this.view = new ChatUINode(plain(viewRec), this.root, host);
     if (targetRec.path.slice(0, targetRec.path.lastIndexOf("/")) !== viewRec.path) throw new UIError("chatWidget: Target is not a child of AdvChatView");
     this.target = new ChatUINode(plain(targetRec), this.view, host);
-    const cg = targetRec.canvasGroup;
+    const cg = compOf(targetRec, "CanvasGroup");
     this.target.canvasGroup = cg && cg.m_Enabled ? { alpha: cg.m_Alpha, ignoreParentGroups: !!cg.m_IgnoreParentGroups } : null;
     if (this.target.sizeDelta.x !== 0 || this.target.sizeDelta.y !== 0 || this.target.anchorMin.x !== this.target.anchorMax.x ||
         this.target.anchorMin.y !== this.target.anchorMax.y) throw new UIError("chatWidget: Target is not a point rect");
@@ -438,7 +444,7 @@ export class ChatCanvasUI {
       if (n.image && n.image.m_Enabled) {
         const mesh = UIImage.build(n, n.image, n.image.spriteObj, refPPU);
         const it = { node: n, kind: "image", verts: UIDraw.pack(mesh.verts, n, a), idx: Uint32Array.from(mesh.idx),
-                     texture: n.image.spriteObj ? n.image.spriteObj.texture.name : null };
+                     texture: n.image.spriteObj ? n.image.spriteObj.texture.id : null };
         if (masking) {
           const st = maskStencil(depth, n.mask.showGraphic);
           it.stencil = st.push;
@@ -477,13 +483,13 @@ const scaleOf = (n) => Math.hypot(n.matrix[2], n.matrix[3]);
 // of the perspective camera, scaled to fill the view (UnityObjectToClipPos of the canvas vertices; TMP's SDF scale
 // includes the text's world scale and its perspective filter).
 export class ChatCanvasGL {
-  constructor(gl, ui, assets) {
-    this.gl = gl; this.ui = ui; this.assets = assets;
+  constructor(gl, ui, objects) {
+    this.gl = gl; this.ui = ui; this.objects = objects;
     this.tex = new Map(); this.buf = null; this.fbo = null; this.soft = null; this.mats = new Map();
   }
 
   async load(textures) {
-    for (const [p, desc] of textures) if (!this.tex.has(p)) this.tex.set(p, await GLTex.load(this.gl, "", desc, this.assets));
+    for (const id of textures.keys()) if (!this.tex.has(id)) this.tex.set(id, await this.objects.texture(id));
     const gl = this.gl;
     this.buf = { vao: gl.createVertexArray(), vbo: gl.createBuffer(), ibo: gl.createBuffer() };
   }
@@ -617,4 +623,3 @@ export class ChatCanvasGL {
     this.soft = null;
   }
 }
-

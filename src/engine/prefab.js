@@ -37,7 +37,42 @@ export class Prefab {
   static fromObjects(assets, ids, key = ids.join(" ")) {
     const p = new Prefab({ key, nodes: ids.flatMap((id) => assets.prefab(id).nodes) });
     p.ids = ids.slice();
+    p.references = new Map();
+    for (const id of ids) {
+      const file = id.slice(0, id.lastIndexOf(":"));
+      for (const n of assets.prefab(id).nodes) {
+        if (n.pathId !== undefined) p.references.set(`${file}:${n.pathId}`, { path: n.path, component: null });
+        if (n.transformPathId !== undefined) p.references.set(`${file}:${n.transformPathId}`, { path: n.path, component: null });
+        for (const c of n.components) p.references.set(`${file}:${c.pathId}`, { path: n.path, component: c });
+      }
+    }
     return p;
+  }
+
+  // Resolve local hierarchy paths and serialized object references without changing component fields.
+  pathOf(ref) {
+    if (!ref) return null;
+    if (ref.$ref) {
+      const id = `${ref.$ref.file}:${ref.$ref.pathId}`, hit = this.references?.get(id);
+      if (!hit) throw new Error(`${this.key}: reference ${id} is outside the hierarchy`);
+      return hit.path;
+    }
+    const path = ref.transform ?? ref.gameObject;
+    if (typeof path !== "string" || !this.nodes.has(path)) throw new Error(`${this.key}: invalid hierarchy reference`);
+    return path;
+  }
+
+  transformOf(ref) { const path = this.pathOf(ref); return path === null ? null : this.transform(path); }
+
+  componentOf(ref, cls = null) {
+    if (!ref) return null;
+    if (ref.$ref) {
+      const id = `${ref.$ref.file}:${ref.$ref.pathId}`, hit = this.references?.get(id);
+      if (!hit?.component) throw new Error(`${this.key}: reference ${id} is not a component`);
+      if (cls && componentClass(hit.component) !== cls) throw new Error(`${id}: expected ${cls}`);
+      return hit.component;
+    }
+    return this.component(this.pathOf(ref), cls || ref.class || ref.component);
   }
 
   // the `fields` of the unique component of class `cls` on `path` (prefab.json)

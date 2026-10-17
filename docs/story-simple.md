@@ -31,7 +31,7 @@ full story player. `src/story/simple/` reproduces that presentation. `StorySessi
 
 ## Hosts
 
-`host/host.json` (written by the data exporter for Overlay episodes) names the host screen:
+`host.json` in the `story.host` product names the host screen:
 
 | Host | Screen | Reproduced | Not reproduced (runtime data) |
 |---|---|---|---|
@@ -63,21 +63,19 @@ main camera with antialiasing or dithering.
 
 ## Data
 
-Besides the story files of `docs/story-data-format.md`:
+The [story part index](story-data-format.md#storyjson) names the reusable host and language products.
 
-- `host/host.json` (`ournotes.story-host/1`): the host kind, the capture camera prefab values (`cameraTarget`), the
-  host's overlay root and its layout component (`overlayRoot`, `layoutRoot`), the host UI document (`ui`:
-  `host/ui/ui.json`), the sequences the host screen has played when a talk can start (`openedSequences`: the talk
-  starts with their Animator states at their end), and per host its scene data (`home`: the spot export, the room
-  glTF with the background root's transform, per-node visibility after the situation, materials, Spine materials and
-  sorting, shaders, blur parameters, ambient sound, the spot scene's camera and render settings, the lights of the
-  scene and the placed prefabs, and the volumes of the scene and the background; `afterlive`: the background node and
-  sprite, the reward panel, the list of runtime parts not drawn).
-- `ui/simple/ui.json`, `ui/simple/fonts.json` (per language): the talk window (and, for area talks, the system message
-  widget and its title text) in the story UI record format, with the fonts of its texts.
-- Animator clips of the host UI key their curves by the path below the Animator (`"<path>:<Class>.<property>"`);
-  sprite curves index the clip's sprite names. A curve whose object is not in the exported part of the screen is
-  bound to nothing, as Unity does for a missing object.
+- `story.host` contains `host.json` (`nnnotes.story-host/1`), prefab ids, capture camera, overlay and layout references,
+  opened animation sequences, graphics and DOTween settings. Node references are `{prefab, path}`. Home hosts also
+  reference room and spot products, background activation/queue state and scene roots. Afterlive hosts identify the
+  background image/sprite and reward panel.
+- `story.simpleui` contains `ui.json` (`nnnotes.story-simple-ui/1`), referencing the simple talk window and system
+  message prefabs. Native components hold their text, layout and animation fields.
+- `story.fonts` supplies the selected language's TMP component-id bindings and glyph pages. The episode's own
+  `story.json.host` selects the home talk kind, tap character and localized area title.
+
+The loader merges these products' compatible object roles. Room geometry and material order come from `room.json`
+and `room.glb`; Spine files come from the spot product, with page materials resolved from its skeleton/atlas objects.
 
 ## Page requirements
 

@@ -1,9 +1,9 @@
 import { Animator } from "../../engine/anim.js";
-import { F, join } from "../../engine/core.js";
+import { F } from "../../engine/core.js";
 import { UIAffine, UIDraw, UIError, UIImage, UILayout, UIMesh, UINode, UISprite, UI_CLIP_TARGET, UI_STRIDE, uiColor32 } from "../../engine/ugui.js";
 import { StoryCommandError } from "../interfaces.js";
 import { StoryLayout } from "../ui-layout.js";
-import { AnimRecords } from "./clips.js";
+import { componentClass } from "../../engine/prefab.js";
 
 // uGUI prefab instances on the story's screen canvases (VideoCanvas, StillCanvas, FrameCanvas of UIAdvWidget): the
 // prefab node lists of frames.json / stills.json as RectTransform trees with their graphics, CanvasGroups, layout
@@ -16,8 +16,8 @@ import { AnimRecords } from "./clips.js";
 // A prefab record: {path, name, active, layer, localPosition, localRotation, localScale, rect, components} in
 // hierarchy order (parents first), components with `type` (engine) or `class` (MonoBehaviour).
 
-export const compOf = (rec, cls) => (rec.components || []).find((c) => (c.class || c.type) === cls) || null;
-export const compsOf = (rec, cls) => (rec.components || []).filter((c) => (c.class || c.type) === cls);
+export const compOf = (rec, cls) => (rec.components || []).find((c) => componentClass(c) === cls)?.fields || null;
+export const compsOf = (rec, cls) => (rec.components || []).filter((c) => componentClass(c) === cls).map((c) => c.fields);
 
 // ------------------------------------------------------------------------------------------------ nodes
 // UnityEngine.Quaternion -> the x / y rows of its rotation matrix (float32)
@@ -209,19 +209,18 @@ export const bindCanvasProperty = (root, b, extra = null) => {
 };
 
 // The Mecanim Animator of a prefab node (layer 0 of its controller, one clip per state; engine/anim.js) with the
-// normalized time of the current state. records: the file's AnimRecords (clips.js), which resolves controllers and
-// clips written once per file. A missing controller (m_Controller null) gives an Animator without states: HasState
+// normalized time of the current state. ObjectResources resolves controllers and clips with this prefab's bindings. A missing controller (m_Controller null) gives an Animator without states: HasState
 // is false for every state.
 // ENGINE: a state whose motion is missing or has zero length advances its normalized time as if one second long.
 export class CanvasAnimator {
-  constructor(node, comp, bind, name = node.path, records = new AnimRecords({}, UIError)) {
+  constructor(node, comp, bind, name = node.path, objects) {
     this.node = node; this.comp = comp;
-    const raw = records.controller(comp.m_Controller, node.path);
+    const ctrl = comp.m_Controller ? objects.controller(comp.m_Controller, node.prefabId, node.sourcePath) : null;
     this.animator = null;
-    if (raw) {
+    if (ctrl) {
       if (comp.m_UpdateMode !== 0 || comp.m_CullingMode !== 0 || comp.m_ApplyRootMotion)
         throw new UIError(`${node.path}: Animator settings outside the implemented subset`);
-      this.animator = new Animator(records.controllerOf(raw, node.path), bind, name);
+      this.animator = new Animator(ctrl, bind, name);
     }
     this.enabled = !!comp.m_Enabled;
     this.keepStateOnDisable = !!comp.m_KeepAnimatorStateOnDisable;
@@ -287,6 +286,8 @@ export class TransformNode {
 
   get anchoredPosition() { throw new UIError(`${this.path}: not a RectTransform`); }
   get sizeDelta() { throw new UIError(`${this.path}: not a RectTransform`); }
+  component(cls) { return this.rec.components.find((c) => componentClass(c) === cls) || null; }
+  fields(cls) { return this.component(cls)?.fields || null; }
 
   layoutIn(pr, parentMatrix) {
     const [m00, m10, m01, m11] = quatRows(this.localRotation), sx = this.localScale.x, sy = this.localScale.y;
@@ -305,8 +306,9 @@ const LAYOUT_GROUPS = ["HorizontalLayoutGroup", "VerticalLayoutGroup", "GridLayo
 const TMP_CLASSES = ["TextMeshProUGUI", "RubyTextMeshProUGUI", "RubyEmojiTextMeshProUGUI"];
 
 export class CanvasPrefab {
-  constructor(nodes, parent, canvas) {
+  constructor(nodes, parent, canvas, prefabId = null) {
     this.canvas = canvas;
+    this.source = prefabId ? canvas.objects.prefab(prefabId) : null;
     this.nodes = new Map();
     for (const rec of nodes) {
       const cut = rec.path.lastIndexOf("/");
@@ -321,6 +323,9 @@ export class CanvasPrefab {
         n = new CanvasNode({ ...rec, canvasGroup: compOf(rec, "CanvasGroup") }, p || null);
         this._components(n, rec);
       }
+      n.prefabId = prefabId;
+      n.sourcePath = rec.path;
+      n.componentId = (c) => `${prefabId.slice(0, prefabId.lastIndexOf(":"))}:${c.pathId}`;
       const particles = PARTICLE_COMPONENTS.filter((cls) => compOf(rec, cls));
       if (particles.length) n.particleComponents = particles;
       this.nodes.set(rec.path, n);
@@ -343,8 +348,7 @@ export class CanvasPrefab {
     // walk and LayoutElement.ignoreLayout), and the enabled ones on the node
     const lgClass = LAYOUT_GROUPS.find((cls) => compOf(rec, cls)), lg = lgClass ? compOf(rec, lgClass) : null;
     const le = compOf(rec, "LayoutElement");
-    n.rec.layoutGroup = lg ? { ...lg, class: lgClass } : undefined;
-    n.rec.layoutElement = le || undefined;
+    n.ignoreLayout = !!le?.m_IgnoreLayout;
     if (lg && lg.m_Enabled) n.layoutGroup = { ...lg, class: lgClass };
     if (le && le.m_Enabled) n.layoutElement = le;
     const csf = compOf(rec, "ContentSizeFitter");
@@ -362,7 +366,7 @@ export class CanvasPrefab {
   }
 
   // a component reference {component, gameObject} -> the node
-  ref(r) { return r ? this.node(r.gameObject) : null; }
+  ref(r) { return r ? this.node(this.source ? this.source.pathOf(r) : r.gameObject || r.transform) : null; }
 }
 
 // ------------------------------------------------------------------------------------------------ screen canvas
@@ -383,7 +387,8 @@ export const clampedCanvasSize = (scaler, width, height) => {
 // One camera canvas of UIAdvWidget: a root node laid out over the canvas units, its content drawn in hierarchy order
 // with the UI shaders. `sprite(record)` / `material(record)` collect what the GL load needs.
 export class ScreenCanvas {
-  constructor(name, { sortingOrder, scaler }) {
+  constructor(name, { sortingOrder, scaler }, objects) {
+    this.objects = objects;
     this.name = name; this.sortingOrder = sortingOrder; this.scaler = scaler;
     this.root = new CanvasNode({ path: name, name, active: true, localPosition: { x: 0, y: 0, z: 0 },
                                  localRotation: { x: 0, y: 0, z: 0, w: 1 }, localScale: { x: 1, y: 1, z: 1 },
@@ -399,45 +404,27 @@ export class ScreenCanvas {
 
   get refPPU() { return this.scaler.m_ReferencePixelsPerUnit; }
 
-  sprite(s) {
+  sprite(ref) {
+    const s = this.objects.sprite(ref);
     if (!s) return null;
-    const tex = s.texture, key = `${s.sprite}@${tex.texture}`;
-    if (!this.sprites.has(key)) {
-      if (s.downscaleMultiplier !== undefined && s.downscaleMultiplier !== 1) throw new UIError(`sprite ${s.sprite}: atlas variant scale`);
-      const sp = new UISprite(s.sprite, { rect: s.rect, border: s.border, pixelsPerUnit: s.pixelsToUnits, pivot: s.pivot,
-                                          textureRect: s.textureRect, textureRectOffset: s.textureRectOffset },
-                              { width: tex.width, height: tex.height, name: tex.texture,
-                                wrapU: tex.settings ? tex.settings.m_WrapU : 1, wrapV: tex.settings ? tex.settings.m_WrapV : 1 });
-      sp.packed = !!((s.settingsRaw | 0) & 1);                   // SpriteSettings.packed
-      this.sprites.set(key, sp);
-      this.textures.set(tex.texture, tex);
+    if (!this.sprites.has(s.id)) {
+      if (s.downscaleMultiplier !== undefined && s.downscaleMultiplier !== 1) throw new UIError(`sprite ${s.id}: atlas variant scale`);
+      const sp = new UISprite(s.id, { ...s, pixelsPerUnit: s.pixelsToUnits }, s.texture);
+      sp.packed = !!((s.settingsRaw | 0) & 1);
+      this.sprites.set(s.id, sp);
+      this.textures.set(s.texture.id, s.texture);
     }
-    return this.sprites.get(key);
+    return this.sprites.get(s.id);
   }
 
-  // a sprite of the story UI data (ui/ui.json `sprites` / `textures`, texture paths under `dir`)
-  uiSprite(doc, name, dir) {
-    if (!name) return null;
-    const key = `ui:${name}`;
-    if (!this.sprites.has(key)) {
-      const s = doc.sprites[name], t = s ? doc.textures[s.texture] : null;
-      if (!s || !t) throw new UIError(`sprite ${name} not in the story UI data`);
-      const path = join(dir, t.texture), desc = { ...t, texture: path };
-      const sp = new UISprite(name, s, { ...desc, name: path, wrapU: t.settings ? t.settings.m_WrapU : 1,
-                                         wrapV: t.settings ? t.settings.m_WrapV : 1 });
-      this.sprites.set(key, sp);
-      this.textures.set(path, desc);
+  material(ref) {
+    const m = this.objects.material(ref);
+    if (!m) return null;
+    if (!this.materials.has(m.id)) {
+      this.materials.set(m.id, m);
+      for (const t of Object.values(m.textures || {})) if (t.texture) this.textures.set(t.texture.id, t.texture);
     }
-    return this.sprites.get(key);
-  }
-
-  material(m) {
-    if (!m.shader || !m.shader.shader) throw new UIError(`material ${m.material}: no shader`);
-    if (!this.materials.has(m.material)) {
-      this.materials.set(m.material, m);
-      for (const t of Object.values(m.textures || {})) if (t.texture) this.textures.set(t.texture.texture, t.texture);
-    }
-    return this.materials.get(m.material);
+    return this.materials.get(m.id);
   }
 
   canvasSize(width, height) { return clampedCanvasSize(this.scaler, width, height); }
@@ -471,7 +458,7 @@ export class ScreenCanvas {
           const [x, y, z] = m3Apply(n.matrix3, v.x, v.y), o = i * UI_STRIDE;
           verts[o] = x; verts[o + 1] = y; verts[o + 2] = P ? z : 0;
         });
-        out.push({ node: n, material: img.material, texture: sp ? sp.texture.name : null, mesh,
+        out.push({ node: n, material: img.material, texture: sp ? sp.texture.id : null, mesh,
                    verts, idx: Uint32Array.from(mesh.idx), ...(img.glTex ? { glTex: img.glTex } : {}) });
       }
       const t = n.text && n.text.enabled ? n.text : null;
@@ -513,8 +500,8 @@ export const viewProjection = (fov, W, H) => {
 // defaults. A custom Image material keeps its own properties; _MainTex is the sprite's texture (Image.mainTexture).
 export class CanvasGL {
   // textUI: the story UI, whose text materials, glyph pages and shader programs draw the canvas texts
-  constructor(gl, lib, assets, textUI = null) {
-    this.gl = gl; this.lib = lib; this.assets = assets; this.textUI = textUI;
+  constructor(gl, objects, textUI = null) {
+    this.gl = gl; this.lib = objects.lib; this.objects = objects; this.textUI = textUI;
     this.tex = new Map(); this.mats = new Map();
     this.solid = null; this.buf = null; this.defaultMaterial = null;
   }
@@ -525,16 +512,16 @@ export class CanvasGL {
       white: GLTex.solid(gl, [255, 255, 255, 255], "white"), black: GLTex.solid(gl, [0, 0, 0, 255], "black"),
       gray: GLTex.solid(gl, [128, 128, 128, 255], "gray"), bump: GLTex.solid(gl, [128, 128, 255, 255], "bump"),
     };
-    this.defaultMaterial = this._material({ material: "Default UI Material", shader: { shader: "UI/Default" }, keywords: [] });
+    this.defaultMaterial = this._material({ material: "Default UI Material", shader: "UI/Default", keywords: [] });
     for (const c of canvases) {
-      for (const [p, desc] of c.textures) if (!this.tex.has(p)) this.tex.set(p, await GLTex.load(gl, "", desc, this.assets));
-      for (const m of c.materials.values()) if (!this.mats.has(m.material)) this.mats.set(m.material, this._material(m));
+      for (const id of c.textures.keys()) if (!this.tex.has(id)) this.tex.set(id, await this.objects.texture(id));
+      for (const m of c.materials.values()) if (!this.mats.has(m.id)) this.mats.set(m.id, this._material(m));
     }
     this.buf = { vao: gl.createVertexArray(), vbo: gl.createBuffer(), ibo: gl.createBuffer() };
   }
 
   _material(m) {
-    const shader = m.shader.shader, defaults = this.lib.defaults(shader, this.solid);
+    const shader = m.shader, defaults = this.lib.defaults(shader, this.solid);
     const num = Object.fromEntries(Object.entries(defaults).filter(([, v]) => typeof v === "number"));
     const out = { shader, keywords: m.keywords || [], floats: { ...num, ...(m.floats || {}) }, colors: m.colors || {}, defaults,
                   textures: m.textures || {} };
@@ -551,7 +538,7 @@ export class CanvasGL {
     }
     for (const it of items) {
       if (it.text) { this._drawText(it, globals); continue; }
-      const mat = it.material ? this.mats.get(it.material.material) : this.defaultMaterial;
+      const mat = it.material ? this.mats.get(it.material.id) : this.defaultMaterial;
       const tex = it.glTex ? it.glTex() : it.texture ? this.tex.get(it.texture) : this.solid.white;
       if (!tex) continue;                   // a graphic whose texture is not there yet (a video before its first frame)
       const st = mat.textures._MainTex;

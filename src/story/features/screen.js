@@ -1,11 +1,10 @@
-import { F, join } from "../../engine/core.js";
+import { F } from "../../engine/core.js";
 import { mat4 } from "../../engine/math.js";
 import { URPPost } from "../../engine/postfx.js";
 import { ADV_CANVAS_LAYER, StoryCommandError } from "../interfaces.js";
 import { GLTarget, GLTex } from "../../engine/texture.js";
-import { ShaderLib } from "../../engine/glsl.js";
 import { UIDraw, UIMesh, uiColor32 } from "../../engine/ugui.js";
-import { CanvasGL, CanvasNode, ScreenCanvas } from "./canvas.js";
+import { CanvasGL, CanvasNode, ScreenCanvas, compOf } from "./canvas.js";
 import { DOTargets } from "./dotween.js";
 import { featureSlot, featureState } from "./state.js";
 import { CanvasParticles } from "./uiparticle.js";
@@ -25,7 +24,7 @@ import { CanvasParticles } from "./uiparticle.js";
 // mask to 0 (component defaults only).
 // ENGINE: with HDR and post-process alpha output allowed URP picks R16G16B16A16_SFloat for the colour target; UI
 // shaders write no depth, so depth of field and motion blur read the cleared depth.
-// The canvases, scalers, views, camera and screen image are ui/ui.json records (the story UI data).
+// The canvases, scalers, views, camera and screen image are story.ui records (the story UI data).
 
 export const SCREEN_CANVAS = Object.freeze({ video: 301, still: 302, frame: 303 });
 export const SCREEN_CANVAS_PATH = Object.freeze({ video: "UIAdvWidget/VideoCanvas", still: "UIAdvWidget/StillCanvas",
@@ -39,12 +38,10 @@ export const stretchView = (parent, name) => new CanvasNode({
   rect: { m_AnchorMin: { x: 0, y: 0 }, m_AnchorMax: { x: 1, y: 1 }, m_AnchoredPosition: { x: 0, y: 0 },
           m_SizeDelta: { x: 0, y: 0 }, m_Pivot: { x: 0.5, y: 0.5 } } }, parent);
 
-// the story UI data (ui/ui.json) and its directory
+// the story UI data (story.ui) and its directory
 export const storyUIDoc = (ctx) => featureSlot(ctx, "uiDoc", () => {
-  const file = ctx.story && ctx.story.ui;
-  if (!file) throw new StoryCommandError("the story data has no story UI (ui/ui.json)");
-  const cut = file.lastIndexOf("/");
-  return { doc: ctx.assets.json(file), dir: cut < 0 ? "" : file.slice(0, cut) };
+  const id = ctx.data.ui.widget;
+  return { doc: ctx.assets.prefab(id), prefab: ctx.objects.prefab(id) };
 });
 
 export const uiNode = (doc, path) => {
@@ -55,48 +52,27 @@ export const uiNode = (doc, path) => {
 
 // A screen canvas of the story UI data: a Screen Space - Camera canvas with the expected paint order and a CanvasScaler
 // (ScaleWithScreenSize) or Fwk.UI.ClampedCanvasScaler (the scale clamped past _maxAspectThreshold).
-export const screenCanvasSettings = (doc, path, sortingOrder) => {
-  const rec = uiNode(doc, path), c = rec.canvas, s = rec.canvasScaler;
+export const screenCanvasSettings = (doc, path, sortingOrder, prefab, objects) => {
+  const rec = uiNode(doc, path), c = compOf(rec, "Canvas");
+  const clamped = compOf(rec, "ClampedCanvasScaler"), s = clamped || compOf(rec, "CanvasScaler");
   if (!c || !s) throw new StoryCommandError(`${path}: no canvas or canvas scaler in the story UI data`);
   if (!c.m_Enabled || c.m_RenderMode !== 1 || c.m_SortingOrder !== sortingOrder || c.m_OverrideSorting || c.m_PixelPerfect)
     throw new StoryCommandError(`${path}: canvas (render mode ${c.m_RenderMode}, sorting order ${c.m_SortingOrder}) is not the expected camera canvas`);
   if (!s.m_Enabled || s.m_UiScaleMode !== 1) throw new StoryCommandError(`${path}: canvas scaler mode ${s.m_UiScaleMode} not implemented`);
   const scaler = { m_UiScaleMode: 1, m_ReferenceResolution: { ...s.m_ReferenceResolution }, m_ScreenMatchMode: s.m_ScreenMatchMode,
                    m_MatchWidthOrHeight: s.m_MatchWidthOrHeight, m_ReferencePixelsPerUnit: s.m_ReferencePixelsPerUnit };
-  if (s.class === "ClampedCanvasScaler") scaler._maxAspectThreshold = s._maxAspectThreshold;
-  return { sortingOrder, scaler, camera: c.camera || null, planeDistance: c.m_PlaneDistance ?? null };
+  if (clamped) scaler._maxAspectThreshold = s._maxAspectThreshold;
+  return { sortingOrder, scaler, camera: !c.m_Camera ? null : c.m_Camera.$ref ? objects.assets.contained(c.m_Camera).path : prefab.pathOf(c.m_Camera), planeDistance: c.m_PlaneDistance ?? null };
 };
 
 // the ADV viewport before the first draw (a headless session never draws): 13:6
 export const REFERENCE_VIEWPORT = Object.freeze({ width: 2340, height: 1080 });
 
-// The shaders of the screen canvases, packed in two places: the story's shaders/ (the frame, still and effect
-// materials) and the story UI's (UI/Default, which every image without a material and the video masks use). A shader
-// is read from the pack that has it.
-class ShaderPacks {
-  constructor(libs) { this.libs = libs; }
-  _lib(name) {
-    const l = this.libs.find((x) => x.index.has(name));
-    if (!l) throw new StoryCommandError(`shader not packed: ${name}`);
-    return l;
-  }
-  info(name) { return this._lib(name).info(name); }
-  defaults(name, ...a) { return this._lib(name).defaults(name, ...a); }
-  program(name, ...a) { return this._lib(name).program(name, ...a); }
-  state(name, ...a) { return this._lib(name).state(name, ...a); }
-}
-
-const uiShaderBase = (doc, dir) => {
-  const index = doc.shaders && doc.shaders.index;
-  if (!index || !/\/shaders\.json$/.test(index)) throw new StoryCommandError("the story UI data has no shader index");
-  return join(dir, index.replace(/\/shaders\.json$/, ""));
-};
-
 // UIAdvWidget._videoAndStillCamera as far as the canvases use it
-const stillCamera = (doc) => {
-  const cam = doc.videoAndStillCamera;
-  if (!cam || !cam.camera) throw new StoryCommandError("the story UI data has no video and still camera");
-  const c = cam.camera;
+const stillCamera = (prefab) => {
+  const widget = prefab.find("UIAdvWidget").c.fields;
+  const path = prefab.pathOf(widget._videoAndStillCamera), c = prefab.fields(path, "Camera");
+  const cam = { path, camera: c, additionalCameraData: prefab.fields(path, "UniversalAdditionalCameraData") };
   if (!c.m_Enabled || c.m_ClearFlags !== 2) throw new StoryCommandError(`video and still camera: clear flags ${c.m_ClearFlags} not implemented`);
   const r = c.m_NormalizedViewPortRect;
   if (r.x !== 0 || r.y !== 0 || r.width !== 1 || r.height !== 1) throw new StoryCommandError("video and still camera: viewport rect not implemented");
@@ -120,11 +96,11 @@ const ADV_VOLUME_LAYER_MASK = 1 << 11;
 export class StoryScreen {
   constructor(ctx) {
     this.ctx = ctx;
-    const { doc, dir } = storyUIDoc(ctx);
-    this.ui = doc; this.uiDir = dir;
-    this.camera = stillCamera(doc);
+    const { doc, prefab } = storyUIDoc(ctx);
+    this.ui = doc;
+    this.camera = stillCamera(prefab);
     this.canvases = Object.entries(SCREEN_CANVAS).map(([k, order]) => {
-      const st = screenCanvasSettings(doc, SCREEN_CANVAS_PATH[k], order), c = new ScreenCanvas(SCREEN_CANVAS_PATH[k], st);
+      const st = screenCanvasSettings(doc, SCREEN_CANVAS_PATH[k], order, prefab, ctx.objects), c = new ScreenCanvas(SCREEN_CANVAS_PATH[k], st, ctx.objects);
       if (k !== "frame") {
         if (st.camera !== this.camera.path) throw new StoryCommandError(`${c.name}: camera ${st.camera} is not the video and still camera`);
         c.perspective = { fov: this.camera.camera["field of view"] };
@@ -134,15 +110,17 @@ export class StoryScreen {
     });
     this.canvas = Object.fromEntries(this.canvases);
     // the screen image: a stretched RawImage under a canvas without an active scaler
-    const imgRec = uiNode(doc, doc.videoAndStillScreenImage), canvasRec = uiNode(doc, SCREEN_IMAGE_CANVAS);
-    if (!imgRec.rawImage || !imgRec.path.startsWith(`${SCREEN_IMAGE_CANVAS}/`) || imgRec.path.split("/").length !== 3)
+    const widget = prefab.find("UIAdvWidget").c.fields;
+    const imgRec = uiNode(doc, prefab.pathOf(widget._videoAndStillScreenImage)), canvasRec = uiNode(doc, SCREEN_IMAGE_CANVAS);
+    const rawImage = compOf(imgRec, "RawImage"), scaler = compOf(canvasRec, "CanvasScaler");
+    if (!rawImage || !imgRec.path.startsWith(`${SCREEN_IMAGE_CANVAS}/`) || imgRec.path.split("/").length !== 3)
       throw new StoryCommandError("the video and still screen image is not a RawImage of its canvas");
-    if (canvasRec.canvas.m_SortingOrder !== SCREEN_CANVAS.still || (canvasRec.canvasScaler && canvasRec.canvasScaler.m_Enabled))
+    if (compOf(canvasRec, "Canvas").m_SortingOrder !== SCREEN_CANVAS.still || (scaler && scaler.m_Enabled))
       throw new StoryCommandError(`${SCREEN_IMAGE_CANVAS}: canvas settings not implemented`);
-    this.screenCanvas = new ScreenCanvas(SCREEN_IMAGE_CANVAS, { sortingOrder: SCREEN_CANVAS.still, scaler: null });
+    this.screenCanvas = new ScreenCanvas(SCREEN_IMAGE_CANVAS, { sortingOrder: SCREEN_CANVAS.still, scaler: null }, ctx.objects);
     this.screenImage = new CanvasNode(imgRec, this.screenCanvas.root);
-    this.screenImage.rawImage = { ...imgRec.rawImage };
-    if (this.screenImage.rawImage.material) throw new StoryCommandError("video and still screen image: material not implemented");
+    this.screenImage.rawImage = { ...rawImage };
+    if (this.screenImage.rawImage.m_Material) throw new StoryCommandError("video and still screen image: material not implemented");
     // UIAdvWidget.InitVideoSeekFreezeOverlay: "VideoSeekFreeze" on the screen image's parent with the screen image's
     // anchors, position, size and pivot (unrotated, unit scale), a RawImage without raycasts under a CanvasGroup at
     // alpha 0, last sibling, inactive
@@ -178,13 +156,11 @@ export class StoryScreen {
   async load() {
     const ctx = this.ctx;
     if (!ctx.gl) return;
-    const libs = [new ShaderLib(ctx.gl, "shaders", ctx.assets), new ShaderLib(ctx.gl, uiShaderBase(this.ui, this.uiDir), ctx.assets)];
-    const packs = new ShaderPacks(libs);
-    this.gl = new CanvasGL(ctx.gl, packs, ctx.assets, ctx.ui);          // the story UI draws the canvas texts
+    this.gl = new CanvasGL(ctx.gl, ctx.objects, ctx.ui);
     await this.gl.load(GLTex, this.canvases.map(([, c]) => c));
     const R = ctx.renderer;
     if (!R) throw new StoryCommandError("the video and still camera's post-processing needs the story renderer");
-    this.post = new URPPost(ctx.gl, packs);
+    this.post = new URPPost(ctx.gl, ctx.objects.lib);
     this.post.volumeTextures = R.post.volumeTextures;     // the textures of the volume profiles (loadPostEffects)
     this.post.initLut();                                  // its own colour curves and internal LUT
   }
@@ -233,7 +209,10 @@ export class StoryScreen {
   canvasParticles(kind) {
     if (kind !== "frame") throw new StoryCommandError(`${this.canvas[kind].name}: canvas particles not implemented`);
     if (!this.frameParticles) {
-      const cp = this.frameParticles = new CanvasParticles(this.ctx, this.canvas.frame, () => this.ui);
+      const cp = this.frameParticles = new CanvasParticles(this.ctx, this.canvas.frame, () => {
+        const manager = this.ctx.objects.prefab(this.ctx.data.ui.uiManager);
+        return manager.find("Camera").c.fields;
+      });
       this.itemSources.push((n, a) => cp.itemsOf(n, a));
     }
     return this.frameParticles;

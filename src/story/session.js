@@ -1,14 +1,13 @@
 import { bindAssets, unbindAssets } from "../data/assets.js";
 import { Audio } from "../engine/audio.js";
-import { ShaderLib } from "../engine/glsl.js";
+import { ObjectResources } from "../engine/objects.js";
 import { trackGL } from "../engine/gltrack.js";
 import { PlayerLoop } from "../engine/loop.js";
-import { Transform } from "../engine/math.js";
 import { UnityRandom } from "../engine/random.js";
 import { Live2DCharacter } from "../live2d/character.js";
 import { cubismCore } from "../live2d/cubism.js";
 import { motionSyncCore } from "../live2d/motionsync.js";
-import { AdvBackgroundField, AdvCamera, AdvCharacterField, AdvFieldRendererManager, AdvGlobalVolume, AdvQuality } from "./field.js";
+import { AdvQuality } from "./field.js";
 import { ADV_PLAYBACK_MODE, STORY_FRAME_RATE, StoryCommandError, checkStoryUI, createStoryContext } from "./interfaces.js";
 import { storyModels } from "./models.js";
 import { StoryCharacters, StoryPlayerCore } from "./player-core.js";
@@ -17,10 +16,10 @@ import { speakerName } from "./commands/talk.js";
 import { StoryRenderer } from "./renderer.js";
 import { SilentAudio } from "./silent-audio.js";
 import { SimpleStorySession } from "./simple/session.js";
-import { AdvStageData } from "./stage.js";
+import { StoryData } from "./data.js";
+import { StoryScene } from "./scene.js";
 import { disposeStoryFeatures, installStoryFeatures, setStoryFeaturesSpeed } from "./features/index.js";
 import { StoryUI } from "./ui.js";
-import { AnimRecords } from "./features/clips.js";
 import { resumeCurrentVideoIfNeeded, seekStoryVideo, storyVideo, storyVideoPosition,
          tryPauseCurrentVideo } from "./features/video.js";
 
@@ -41,8 +40,6 @@ import { resumeCurrentVideoIfNeeded, seekStoryVideo, storyVideo, storyVideoPosit
 //           updates after them.
 
 export { STORY_FRAME_RATE, STORY_LANGUAGES, advViewport, storyLines };
-
-const dirname = (p) => { const i = p.lastIndexOf("/"); return i < 0 ? "" : p.slice(0, i); };
 
 // every text the episode can show: the Talk lines and their speaker names, the Location captions, the title
 export const storyTexts = (episode, player, masterIds, localize, titleTextId = 0) => {
@@ -107,27 +104,25 @@ export class StorySession {
   // the facts a page can check before creating a session: the commands the episode executes, and the unsupported ones
   static requirements(store) {
     if (SimpleStorySession.isSimpleStory(store)) return SimpleStorySession.requirements(store);
-    const story = store.json("story.json"), episode = store.json(story.episode), scene = store.json(story.scene);
-    const commands = StoryPlayerCore.requiredCommands(episode, scene.settings.playerSettings);
+    const data = new StoryData(store);
+    const commands = StoryPlayerCore.requiredCommands(data.episode, data.playerSettings);
     return { commands, unsupported: commands.filter((c) => !StoryPlayerCore.supportedCommands().includes(c)) };
   }
 
   async _load(gl, store, opts) {
     if (!store) throw new Error("StorySession: an AssetStore is required");
     this.gl = gl || null; this.assets = store; this.opts = opts;
-    const story = this.story = store.json("story.json");
-    const episode = this.episode = store.json(story.episode);
-    const scene = store.json(story.scene);
-    const P = scene.settings.playerSettings;
+    const data = this.data = new StoryData(store);
+    const story = this.story = data.story, episode = this.episode = data.episode;
+    const P = data.playerSettings;
     const what = `story ${episode.advId ?? story.advId}`;
     const mode = episode.master ? episode.master._playbackMode || 0 : 0;
     StoryPlayerCore.checkEpisode(episode, P, what);
     this.playbackMode = mode;
-    const langDoc = store.has("ui/languages.json") ? store.json("ui/languages.json") : null;
-    const info = store.info || {};
-    const lang = this.lang = opts.lang || info.loadedLanguage || info.language || (langDoc && langDoc.language) || "ja";
-    if (langDoc && langDoc.language !== lang) throw new Error(`${what}: the loaded language is ${langDoc.language}, not ${lang}`);
-    const field = langDoc ? langDoc.field : STORY_LANGUAGES[lang];
+    const langDoc = data.ui.language;
+    const lang = this.lang = opts.lang || data.language;
+    if (data.language !== lang) throw new Error(`${what}: the loaded language is ${data.language}, not ${lang}`);
+    const field = langDoc.field;
     if (!field) throw new Error(`${what}: unknown language ${lang}`);
     // LocalizeManager.GetLocalizedText over the episode's text table and the title
     const titleTextId = opts.title === false || !episode.master ? 0 : episode.master._titleTextId || 0;
@@ -147,26 +142,8 @@ export class StorySession {
     this.seed = opts.seed ?? (Date.now() >>> 0);
     const random = opts.random || new UnityRandom(this.seed);        // UnityEngine.Random: one state for all
 
-    // the scene objects under the AdvManager transform (identity)
-    const manager = new Transform("AdvManager");
-    const camNode = scene.cameraManager.nodes.find((n) => n.path === "CameraManager/MainCamera");
-    if (!camNode) throw new Error(`${what}: scene.json has no CameraManager/MainCamera`);
-    const sc = this.scene = {
-      camera: new AdvCamera(loop, camNode),
-      field: new AdvCharacterField(loop, scene.characterField, manager),
-      background: new AdvBackgroundField(scene.backgroundField, manager),
-      volume: new AdvGlobalVolume(scene.globalVolume, quality),
-      fieldRenderer: new AdvFieldRendererManager(loop, quality),
-      stageData: new Map(),
-      postTextures: scene.postTextures[scene.shaders.cameraRenderers[0]],
-      session: null,
-    };
-    for (const [name, prefab] of Object.entries(scene.stages)) {
-      const st = new AdvStageData(prefab);                            // refuses stage features not reproduced
-      st.prefab.root.setParent(manager);
-      sc.stageData.set(name, st);
-    }
-    AdvStageData.resolveShared([...sc.stageData.values()]);
+    const objects = this.objects = new ObjectResources(store, { ...data.resourceOptions(), gl });
+    const sc = this.scene = new StoryScene(data, objects, loop, quality);
 
     // per-frame hooks in Unity phase order, before the UI's own: AdvPlayer.OnUpdate runs the character controllers,
     // then UIAdvWidget.OnUpdate (the motion waits run on the playback's own UniTask loop: StoryPlayerCore.play)
@@ -182,9 +159,8 @@ export class StorySession {
     loop.on("postLate", () => sc.volume.postLateUpdate());
 
     // the UI; its talk windows and every text the episode shows are checked before the rest loads
-    const uiDoc = store.json(story.ui);
-    const fonts = store.has("ui/fonts.json") ? store.json("ui/fonts.json") : null;
-    const parts = { assets: store, dir: dirname(story.ui), lang, fonts, language: langDoc };
+    const uiDoc = data.ui;
+    const parts = { assets: store, data, objects, dir: data.fontDir, lang, fonts: data.fonts, language: langDoc };
     const ui = this.ui = checkStoryUI(opts.ui ? opts.ui(gl, loop, parts) : new StoryUI(gl, loop, uiDoc, parts));
     if (Array.isArray(ui.talkWindows)) {
       const names = episode.commands.filter((c) => c.cmd === "TalkWindow" && !c.IgnoreData).map((c) => c.TargetAssetName);
@@ -192,7 +168,7 @@ export class StorySession {
       if (missing.length) throw new StoryCommandError(`${what}: talk windows not supported by this player: ${missing.join(", ")}`);
     }
     if (typeof ui.checkTexts === "function")
-      ui.checkTexts(storyTexts(episode, P, scene.settings.masterIdSettings, localize, titleTextId));
+      ui.checkTexts(storyTexts(episode, P, data.masterIds, localize, titleTextId));
     // UIAdvWidget.Init and SetLetterBoxSprite (AdvPlayer.Init): UpdateLetterBoxBands for the screen at load (the
     // drawing buffer size of the options, else the canvas size), before StartPlayTask fades the bands in
     if (gl && typeof ui.updateLetterBoxBands === "function") {
@@ -204,8 +180,8 @@ export class StorySession {
     // the sound manager with every cue of the episode ready; a story without its sound files (story.json `audio`
     // empty) plays no sound, with the voices off as in the game without voice data (Session.WithVoice false: the
     // lines advance by their length, the speakers get the timed pseudo lip sync)
-    const resolve = Audio.episodeResolver(episode);
-    const hasSounds = !!story.audio && Object.keys(story.audio).length > 0;
+    const resolve = Audio.episodeResolver(episode, data);
+    const hasSounds = Object.keys(data.parts.sounds || {}).length > 0;
     const webAudio = hasSounds && opts.sound !== false && typeof globalThis.AudioContext === "function";
     audio = this.audio = opts.audio ? opts.audio(resolve, loop, { assets: store })
       : webAudio ? new Audio(resolve, loop, { context: opts.audioContext || null, assets: store })
@@ -215,10 +191,10 @@ export class StorySession {
     // renderer and characters: the Character rows' preload, keyed TargetName-TargetAssetIndex (the first model of a
     // key is kept); IgnoreData rows are not preloaded. The story's shaders draw the stage and the post-processing,
     // each model's own shaders its character (models.js).
-    const storyLib = gl ? new ShaderLib(gl, "shaders", store) : null;
-    const renderer = this.renderer = gl ? new StoryRenderer(gl, storyLib, sc, quality, loop, { assets: store }) : null;
+    const storyLib = objects.lib;
+    const renderer = this.renderer = gl ? new StoryRenderer(gl, storyLib, sc, quality, loop, { assets: store, objects }) : null;
     if (renderer) renderer.filmGrain = opts.filmGrain ?? 0;
-    const modelOf = storyModels(gl, store, story, what);
+    const modelOf = storyModels(gl, data);
     for (const c of episode.commands) {
       if (c.cmd !== "Character" || c.IgnoreData) continue;
       if (characters.has(c.TargetName, c.TargetAssetIndex || 0)) continue;
@@ -229,15 +205,15 @@ export class StorySession {
       characters.add(c.TargetName, c.TargetAssetIndex || 0, ch);
       if (renderer) renderer.addCharacter(ch, { lib, model });
     }
-    if (renderer) await renderer.load("");
+    if (renderer) await renderer.load();
     await ui.load();
 
     // the interpreter
     const ctx = this.ctx = createStoryContext({
       loop, camera: sc.camera, field: sc.field, background: sc.background, fieldRenderer: sc.fieldRenderer,
       volume: sc.volume, characters, stages: sc.stageData, ui, audio, quality,
-      settings: { player: P, masterIds: scene.settings.masterIdSettings }, localize, lang, playbackMode: mode,
-      titleTextId, episode, story, assets: store, renderer, gl: this.gl });
+      settings: { player: P, masterIds: data.masterIds }, localize, lang, playbackMode: mode,
+      titleTextId, episode, story, data, objects, assets: store, renderer, gl: this.gl });
     this.lines = storyLines(episode);
     const { line, shortCutIndex } = storyStart(episode, { line: opts.line, row: opts.row });
     const core = this.core = new StoryPlayerCore(ctx, {
@@ -253,8 +229,7 @@ export class StorySession {
     sc.session = core.session;
     // AdvStage.Init: the stages' particle groups (before the features load, so that their materials load too)
     const stages = [...sc.stageData.values()];
-    const records = stages.some((st) => st.hasParticleEffects) ? new AnimRecords(scene, StoryCommandError) : null;
-    for (const st of stages) st.initParticleGroups(ctx, records);
+    for (const st of stages) st.initParticleGroups(ctx, objects);
     await installStoryFeatures(ctx, core, { random });                   // the feature modules' per-episode setup
     loop.on("render", () => this._renderHook());
 

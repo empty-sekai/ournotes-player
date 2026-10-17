@@ -1,5 +1,6 @@
 import { F } from "../../engine/core.js";
-import { FxParticleSystem, FxV, PS_STOP } from "../../engine/particles.js";
+import { componentClass } from "../../engine/prefab.js";
+import { FxMaterials, FxParticleSystem, FxV, PS_STOP } from "../../engine/particles.js";
 import { UnityRandom } from "../../engine/random.js";
 import { UI_STRIDE } from "../../engine/ugui.js";
 import { StoryCommandError } from "../interfaces.js";
@@ -89,10 +90,9 @@ const lossyScale = (world, n) => {
 };
 
 // The UI camera of the story UI data (FrameCanvas' worldCamera at run time): orthographic size and clip planes
-export const uiCamera = (doc) => {
-  const rec = doc.uiCamera;
-  if (!rec || !rec.camera) throw new StoryCommandError("the story UI data has no UI camera (uiCamera): canvas particles are not drawn without it");
-  const c = rec.camera, size = c["orthographic size"], near = c["near clip plane"], far = c["far clip plane"];
+export const uiCamera = (c) => {
+  if (!c) throw new StoryCommandError("the story UI data has no UI camera: canvas particles are not drawn without it");
+  const size = c["orthographic size"], near = c["near clip plane"], far = c["far clip plane"];
   if (!c.orthographic) throw new StoryCommandError("UI camera: a perspective UI camera not implemented");
   if (!(size > 0) || !(far > near)) throw new StoryCommandError("UI camera: orthographic size or clip planes missing");
   return { size, near, far };
@@ -165,7 +165,7 @@ class UIParticleRenderer {
     this.isTrail = isTrail;
     this.material = entry.material;
     const t = this.material && (this.material.textures || {})[MAIN_TEX];
-    this.texture = t && t.texture ? t.texture.texture : null;
+    this.texture = t && t.texture ? t.texture.id : null;
     this.delay = true;
     this.mainEmitter = mainEmitter;
     this.enabled = true;
@@ -411,22 +411,22 @@ class UIParticle {
 export class PrefabParticles {
   constructor(host, prefab, nodes, name) {
     this.host = host; this.prefab = prefab; this.name = name;
-    const rng = particleRandom(host.ctx);
+    const rng = particleRandom(host.ctx), materials = FxMaterials.fromObjects(null, host.ctx.objects);
     this.entries = []; this.byPath = new Map(); this.uiParticles = []; this.activity = [];
     for (const rec of nodes) {
       const node = prefab.node(rec.path);
       for (const c of rec.components || []) {
-        const k = c.class || c.type;
+        const k = componentClass(c);
         if (k === "UIParticle") {
-          const u = new UIParticle(this, node, c);
+          const u = new UIParticle(this, node, c.fields);
           this.uiParticles.push(u);
           node.uiParticle = u;
           this.activity.push({ node, uip: u, on: false });
         } else if (k === "ParticleSystem") {
           const r = compOf(rec, "ParticleSystemRenderer");
-          const system = new FxParticleSystem(c, r, new NodeTransform(host, node), { rng, materials: null, name: `${name}:${rec.path}` });
-          const e = { node, system, renderer: r, material: r && r.m_Materials && r.m_Materials[0] ? r.m_Materials[0] : null,
-                      trails: !!(c.TrailModule && c.TrailModule.enabled) };
+          const system = new FxParticleSystem(c.fields, r, new NodeTransform(host, node), { rng, materials, name: `${name}:${rec.path}` });
+          const e = { node, system, renderer: r, material: r?.m_Materials?.[0] ? host.canvas.material(r.m_Materials[0]) : null,
+                      trails: !!(c.fields.TrailModule && c.fields.TrailModule.enabled) };
           this.entries.push(e); this.byPath.set(rec.path, e);
           this.activity.push({ node, entry: e, on: false });
         }
@@ -438,7 +438,7 @@ export class PrefabParticles {
       return out;
     };
     for (const e of this.entries) e.system.children = below(e.node, []);
-    for (const e of this.entries) if (e.system.subEmitters.length) e.system.linkSubEmitters((ref) => { const x = this.byPath.get(ref.gameObject); return x ? x.system : null; });
+    for (const e of this.entries) if (e.system.subEmitters.length) e.system.linkSubEmitters((ref) => { const x = this.byPath.get(prefab.ref(ref).path); return x ? x.system : null; });
     const covered = new Set(this.uiParticles.flatMap((u) => u.systems()));
     for (const e of this.entries) {
       if (covered.has(e)) {
@@ -448,7 +448,6 @@ export class PrefabParticles {
         if (e.material) {
           for (const [k, t] of Object.entries(e.material.textures || {}))
             if (k !== MAIN_TEX && t && t.texture) throw new StoryCommandError(`${e.node.path}: particle material texture ${k} not implemented`);
-          host.canvas.material(e.material);
         }
       } else if (e.renderer && e.renderer.m_Enabled && e.system.emission.enabled) {
         throw new StoryCommandError(`${e.node.path}: a drawing particle system outside a UIParticle not implemented`);

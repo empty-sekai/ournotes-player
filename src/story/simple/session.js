@@ -1,6 +1,7 @@
+import { StoryData } from "../data.js";
 import { bindAssets, unbindAssets } from "../../data/assets.js";
 import { Audio } from "../../engine/audio.js";
-import { ShaderLib } from "../../engine/glsl.js";
+import { ObjectResources } from "../../engine/objects.js";
 import { trackGL } from "../../engine/gltrack.js";
 import { PlayerLoop } from "../../engine/loop.js";
 import { Transform } from "../../engine/math.js";
@@ -15,19 +16,19 @@ import { AdvFieldRendererManager, AdvQuality } from "../field.js";
 import { ADV_PLAYBACK_MODE, STORY_FRAME_RATE, StoryCommandError, createStoryContext } from "../interfaces.js";
 import { storyModels } from "../models.js";
 import { StoryCharacters } from "../player-core.js";
-import { STORY_LANGUAGES, storyLines } from "../params.js";
+import { storyLines } from "../params.js";
 import { speakerName } from "../commands/talk.js";
 import { countedText, shownText } from "../ui-ruby.js";
 import { removeTagsWithRuby } from "../ui-talk.js";
 import { SilentAudio } from "../silent-audio.js";
 import { SIMPLE_ADVANCE, SIMPLE_COMPLETE } from "./define.js";
 import { SimpleHomeHost } from "./home/host.js";
-import { spotMainCamera } from "./home/post.js";
 import { SIMPLE_OWN_COMMANDS, SIMPLE_SHARED_COMMANDS, SimpleAdvPlayer } from "./player.js";
 import { CameraTargetRenderer, SimpleCaptureRenderer, cameraTargetDesc } from "./render.js";
 import { SimpleCanvas, SimpleUIDoc, runtimeNodeRecord, setActive } from "./ui.js";
 import { SIMPLE_UNIMPLEMENTED, simpleUnsupportedCommands, validateSimpleEpisode } from "./validator.js";
 import { SimpleAdvView, SimpleTalkWindow } from "./view.js";
+import { hostUIRoots } from "./objects.js";
 
 // SimpleStorySession: an Overlay episode (MasterAdv._playbackMode 1) as the game plays it: SimpleAdvPlayer inside the
 // screen that opens it. Same interface as StorySession (create, step, render, play, tap, dispose, line state), so the
@@ -55,8 +56,6 @@ const REFERENCE = { x: 1920, y: 1080 };     // the host widgets' CanvasScaler re
 // 2 the game's validator refused the episode and nothing was shown
 export const SIMPLE_END_REASON = Object.freeze({ completed: 0, stopped: 1, invalid: 2 });
 
-const dirname = (p) => { const i = p.lastIndexOf("/"); return i < 0 ? "" : p.slice(0, i); };
-
 // the texts the simple window shows: Talk lines and their speaker names
 export const simpleTexts = (episode, player, masterIds, localize) => {
   const p = { ctx: { settings: { player, masterIds }, localize } }, out = new Set();
@@ -77,14 +76,14 @@ export class SimpleStorySession {
 
   // an Overlay episode: the simple player plays it
   static isSimpleStory(store) {
-    const story = store.json("story.json"), episode = store.json(story.episode);
+    const { episode } = new StoryData(store);
     return (episode.master ? episode.master._playbackMode || 0 : 0) === ADV_PLAYBACK_MODE.Overlay;
   }
 
   // the commands the simple player runs for the episode, and the episode's refusal by the game's validator
   static requirements(store) {
-    const story = store.json("story.json"), episode = store.json(story.episode), scene = store.json(story.scene);
-    const v = validateSimpleEpisode(episode, scene.settings.playerSettings, 0);
+    const data = new StoryData(store), episode = data.episode;
+    const v = validateSimpleEpisode(episode, data.playerSettings, 0);
     const run = new Set([...SIMPLE_SHARED_COMMANDS, ...SIMPLE_OWN_COMMANDS]);
     const commands = [...new Set(episode.commands.filter((c) => !c.IgnoreData).map((c) => c.cmd))];
     return { commands: commands.filter((c) => run.has(c)), skipped: commands.filter((c) => !run.has(c)),
@@ -103,22 +102,20 @@ export class SimpleStorySession {
   async _load(gl, store, opts) {
     if (!store) throw new Error("SimpleStorySession: an AssetStore is required");
     this.gl = gl || null; this.assets = store; this.opts = opts;
-    const story = this.story = store.json("story.json");
-    const episode = this.episode = store.json(story.episode);
-    const scene = store.json(story.scene);
-    const P = scene.settings.playerSettings;
+    const data = this.data = new StoryData(store);
+    const story = this.story = data.story, episode = this.episode = data.episode;
+    const P = data.playerSettings;
     const what = `story ${episode.advId ?? story.advId}`;
     // refused before loading (validator.js SIMPLE_UNIMPLEMENTED)
     const lacking = episode.commands.find((c) => !c.IgnoreData && SIMPLE_UNIMPLEMENTED.includes(c.cmd));
     if (lacking) throw new StoryCommandError(`${what}: row ${lacking.i}: ${lacking.cmd} on a character slot is not provided by the simple player`);
-    const host = this.host = store.has("host/host.json") ? store.json("host/host.json") : null;
+    const host = this.host = data.host;
     this.hostKind = host ? host.kind : "none";
-    if (!store.has("ui/simple/ui.json")) throw new StoryCommandError(`${what}: the simple talk window (ui/simple/ui.json) is not in the story`);
-    const langDoc = store.has("ui/languages.json") ? store.json("ui/languages.json") : null;
-    const info = store.info || {};
-    const lang = this.lang = opts.lang || info.loadedLanguage || info.language || (langDoc && langDoc.language) || "ja";
-    if (langDoc && langDoc.language !== lang) throw new Error(`${what}: the loaded language is ${langDoc.language}, not ${lang}`);
-    const field = langDoc ? langDoc.field : STORY_LANGUAGES[lang];
+    if (!data.simpleui) throw new StoryCommandError(`${what}: the simple UI product is not in the story`);
+    const langDoc = data.simpleui.language;
+    const lang = this.lang = opts.lang || data.language;
+    if (data.language !== lang) throw new Error(`${what}: the loaded language is ${data.language}, not ${lang}`);
+    const field = langDoc.field;
     if (!field) throw new Error(`${what}: unknown language ${lang}`);
     const localize = (id) => {
       const r = episode.text[id];
@@ -129,12 +126,14 @@ export class SimpleStorySession {
 
     // UI documents first: the texts are checked before anything heavy loads
     const loop = this.loop = new PlayerLoop(STORY_FRAME_RATE);
-    const simpleDoc = store.json("ui/simple/ui.json");
-    const simpleFonts = store.has("ui/simple/fonts.json") ? store.json("ui/simple/fonts.json") : null;
-    const ui = this.ui = new SimpleUIDoc(gl, loop, simpleDoc, { assets: store, dir: "ui/simple", fonts: simpleFonts, language: langDoc });
-    const hostUi = this.hostUi = host && host.ui
-      ? new SimpleUIDoc(gl, loop, store.json(host.ui), { assets: store, dir: dirname(host.ui) }) : null;
-    this._checkTexts(simpleTexts(episode, P, scene.settings.masterIdSettings, localize), what);
+    const simpleDoc = data.simpleui;
+    const objects = this.objects = new ObjectResources(store, { ...data.resourceOptions(), gl });
+    const roots = [{ id: simpleDoc.talkWindow }];
+    if (story.host?.talk === "area") roots.push({ id: simpleDoc.systemMessage });
+    const ui = this.ui = new SimpleUIDoc(gl, loop, simpleDoc, { objects, roots, data, fonts: data.fonts, language: langDoc });
+    const hostUi = this.hostUi = host
+      ? new SimpleUIDoc(gl, loop, host, { objects, roots: hostUIRoots(host, objects) }) : null;
+    this._checkTexts(simpleTexts(episode, P, data.masterIds, localize), what);
 
     await cubismCore();
     const motionSync = await motionSyncCore().catch(() => null);
@@ -146,8 +145,8 @@ export class SimpleStorySession {
     // the UI tween runner (DOTweenComponent) and the host screen's canvases
     const tweens = this.tweens = { active: new Set() };
     this._buildCanvases(host, hostUi, ui, what);
-    const view = this.view = new SimpleAdvView(this.overlayRoot, host ? host.layoutRoot : null,
-                                               { tweens, dotween: simpleDoc.dotween });
+    const view = this.view = new SimpleAdvView(this.overlayRoot, host?.layoutRoot?.fields,
+                                               { tweens, dotween: ui.dotween });
     for (const s of view.slots) s.image.doc = ui;                       // the RawImage: UI/Default of the window doc
     const window = this.window = new SimpleTalkWindow(ui, TALK_WINDOW, { loop, tweens, language: langDoc });
 
@@ -155,10 +154,9 @@ export class SimpleStorySession {
     const manager = new Transform("AdvManager");
     const pool = new Transform("Pool", manager);
     const characters = this.characters = new StoryCharacters();
-    const storyLib = gl ? new ShaderLib(gl, "shaders", store) : null;     // the story's shaders (URP post)
     const renderer = this.renderer = gl ? new SimpleCaptureRenderer(gl, loop, { assets: store }) : null;
     // each character's model and the shaders it draws with (models.js)
-    const modelOf = storyModels(gl, store, story, what);
+    const modelOf = storyModels(gl, data);
     for (const c of episode.commands) {
       if (c.cmd !== "Character" || c.IgnoreData) continue;
       if (characters.has(c.TargetName, c.TargetAssetIndex || 0)) continue;
@@ -169,7 +167,7 @@ export class SimpleStorySession {
       if (renderer) renderer.addCharacter(ch, { lib, model });
     }
     // one CameraTargetRenderer per slot under the runtime parent (the host manager's transform)
-    const desc = cameraTargetDesc(host);
+    const desc = cameraTargetDesc(host, objects);
     this.cameraTargets = view.slots.map((s) => {
       const crt = new CameraTargetRenderer(s.index, manager, desc);
       crt.layer = CAMERA_LAYER_BASE + LAYERS.indexOf(s.def.layer);
@@ -177,29 +175,23 @@ export class SimpleStorySession {
     });
 
     // audio
-    const resolve = Audio.episodeResolver(episode);
+    const resolve = Audio.episodeResolver(episode, data);
     // a story without its sound files (story.json `audio` empty) plays no sound, with the voices off as in the game
     // without voice data (as StorySession)
-    const hasSounds = !!story.audio && Object.keys(story.audio).length > 0;
+    const hasSounds = Object.keys(data.parts.sounds || {}).length > 0;
     this.hasSounds = hasSounds;
     const webAudio = hasSounds && opts.sound !== false && typeof globalThis.AudioContext === "function";
-    const audio = this.audio = opts.audio ? opts.audio(resolve, loop, { assets: store })
-      : webAudio ? new Audio(resolve, loop, { context: opts.audioContext || null, assets: store })
-        : new SilentAudio(resolve, loop, { assets: store, sounds: hasSounds });
+    const audioOptions = { assets: store };
+    const audio = this.audio = opts.audio ? opts.audio(resolve, loop, audioOptions)
+      : webAudio ? new Audio(resolve, loop, { context: opts.audioContext || null, ...audioOptions })
+        : new SilentAudio(resolve, loop, { ...audioOptions, sounds: hasSounds });
     await audio.preload(Object.keys(episode.sounds).map(Number));
 
     // the home spot scene: the main camera with the Spot scene camera's info (post.js spotMainCamera) and its post chain
     if (this.hostKind === "home") {
-      const camNode = scene.cameraManager.nodes.find((n) => n.path === "CameraManager/MainCamera");
-      const cam = camNode ? camNode.components.find((c) => c.type === "Camera") : null;
-      if (!cam) throw new Error(`${what}: scene.json has no CameraManager/MainCamera camera`);
-      const data = camNode.components.find((c) => c.class === "UniversalAdditionalCameraData");
-      const root = host.home.sceneRoot || {};
-      this.home = await SimpleHomeHost.create(gl, store, loop, host,
-        { camera: spotMainCamera(cam, data, root.sceneCamera || null),
-          graphics: scene.player, quality: quality.level, spine: opts.spine,
-          post: { lib: storyLib, textures: scene.postTextures, filmGrain: opts.filmGrain ?? 0,
-                  screenScale: (w) => quality.screenScale(w) } });
+      this.home = await SimpleHomeHost.create(gl, store, loop, data,
+        { objects, quality: quality.level, spine: opts.spine,
+          post: { lib: objects.lib, filmGrain: opts.filmGrain ?? 0, screenScale: (w) => quality.screenScale(w) } });
       this.missing.push(...this.home.missing);
     }
     if (renderer) await renderer.load();
@@ -212,8 +204,8 @@ export class SimpleStorySession {
       loop, camera: null, field: null, background: { brightness: 1, originalColor: { r: 1, g: 1, b: 1, a: 1 },
                                                      color: { r: 1, g: 1, b: 1, a: 1 }, colorTween: null },
       fieldRenderer: new AdvFieldRendererManager(loop, quality), volume: null, characters, stages: new Map(),
-      ui: window, audio, quality, settings: { player: P, masterIds: scene.settings.masterIdSettings }, localize, lang,
-      playbackMode: ADV_PLAYBACK_MODE.Overlay, titleTextId: 0, episode, story, assets: store, renderer: null, gl: this.gl });
+      ui: window, audio, quality, settings: { player: P, masterIds: data.masterIds }, localize, lang,
+      playbackMode: ADV_PLAYBACK_MODE.Overlay, titleTextId: 0, episode, story, data, objects, assets: store, renderer: null, gl: this.gl });
     this.lines = storyLines(episode);
     const line = Math.max(0, Math.min(opts.line || 0, Math.max(0, this.lines.length - 1)));
     const request = this.hostKind === "afterlive"
@@ -269,17 +261,17 @@ export class SimpleStorySession {
     if (hostUi) {
       // root canvases in sorting order; UISpotLetterbox is not drawn: SpotLetterboxBands sizes its bands for screens
       // wider than 13:6 at runtime (not reproduced; the page is expected at 13:6 or narrower)
-      const roots = hostUi.roots.filter((r) => r.rec.canvasScaler && r.name !== "UISpotLetterbox");
-      roots.sort((a, b) => ((a.rec.canvas || {}).m_SortingOrder || 0) - ((b.rec.canvas || {}).m_SortingOrder || 0));
+      const roots = hostUi.roots.filter((r) => r.fields("CanvasScaler") && r.name !== "UISpotLetterbox");
+      roots.sort((a, b) => (a.fields("Canvas")?.m_SortingOrder || 0) - (b.fields("Canvas")?.m_SortingOrder || 0));
       for (const n of hostUi.nodes.values())                            // AspectRatioFitter components
-        if (n.rec.aspectRatioFitter && n.rec.aspectRatioFitter.m_Enabled) n.fitter = n.rec.aspectRatioFitter;
+        if (n.fields("AspectRatioFitter")?.m_Enabled) n.fitter = n.fields("AspectRatioFitter");
       for (const root of roots) {
         const fitters = [];
         const walk = (n) => { if (n.fitter) fitters.push(n); n.children.forEach(walk); };
         walk(root);
-        this.canvases.push({ name: root.name, canvas: new SimpleCanvas(root, root.rec.canvasScaler), root, fitters });
+        this.canvases.push({ name: root.name, canvas: new SimpleCanvas(root, root.fields("CanvasScaler")), root, fitters });
       }
-      this.overlayRoot = hostUi.node(host.overlayRoot);
+      this.overlayRoot = hostUi.node(host.overlayRoot.path);
       setActive(this.overlayRoot, false);
       if (host.kind === "afterlive") this._resultScreenState(hostUi, host.afterlive);
       this._applyOpenedSequences(hostUi, host.openedSequences);
@@ -307,22 +299,23 @@ export class SimpleStorySession {
 
   // the reward phase (ShowRewardPhase -> MusicResultViewPresenter.ShowReward): the reward panel shown
   _resultScreenState(doc, info) {
-    if (info && info.rewardPanel) setActive(doc.node(info.rewardPanel), true);
+    if (info?.rewardPanel) setActive(doc.node(info.rewardPanel.path), true);
+    if (info?.backgroundImage) doc.node(info.backgroundImage.path).image.spriteObj = doc.sprite(info.backgroundSprite);
   }
 
   // The DOTweenSequences the screen played before any talk can start (the widgets' open / transition in, the reward
   // view's in): each event call SimpleAnimationTrigger.PlayAnimation(state) plays the target's Animator state, whose
   // clip has long ended when the talk starts (the talk follows the screen's opening), so its end values apply.
   _applyOpenedSequences(doc, paths) {
-    for (const path of paths || []) {
-      const seq = doc.node(path).rec.tweenSequence;
-      if (!seq) throw new UIError(`${path}: no DOTweenSequence record`);
-      for (const cmd of seq.list) {
-        for (const call of cmd.calls || []) {
-          if (call.method !== "PlayAnimation") throw new UIError(`${path}: sequence call ${call.method} not implemented`);
-          const target = doc.node(call.target);
-          if (!target.animator) throw new UIError(`${call.target}: no Animator for PlayAnimation(${call.string})`);
-          if (!target.animator.play(call.string)) continue;
+    for (const { path } of paths || []) {
+      const node = doc.node(path), seq = node.fields("DOTweenSequence");
+      if (!seq) throw new UIError(`${path}: no DOTweenSequence component`);
+      for (const cmd of seq._list) {
+        for (const call of cmd._tweenEvent?.m_PersistentCalls?.m_Calls || []) {
+          if (call.m_MethodName !== "PlayAnimation") throw new UIError(`${path}: sequence call ${call.m_MethodName} not implemented`);
+          const target = node.ref(call.m_Target), state = call.m_Arguments.m_StringArgument;
+          if (!target?.animator) throw new UIError(`${path}: no Animator for PlayAnimation(${state})`);
+          if (!target.animator.play(state)) continue;
           const st = target.animator.state;
           target.animator.update(st.clip ? st.clip.length + 1 : 0);
         }
@@ -366,7 +359,7 @@ export class SimpleStorySession {
   // The host's steps around SimpleAdvPlayer.Play (SpotManager.OnTalkCharacter / PlayAreaTalkAsync,
   // LiveResultDisplayPresenter.PlaySimpleAdvResult)
   async _hostPlay() {
-    const home = this.home, h = this.host && this.host.home;
+    const home = this.home, h = this.story.host;
     if (home) {
       home.stopUiFadeAndShow();
       if (h.talk === "tap") {
@@ -391,22 +384,22 @@ export class SimpleStorySession {
   // _showAnimation.DOPlayAsync: its CustomEvent plays the widget Animator's state and the sequence lasts its
   // duration (the prefab's 2 s)
   async _showSystemMessage() {
-    const doc = this.ui, title = doc.doc.texts && doc.doc.texts.areaTitle;
+    const doc = this.ui, title = this.story.host?.title?.[this.lang];
     const root = doc.roots.find((r) => r.name === "UISystemMessageWidget");
     if (!root || typeof title !== "string") throw new StoryCommandError("the area talk's system message is not in the story data");
     if (!this.canvases.some((c) => c.root === root))
-      this.canvases.push({ name: root.name, canvas: new SimpleCanvas(root, root.rec.canvasScaler), root, fitters: [] });
+      this.canvases.push({ name: root.name, canvas: new SimpleCanvas(root, root.fields("CanvasScaler")), root, fitters: [] });
     const view = root.find("View"), trigger = root.find("ShowTrigger"), text = root.find("View/Message/UIText");
     text.storyText.setText(title);                                     // UISystemMessage: UIText.SetText
     setActive(root, true);
-    const seq = trigger.rec.tweenSequence;
-    if (!seq || seq.list.some((c) => c._commandType !== 1)) throw new UIError("system message: sequence outside the implemented subset");
+    const seq = trigger.fields("DOTweenSequence");
+    if (!seq || seq._list.some((c) => c._commandType !== 1)) throw new UIError("system message: sequence outside the implemented subset");
     // the CustomEvent's SimpleAnimationTrigger state: the controller's non-default state (its "Show" clip)
     const ctrl = view.animator ? view.animator.ctrl : null;
     const shows = ctrl ? ctrl.states.filter((st) => st !== ctrl.states[ctrl.defaultState]) : [];
     if (shows.length !== 1) throw new UIError("system message: the Animator's show state is not unique");
     const state = shows[0].name;
-    const duration = seq.list.reduce((a, c) => a + (c._duration > 0 ? c._duration : 0), 0);
+    const duration = seq._list.reduce((a, c) => a + (c._duration > 0 ? c._duration : 0), 0);
     const t = new UITween(this.tweens, { duration, at0: [() => { if (view.activeInHierarchy && view.animator) view.animator.play(state); }] });
     trigger.sequence = t;
     await t.promise;

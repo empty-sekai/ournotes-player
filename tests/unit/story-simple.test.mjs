@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { AnimClip } from "../../src/engine/anim.js";
+import { Prefab } from "../../src/engine/prefab.js";
+import { uiResources } from "./story-ui-resources.mjs";
 import { PlayerLoop } from "../../src/engine/loop.js";
 import { UINode } from "../../src/engine/ugui.js";
 import { LAYOUT_DEFAULT, SIMPLE_RT_SIZE, SLOT_LAYOUT, STAGE_X } from "../../src/story/simple/define.js";
@@ -218,28 +221,31 @@ const spriteRec = (x) => ({ texture: "t", rect: { x, y: 0, width: 4, height: 4 }
                             textureRectOffset: { x: 0, y: 0 }, border: { x: 0, y: 0, z: 0, w: 0 }, pixelsPerUnit: 100,
                             pivot: { x: 0.5, y: 0.5 } });
 const hostDoc = () => {
-  const node = (path, extra = {}) => ({ ...runtimeNodeRecord(path, path.split("/").pop()), ...extra });
-  return {
-    nodes: [node("W", { animator: { controller: "C", enabled: 1, updateMode: 0, keepStateOnDisable: false } }),
-            node("W/A", { canvasGroup: { m_Enabled: 1, m_Alpha: 1, m_IgnoreParentGroups: false } }),
-            node("W/B", { image: { m_Enabled: 1, sprite: "s1", m_Type: 0, color: { r: 1, g: 1, b: 1, a: 1 } } })],
-    textures: { t: { width: 8, height: 4 } }, sprites: { s1: spriteRec(0), s2: spriteRec(4) },
-    materials: { "Default UI Material": { shader: { shader: "UI/Default" } } },
-    controllers: { C: { name: "C", defaultState: "Idle", states: [{ name: "Idle", speed: 1, clip: null },
-                                                                   { name: "Show", speed: 1, clip: "Show" }] } },
-    clips: { "C/Show": { name: "Show", startTime: 0, stopTime: 1, loopTime: false, events: [],
-      pptrCurveMapping: ["s1", "s2"],
-      curves: {
-        "A:CanvasGroup.m_Alpha": { keys: [[-3.4028234663852886e38, 0, 0, 0, 0], [0, 0, 0, 1, 0], [1, 0, 0, 0, 1]] },
-        "B:Image.m_Sprite": { discrete: [[-3.4028234663852886e38, 0], [0.5, 1]] },
-        "#123:CanvasGroup.m_Alpha": { constant: 0 },
-        "Gone:CanvasGroup.m_Alpha": { constant: 0 },
-      } } },
-  };
+  const node = (path, components) => ({ ...runtimeNodeRecord(path, path.split("/").pop()), components });
+  const component = (cls, fields) => ({ type: cls, fields });
+  const nodes = [node("W", [component("Animator", { m_Controller: "C", m_Enabled: 1, m_UpdateMode: 0 })]),
+    node("W/A", [component("CanvasGroup", { m_Enabled: 1, m_Alpha: 1 })]),
+    node("W/B", [component("Image", { m_Enabled: 1, m_Sprite: "s1", m_Type: 0, m_Color: { r: 1, g: 1, b: 1, a: 1 } })])];
+  const clip = AnimClip.fromObject({ name: "Show", startTime: 0, stopTime: 1, cycleOffset: 0, loopTime: false,
+    dense: { curveCount: 0 }, constant: [0, 0], pptrCurveMapping: ["s1", "s2"],
+    streamed: { curveCount: 1, discreteCurveCount: 1, frames: [[-3e38, [[0, 0, 0, 0, 0], [1, 0, 0, 0, 0]]],
+      [0, [[0, 0, 0, 1, 0]]], [0.5, [[1, 0, 0, 0, 1]]], [1, [[0, 0, 0, 0, 1]]]] },
+    bindings: [{ class: "CanvasGroup" }, { class: "MonoBehaviour", scriptClass: "Test||Image", typeID: 114, pptr: true },
+      { class: "CanvasGroup" }, { class: "CanvasGroup" }] },
+    [{ path: "A", attribute: "m_Alpha" }, { path: "B", attribute: "m_Sprite" }, { path: null, attribute: "m_Alpha" },
+      { path: "Gone", attribute: "m_Alpha" }]);
+  const ctrl = { name: "C", defaultState: 0, anyState: [], parameters: new Map(), clipList: [clip],
+    states: [{ name: "Idle", speed: 1, clip: null, transitions: [] }, { name: "Show", speed: 1, clip, transitions: [] }] };
+  const objects = { assets: null, mono: () => ({ defaultEaseType: 6 }), id: (v) => v || null,
+    prefab: () => new Prefab({ key: "fixture:W", nodes }), controller: () => ctrl,
+    sprite: (id) => ({ ...spriteRec(id === "s1" ? 0 : 4), pixelsToUnits: 100, texture: { id: "t", width: 8, height: 4 } }) };
+  return { doc: { settings: { dotween: "D" } }, objects, roots: [{ id: "fixture:W" }] };
 };
 
 test("host UI animator: child-path bindings, discrete sprite curves, unresolved and missing paths", () => {
-  const doc = new SimpleUIDoc(null, null, hostDoc(), { assets: null, dir: "host/ui" });
+  const fixture = hostDoc();
+  const doc = new SimpleUIDoc(null, null, fixture.doc, fixture);
+  assert.equal(doc.sprites.has("s2"), true, "preloads sprites used only by a later key");
   const w = doc.node("W"), a = doc.node("W/A"), b = doc.node("W/B");
   assert.deepEqual(doc.unbound, ["C: Gone"]);                          // "#123": unresolved in the game data, skipped
   assert.equal(w.animator.play("Show"), true);
@@ -290,7 +296,8 @@ const W = "UISimpleAdvTalkWindow", TT = `${W}/TalkArea/Content/TextWindow/TalkTe
 const simpleWindowDoc = () => {
   const n = (path, extra = {}) => ({ ...runtimeNodeRecord(path, path.split("/").pop()), ...extra });
   return {
-    nodes: [n(W, { talkWindow: { _typingDelay: 0.05, _useBackdropFilter: 0 } }), n(`${W}/TalkArea`), n(`${W}/TalkArea/Content`),
+    nodes: [n(W, { talkWindow: { _typingDelay: 0.05, _useBackdropFilter: 0, TalkArea: { gameObject: `${W}/TalkArea` },
+      TalkText: { gameObject: TT }, SpeakerText: { gameObject: ST }, _speakerNameObjects: [{ gameObject: `${W}/TalkArea/Content/Speaker` }] } }), n(`${W}/TalkArea`), n(`${W}/TalkArea/Content`),
             n(`${W}/TalkArea/Content/TextWindow`), n(TT, { textStyle: {} }), n(`${W}/TalkArea/Content/Speaker`),
             n(`${W}/TalkArea/Content/Speaker/Back`), n(ST, { textStyle: {} })],
     textures: {}, sprites: {}, materials: { "Default UI Material": { shader: { shader: "UI/Default" } } },
@@ -307,11 +314,17 @@ const simpleFonts = () => ({
            [ST]: tmpBinding("RubyTextMeshProUGUI", { m_fontSize: 36, uiRubyText: { _rubyMarginTop: -24 } }) },
 });
 
+const simpleWindow = (loop, fonts = simpleFonts()) => {
+  const language = { code: "ja", mode: 2 };
+  const resources = uiResources({ ...simpleWindowDoc(), transitions: {}, controllers: {}, clips: {} }, fonts, language);
+  return new SimpleUIDoc(null, loop, resources.doc, { ...resources, fonts: resources.data.fonts, language,
+    roots: [{ id: resources.doc.talkWindows[W] }] });
+};
+
 test("simple talk window: text components over the font data, no background, ruby text typed with its reading", async () => {
   const loop = new PlayerLoop(30), tweens = { active: new Set() };
   loop.on("tweens", (l) => { for (const t of [...tweens.active]) t.step(l.deltaTime); });
-  const doc = new SimpleUIDoc(null, loop, simpleWindowDoc(), { assets: null, dir: "ui/simple", fonts: simpleFonts(),
-                                                              language: { language: "ja", mode: 2 } });
+  const doc = simpleWindow(loop);
   const win = new SimpleTalkWindow(doc, W, { loop, tweens, language: { language: "ja", mode: 2 } });
   const tt = doc.node(TT), st = doc.node(ST);
   assert.equal(tt.storyText.b.class, "RubyEmojiTextMeshProUGUI");
@@ -344,7 +357,7 @@ test("simple talk window: a fallback font's characters are drawn with their fall
   fonts.fonts = { "Test SDF": { ...fontAsset(), fallbacks: ["Fb SDF"] }, "Fb SDF": fb };
   fonts.textures.page1 = { texture: "fonts/page1.png", width: 1024, height: 1024, mipCount: 1 };
   fonts.materials["Test - Simple + Fb SDF"] = { ...fonts.materials["Test - Simple"], material: "Test - Simple + Fb SDF" };
-  const doc = new SimpleUIDoc(null, loop, simpleWindowDoc(), { assets: null, dir: "ui/simple", fonts, language: { language: "ja", mode: 2 } });
+  const doc = simpleWindow(loop, fonts);
   const tt = doc.node(TT);
   tt.rect = { x: 0, y: -200, w: 1000, h: 200 }; tt.matrix = [1, 0, 0, 1, 0, 0];
   tt.text.setText("A\u2605");

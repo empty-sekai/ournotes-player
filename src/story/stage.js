@@ -1,4 +1,3 @@
-import { Prefab } from "../engine/prefab.js";
 import { StoryCommandError } from "./interfaces.js";
 import { createStageParticleGroups, releaseStageParticleGroups } from "./features/effect.js";
 
@@ -8,17 +7,17 @@ import { createStageParticleGroups, releaseStageParticleGroups } from "./feature
 export const LIGHT_TYPE = { 0: "Spot", 1: "Directional", 2: "Point", 3: "Area" };
 
 export class AdvStageData {
-  constructor(exported) {
-    this.prefab = new Prefab(exported);
+  constructor(prefab, objects) {
+    this.prefab = prefab;
     const rootPath = this.prefab.root.name;
-    const s = this.prefab.component(rootPath, "AdvStage");
+    const s = this.prefab.fields(rootPath, "AdvStage");
     this.raw = s;
     this.name = rootPath;
     this.characterFieldPosition = s._characterFieldPosition;
     this.characterFieldScale = s._characterFieldScale;
     this.backgroundFieldPosition = s._backgroundFieldPosition;
     this.backgroundFieldScale = s._backgroundFieldScale;
-    this.backgroundSprite = s._backgroundSprite;
+    this.backgroundSprite = objects.sprite(s._backgroundSprite);
     this.backgroundColor = s._backgroundColor;
     this.fov = s._fov;
     this.initialCameraPosition = s._initialCameraPosition;
@@ -26,7 +25,7 @@ export class AdvStageData {
     this.focusDataSettingsKey = s._usingFocusDataSettingsKey;
     this.focusPoints = s._focusPointsCollection._entries.map((e) => e._focusPointPositions);
     this.shadow = {
-      texture: s._shadowTexture, uv: s._shadowTextureUv, intensity: s._shadowTextureIntensity,
+      texture: objects.id(s._shadowTexture, "Texture2D"), uv: s._shadowTextureUv, intensity: s._shadowTextureIntensity,
       amplitude: s._shadowTextureAmplitude, frequency: s._shadowTextureFrequency,
     };
     // a feature of the stage format this player does not draw: refused when the stage is loaded
@@ -35,11 +34,12 @@ export class AdvStageData {
     // the effects of each AdvParticleEffectGroup (built by initParticleGroups)
     this.particleGroups = this.particleEffectGroupCollection._groups.map(() => []);
     this.loop = null;
-    this.volumeProfiles = s._allVolumeProfileCollection._profiles;
+    this.volumeProfiles = s._allVolumeProfileCollection._profiles.map((ref) => objects.profile(ref));
     this.lightGroups = s._lightGroupCollection._groups.map((g) => g._lights.map((ref) => {
-      const light = this.prefab.component(ref.gameObject, "Light");
-      const urp = this.prefab.component(ref.gameObject, "UniversalAdditionalLightData");
-      return { path: ref.gameObject, transform: this.prefab.transform(ref.gameObject), light, urp,
+      const path = this.prefab.pathOf(ref);
+      const light = this.prefab.fields(path, "Light");
+      const urp = this.prefab.fields(path, "UniversalAdditionalLightData");
+      return { path, transform: this.prefab.transform(path), light, urp,
                type: LIGHT_TYPE[light.m_Type] };
     }));
     // AdvStage.Init -> AdvLightGroupCollection.Init: every light's GameObject inactive
@@ -61,21 +61,6 @@ export class AdvStageData {
   _setLightGroupActive(index, active) {     // AdvLightGroup.ShowLights / HideLights: SetActiveFast per light
     const g = this._entry(this.lightGroups, index, "light group");
     if (g) for (const l of g) this.lightActive.set(l.path, active);
-  }
-
-  // A shared asset (e.g. a volume profile used by several stages) is exported in full once and by name elsewhere;
-  // resolves those names across the stages.
-  static resolveShared(stages) {
-    const profiles = new Map();
-    for (const st of stages) for (const p of st.volumeProfiles) if (p.components) profiles.set(p.name, p);
-    for (const st of stages) {
-      st.volumeProfiles = st.volumeProfiles.map((p) => {
-        if (p.components) return p;
-        const full = profiles.get(p.name);
-        if (!full) throw new Error(`stage ${st.name}: volume profile ${p.name} not exported`);
-        return full;
-      });
-    }
   }
 
   showLights() { this._setLightGroupActive(this.currentLightGroup, true); }
@@ -100,7 +85,7 @@ export class AdvStageData {
   get hasParticleEffects() { return this.particleEffectGroupCollection._groups.some((g) => g._particleEffects.length > 0); }
 
   // AdvStage.Init -> AdvParticleEffectGroupCollection.Init: each group's effects built over the stage prefab and
-  // initialized (stopped, cleared, hidden). records: AnimRecords of the scene data file.
+  // initialized (stopped, cleared, hidden), with the shared ObjectResources.
   initParticleGroups(ctx, records) {
     this.loop = ctx.loop;
     if (!this.hasParticleEffects) return;

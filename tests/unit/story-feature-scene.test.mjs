@@ -21,7 +21,9 @@ const makePlayer = ({ quality = {}, profiles = {} } = {}) => {
   const stage = { name: "st", changeLights(i) { calls.push(["lights", i]); }, changeParticleEffects(i) { calls.push(["effects", i]); } };
   const characters = new Map();
   const ui = { layers: createStoryUILayers(), flash(d) { calls.push(["flash", d]); return loop.delay(d); } };
-  const ctx = { loop, ui, volume, quality: { unityLighting: true, stageParticleEffect: true, stagePostEffect: true, ...quality },
+  const ctx = { data: { parts: { assets: Object.fromEntries(Object.keys(profiles).map((k) => [`Adv/PostEffect/${k}`, k])) },
+    asset: (address) => ({ objects: [address.slice("Adv/PostEffect/".length)] }) },
+    objects: { mono: (id) => ({ class: profiles[id].asset }), profile: (id) => profiles[id] }, loop, ui, volume, quality: { unityLighting: true, stageParticleEffect: true, stagePostEffect: true, ...quality },
                 field: { applyFocusStagePositions(st, i) { calls.push(["focus", st.name, i]); } },
                 fieldRenderer: { sortCharacters() { calls.push(["sort"]); } },
                 characters: { get: (n) => characters.get(n) }, episode: { commands: [] },

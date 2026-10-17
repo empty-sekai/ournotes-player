@@ -57,7 +57,7 @@ export const SpriteMesh = {
 
 // ------------------------------------------------------------------ GL drawing of note renderers
 export class NoteGL {
-  // objects: LiveObjects (its ShaderLib and GL textures)
+  // objects: ObjectResources (its ShaderLib and GL textures)
   constructor(gl, objects) {
     this.gl = gl;
     this.objects = objects;
@@ -109,7 +109,7 @@ export class NoteGL {
     return [mat.floats, mat.colors, texST, this.lib.defaults(shader, this.defTex)];
   }
 
-  // one SpriteRenderer: sr = {m_Materials (LiveObjects materials), m_FlipX, m_FlipY, m_Color}, sprite + mesh, world
+  // one SpriteRenderer: sr = {m_Materials (ObjectResources materials), m_FlipX, m_FlipY, m_Color}, sprite + mesh, world
   // matrix M; mpb: the renderer's MaterialPropertyBlock values (over the material's), or null
   drawSprite(ctx, sr, tex, mesh, M, color, mpb = null) {
     const gl = this.gl, mat = sr.m_Materials[0], shader = mat.shader;
@@ -211,7 +211,7 @@ export const NoteViewType = {
 
 // ------------------------------------------------------------------ one prefab instance (transforms + renderers)
 // prefab: a prefab.json; a node's `comp` is the fields of its SpriteRenderer / MeshRenderer and `materials` that
-// renderer's materials (LiveObjects materials)
+// renderer's materials (ObjectResources materials)
 export class NotePrefab {
   constructor(prefab, skipPrefix, objects) {
     this.root = null;
@@ -542,7 +542,7 @@ export class LiveBarLines {
 
 // ------------------------------------------------------------------ LiveAllNoteView (container of all views)
 export class LiveNotes {
-  // objects = the live's LiveObjects, ln = notes.json, score = score/<chart>.notes.json, opts.skin = the note skin's
+  // objects = the live's ObjectResources, ln = notes.json, score = score/<chart>.notes.json, opts.skin = the note skin's
   // noteskin.json (NoteDesignId), opts.settings = the live settings (settings.js; absent: the data's option defaults),
   // opts.displayOffsetMs = the executor's display offset, opts.scene = the live scene's Prefab and opts.barLineView =
   // the bar line view prefab (scene.json prefabs.barLineView), for the bar lines

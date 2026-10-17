@@ -224,7 +224,7 @@ export class StoryPlayerCore {
 
   focusDataSettings(key) {
     const e = this.ctx.settings.player._focusDataSettingsMap._list.find((x) => x.Key === key);
-    return e ? e.Value : null;
+    return e ? this.ctx.objects.mono(e.Value) : null;
   }
 
   defaultFocusDataSettings() { return this.focusDataSettings(this.ctx.settings.player._defaultFocusDataSettingsKey); }

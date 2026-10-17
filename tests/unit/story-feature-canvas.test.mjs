@@ -1,3 +1,4 @@
+import { nativeComponent } from "./story-screen-resources.mjs";
 // Canvas prefab geometry off the canvas plane: rotations about x / y and z offsets placed by the node's 3D matrix
 // (perspective canvases keep z for the camera's projection, orthographic ones drop it), and Quaternion.eulerAngles.
 // Synthetic inputs only.
@@ -16,10 +17,10 @@ const image = { type: "MonoBehaviour", class: "Image", m_Enabled: 1, m_Material:
                 m_Sprite: null, m_Type: 0, m_PreserveAspect: 0, m_FillCenter: 1, m_UseSpriteMesh: 0, m_PixelsPerUnitMultiplier: 1 };
 const node = (path, rect, components = [], extra = {}) => ({ path, name: path.split("/").pop(), active: true,
   localPosition: { x: 0, y: 0, z: 0 }, localRotation: { x: 0, y: 0, z: 0, w: 1 }, localScale: { x: 1, y: 1, z: 1 },
-  rect, components, ...extra });
+  rect, components: components.map(nativeComponent), ...extra });
 
 const build = (perspective, rot, z = 0) => {
-  const c = new ScreenCanvas("C", { sortingOrder: 1, scaler: SCALER });
+  const c = new ScreenCanvas("C", { sortingOrder: 1, scaler: SCALER }, { sprite: () => null });
   if (perspective) c.perspective = { fov: 60 };
   new CanvasPrefab([node("p", FULL, [], { localRotation: rot }),
                     node("p/img", CENTRE(100, 40), [{ type: "CanvasRenderer" }, image], { localPosition: { x: 0, y: 0, z } })], c.root, c);
@@ -74,6 +75,8 @@ test("Image Tiled: a trimmed sprite tiles at its full rect size with the uvs of 
                 localScale: { x: 1, y: 1, z: 1 }, components: [img],
                 rect: { m_AnchorMin: { x: 0.5, y: 0.5 }, m_AnchorMax: { x: 0.5, y: 0.5 }, m_AnchoredPosition: { x: 0, y: 0 },
                         m_SizeDelta: { x: 25, y: 10 }, m_Pivot: { x: 0.5, y: 0.5 } } };
+  rec.components = rec.components.map(nativeComponent);
+  canvas.objects = { sprite: () => ({ ...sprite, id: "sprite:1", texture: { ...sprite.texture, id: "texture:1", wrapU: 1, wrapV: 1 } }) };
   const pf = new CanvasPrefab([rec], canvas.root, canvas);
   canvas.scaler = { m_UiScaleMode: 1, m_ReferenceResolution: { x: 100, y: 100 }, m_ScreenMatchMode: 0, m_MatchWidthOrHeight: 0,
                     m_ReferencePixelsPerUnit: 100 };

@@ -8,7 +8,7 @@ import { LiveData } from "./data.js";
 import { LiveFx } from "./fx.js";
 import { isLegacyLive, legacyLive } from "./legacy.js";
 import { LiveNotes } from "./noteview.js";
-import { LiveObjects } from "./objects.js";
+import { ObjectResources } from "../engine/objects.js";
 import { LiveRenderer } from "./renderer.js";
 import { LIVE_OPTION_BY_NAME, LiveOptionContext, LiveSettingsError, liveCategoryVolumes, liveDerived, liveNoteEffectName,
          liveNoteSeMaps, liveOptionItems, liveSettingsChanges } from "./settings.js";
@@ -133,7 +133,7 @@ export class ChartSession {
     const effect = data.noteeffect(liveNoteEffectName(ctx, s) ?? undefined);
     // the live's objects: clip bindings of the scene, the notes and the selected skin and effect set; Shader.Find
     // names of the scene
-    const objects = this.objects = new LiveObjects(assets, { gl, shaders: scene.shaders,
+    const objects = this.objects = new ObjectResources(assets, { gl, shaders: scene.shaders,
       bindings: [scene.bindings, notes.bindings, skin.bindings, effect.bindings] });
     const loop = new PlayerLoop(60);
     this.loop = loop;

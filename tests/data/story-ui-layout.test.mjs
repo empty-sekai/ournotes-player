@@ -1,6 +1,6 @@
 // Opt-in: the story UI's layout and timing on a real story (the front canvas of one episode) in Node, no GL.
 //
-//   OURNOTES_STORY=<dir>              a story's logical files: episode.json, ui/ui.json, ui/fonts.json, ui/languages.json
+//   OURNOTES_STORY=<dir>              a story product manifest or a layout containing one story
 //                                     (skipped without it)
 //   OURNOTES_STORY_UI_LINES=<file>    optional: write the line breaks of every Talk line of the episode in the talk text
 //                                     (JSON: per Talk row the text of each laid-out line), e.g. to compare font sets
@@ -16,7 +16,9 @@
 // speaker name 樂奈 (quad, padded atlas rect, preferred width) is checked as well.
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import path from "node:path";
+import { openStory } from "../../scripts/lib/headless.mjs";
+import { StoryData } from "../../src/story/data.js";
+import { ObjectResources } from "../../src/engine/objects.js";
 import { test } from "node:test";
 import { F } from "../../src/engine/core.js";
 import { PlayerLoop } from "../../src/engine/loop.js";
@@ -25,12 +27,12 @@ import { countedText } from "../../src/story/ui-ruby.js";
 import { countRenderedCharacters, removeTagsWithRuby } from "../../src/story/ui-talk.js";
 
 const DIR = process.env.OURNOTES_STORY || "", LINES = process.env.OURNOTES_STORY_UI_LINES || "";
-const SKIP = DIR ? false : "OURNOTES_STORY is not set (path of a story directory)";
-const readJSON = (f) => JSON.parse(fs.readFileSync(path.join(DIR, f), "utf8"));
+const SKIP = DIR ? false : "OURNOTES_STORY is not set (path of a story product manifest)";
 
 test("story UI layout and timing", { skip: SKIP }, async () => {
-  const doc = readJSON("ui/ui.json"), fonts = readJSON("ui/fonts.json"), language = readJSON("ui/languages.json");
-  const episode = readJSON("episode.json");
+  const assets = await openStory(DIR, { lang: process.env.OURNOTES_STORY_LANG || "ja" }), data = new StoryData(assets);
+  const doc = data.ui, fonts = data.fonts, language = doc.language, episode = data.episode;
+  const objects = new ObjectResources(assets, data.resourceOptions());
   const field = language.field;
   const txt = (id) => episode.text[id][field];
   const talks = episode.commands.filter((c) => c.cmd === "Talk" && c.AdvTextID && c.AdvTextID !== "0");
@@ -55,7 +57,7 @@ test("story UI layout and timing", { skip: SKIP }, async () => {
   };
 
   const loop = new PlayerLoop(30);
-  const ui = new StoryUI(null, loop, doc, { lang: language.language, fonts, language });
+  const ui = new StoryUI(null, loop, doc, { data, objects, assets });
   ui.setTalkWindow("UIDefaultTalkWindow");
   const D = ui.windows.get("UIDefaultTalkWindow").part;                // the default window's parts with the widget's
   const P = { ...ui.part, ...D, speakerBack: D.speaker.find("Back") }, tt = P.talkText.text;
@@ -180,7 +182,7 @@ test("story UI layout and timing", { skip: SKIP }, async () => {
   ui.setAutoMode(false);
 
   // --- rule fade: FadeIn 1.0 s with the default transition; shader alpha = smoothstep(clamp01((1 - Val) / 2)) -------------
-  const ts = ui.transitionSettings(doc.playerSettings._defaultTransitionAssetAddress);
+  const ts = ui.transitionSettings(data.playerSettings._defaultTransitionAssetAddress);
   const f0 = loop.frameCount;
   let ruleHiddenAt = -1, val15 = null;
   const fade = ui.fadeIn(ts, { r: 0, g: 0, b: 0, a: 1 }, 1.0).then(() => { ruleHiddenAt = loop.frameCount - f0; });
@@ -252,7 +254,7 @@ test("story UI layout and timing", { skip: SKIP }, async () => {
       P.talkText.storyText.setText(s); tt.setMaxVisible(99999); tt.generate();
       out[c.i] = tt.lines.map((ln) => tt.chars.slice(ln.first, ln.last + 1).map((ch) => String.fromCodePoint(ch.u)).join(""));
     }
-    fs.writeFileSync(LINES, `${JSON.stringify({ language: language.language, source: fonts.source, lines: out }, null, 1)}\n`);
+    fs.writeFileSync(LINES, `${JSON.stringify({ language: language.code, source: fonts.source, lines: out }, null, 1)}\n`);
   }
 
   // --- table ------------------------------------------------------------------------------------------------------------

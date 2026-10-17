@@ -12,14 +12,22 @@ import { forwardOf, lookRotation, rotateVector, slerp, SpotCamera, spotFieldOfVi
 import { parseGlb, roomMeshes } from "../../src/story/simple/home/glb.js";
 import { backgroundMatrix, inverseTRS, NO_TAP_TARGET, roomInverse, roomMatrix, SimpleHomeHost, SPINE_MISSING,
          spotLighting } from "../../src/story/simple/home/host.js";
-import { checkSpotCamera, checkSpotStack, HOME_VIEW_MASK, spotMainCamera, spotVolumeStack,
-         spotVolumes } from "../../src/story/simple/home/post.js";
+import { checkSpotCamera, checkSpotStack, HOME_VIEW_MASK, spotMainCamera, spotVolumeStack as nativeVolumeStack,
+         } from "../../src/story/simple/home/post.js";
 import { URPPost, VOLUME_DEFAULTS } from "../../src/engine/postfx.js";
 import { GLTarget } from "../../src/engine/texture.js";
 import { headlessGL } from "../../scripts/lib/headless.mjs";
 import { mat4 } from "../../src/engine/math.js";
 import { majorMinor, skeletonDataVersion, spineRuntime, spineRuntimeVersion } from "../../src/story/simple/home/spine.js";
+import { homeResources, lightingResources, volumeResources } from "./story-home-resources.mjs";
 import { parseQueueTag, ShaderInfo, sortDrawItems, SpotRoom } from "../../src/story/simple/home/room.js";
+
+const createHome = (gl, store, loop, host, opts = {}) => {
+  const { data, objects } = homeResources(store, host, opts, gl);
+  return SimpleHomeHost.create(gl, store, loop, data, { ...opts, objects });
+};
+const spotVolumes = (h) => [...(h.sceneRoot?.volumes || []), ...(h.volume ? [h.volume] : [])];
+const spotVolumeStack = (h, mask, what) => nativeVolumeStack(spotVolumes(h).map(volumeResources), mask, what);
 
 const F = Math.fround;
 const near = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
@@ -111,7 +119,7 @@ const makeStore = ({ roomNodes, spot = {}, home = {}, meshes } = {}) => {
     spotId: 1, situationSettings: SETTINGS,
     characters: [{ path: "s/A", _characterId: 3, _distanceRatio: 0.3, world: translation(0, 0, 0), focusWorld: translation(1, 0.5, 6) }],
     spineCharacters: [], skeletons: [], ...spot };
-  const hostDoc = { format: "ournotes.story-host/1", kind: "home", home: {
+  const hostDoc = { kind: "home", home: {
     spotId: 1, talk: "tap", characterId: 3, spot: "host/spot/spot.json", room: "host/spot/room.glb", roomNodes: nodes,
     roomMaterials: MATERIALS, situation: { name: "s", matched: true }, sceneRoot: { objRoot: null, lights: [], volumes: [] },
     volume: null, spineMaterials: {}, shaders: { index: "host/shaders/shaders.json", names: Object.keys(SHADERS) },
@@ -124,6 +132,19 @@ const makeStore = ({ roomNodes, spot = {}, home = {}, meshes } = {}) => {
 };
 
 const CAM = { near: 0.3, far: 1000, clearFlags: 2, clearColor: [0, 0, 0, 1] };
+
+test("Spine mesh uploads preserve another renderer's index buffer", () => {
+  const foreign = {}, own = {}, indices = new Map([[foreign, "character indices"]]);
+  let bound = foreign;
+  const gl = { ARRAY_BUFFER: 1, ELEMENT_ARRAY_BUFFER: 2, DYNAMIC_DRAW: 3,
+    bindVertexArray: (vao) => { bound = vao; }, createBuffer: () => ({}),
+    bindBuffer: (target, buffer) => { if (target === 2) indices.set(bound, buffer); }, bufferData() {} };
+  const mesh = { positions: new Float32Array(6), colors: new Uint8Array(8), uvs: new Float32Array(4), indices: new Uint32Array(3) };
+  const skeleton = { skeleton: { buildMesh: () => mesh } };
+  SimpleHomeHost.prototype._uploadSkeleton.call({ gl, vao: own, buffers: [] }, skeleton);
+  assert.equal(indices.get(foreign), "character indices");
+  assert.equal(indices.get(own), skeleton.gpu.index);
+});
 
 // ------------------------------------------------------------------------------------------------------------ glb
 test("glb: the room file's glTF space goes back to Unity space (z, winding, uv v)", () => {
@@ -201,7 +222,7 @@ const tweenPositions = (dt, duration, frames) => {
 test("camera: FocusCharacterAsync and ReturnToDefaultPosition tween 0.5 s InOutQuad on the loop's tween phase", async () => {
   const { store, host } = makeStore();
   const loop = new PlayerLoop(30);
-  const h = await SimpleHomeHost.create(null, store, loop, host, { camera: CAM, spine: null });
+  const h = await createHome(null, store, loop, host, { camera: CAM, spine: null });
   const P = { ...h.camera.position }, R0 = { ...h.camera.rotation };
   const Fw = { x: 1, y: 0.5, z: 6 }, k = F(0.3);
   const target = { x: F(F(F(Fw.x - P.x) * k) + P.x), y: F(F(F(Fw.y - P.y) * k) + P.y), z: F(F(F(Fw.z - P.z) * k) + P.z) };
@@ -287,10 +308,11 @@ test("blur pass: UIRenderPass.Setup clamps, offset = rate x offset, blend = clam
 // -------------------------------------------------------------------------------------------------------------- room
 test("room: roomNodes visibility, the floor queue override and URP's opaque / transparent order", () => {
   const { store, host } = makeStore();
-  const shaders = new ShaderInfo(store, "host/shaders");
+  const { data, objects, summary } = homeResources(store, host, {});
+  const shaders = new ShaderInfo(objects);
   assert.equal(shaders.queue("Unlit/Transparent Cutout"), 2450);
   assert.deepEqual(shaders.forwardPasses("Universal Render Pipeline/Spine/Skeleton"), [0]);
-  const room = new SpotRoom(parseGlb(store.bytes("host/spot/room.glb")), host.home, shaders);
+  const room = new SpotRoom(parseGlb(store.bytes("host/spot/room.glb")), summary, data.host.home.backgroundState, objects, shaders);
   const items = room.drawItems(backgroundMatrix(SETTINGS, null), { x: 0, y: 0, z: 0 });
   assert.deepEqual(items.map((it) => room.meshes[it.part.node].name), ["near", "glass", "floor"]);   // "hidden" is inactive
   const order = sortDrawItems(items.map((it, i) => ({ ...it, index: i }))).map((it) => `${room.meshes[it.part.node].name}:${it.queue}`);
@@ -301,7 +323,7 @@ test("room: roomNodes visibility, the floor queue override and URP's opaque / tr
   assert.deepEqual(sortDrawItems([mk(3000, 9, 0), { ...mk(3000, 1, 1), sortingOrder: 1 }]).map((i) => i.index), [0, 1]);
   assert.equal(parseQueueTag("Transparent+1"), 3001);
   assert.equal(parseQueueTag("Geometry-10"), 1990);
-  assert.throws(() => new SpotRoom(parseGlb(store.bytes("host/spot/room.glb")), { ...host.home, roomNodes: [] }, shaders), /roomNodes/);
+  assert.throws(() => new SpotRoom(parseGlb(store.bytes("host/spot/room.glb")), { ...summary, nodes: [] }, data.host.home.backgroundState, objects, shaders), /room nodes/);
 });
 
 test("background root: localPosition, world eulerAngles and localScale under objRoot", () => {
@@ -334,7 +356,7 @@ test("host: headless create, 'Spine runtime missing' without a runtime or with o
   const { store, host } = makeStore({ spot: spine });
   store._text.set("host/spot/spine/a.json", JSON.stringify({ skeleton: { spine: "4.2.43" } }));
   const loop = new PlayerLoop(30);
-  const h = await SimpleHomeHost.create(null, store, loop, host, { camera: CAM, spine: null });
+  const h = await createHome(null, store, loop, host, { camera: CAM, spine: null });
   assert.deepEqual(h.missing, [SPINE_MISSING]);
   assert.match(h.spineReason, /no Spine runtime/);
   assert.equal(h.skeletons.length, 0);
@@ -349,14 +371,14 @@ test("host: headless create, 'Spine runtime missing' without a runtime or with o
   const old = { TextureAtlas() {}, AtlasAttachmentLoader() {}, SkeletonJson() {}, SkeletonBinary() {}, Skeleton() {}, AnimationState() {},
                 AnimationStateData() {}, Physics: {}, SkeletonClipping() {}, RegionAttachment() {}, MeshAttachment() {}, ClippingAttachment() {},
                 BlendMode: {}, version: "4.1.54" };
-  const h2 = await SimpleHomeHost.create(null, store, loop, host, { camera: CAM, spine: old });
+  const h2 = await createHome(null, store, loop, host, { camera: CAM, spine: old });
   assert.deepEqual(h2.missing, [SPINE_MISSING]);
   assert.match(h2.spineReason, /4\.1 cannot read skeleton data 4\.2\.43/);
   h2.dispose();
   // the spot's volume is drawn by the post chain: nothing listed (no Spine characters in this spot)
   const { store: s3, host: h3doc } = makeStore({ home: { volume: { path: "bg", active: true, enabled: true, isGlobal: true,
     weight: 0.05, priority: 0, blendDistance: 0, layer: 15, profile: "p", components: [] } } });
-  const h3 = await SimpleHomeHost.create(null, s3, loop, h3doc, { camera: CAM, spine: null });
+  const h3 = await createHome(null, s3, loop, h3doc, { camera: CAM, spine: null });
   assert.deepEqual(h3.missing, []);
   h3.dispose();
   assert.throws(() => new SimpleHomeHost(null, store, loop, { kind: "afterlive" }, { camera: CAM }), /not a home host/);
@@ -377,21 +399,21 @@ const GRAPHICS = {
   renderers: { Runtime: { m_RenderingMode: 0, m_RendererFeatures: [{ class: "Fwk.UI.Rendering.UIRendererFeature", m_Active: 1 }] },
                Editor: { m_RenderingMode: 0, m_RendererFeatures: [] } },
 };
-const lighting = (over = {}) => spotLighting({ graphics: GRAPHICS, quality: 1, rendererIndex: 0, renderSettings: RENDER_SETTINGS,
-                                               lights: [], what: "home spot 1", ...over });
+const lighting = (over = {}) => spotLighting(lightingResources({ graphics: GRAPHICS, quality: 1, rendererIndex: 0, renderSettings: RENDER_SETTINGS,
+                                               lights: [], what: "home spot 1", ...over }));
 
 test("spotLighting: keywords of the quality level's pipeline asset, no light, URP's default light constants", () => {
   const best = lighting();
-  assert.equal(best.pipeline, "Best"); assert.equal(best.renderer, "Runtime");
+  assert.equal(best.pipeline.m_Name, "Best"); assert.equal(best.renderer.m_Name, "Runtime");
   // Auto SH evaluation is per vertex on GLES3; the additional lights keyword stays on without an additional light
   assert.deepEqual(best.keywords, ["EVALUATE_SH_VERTEX", "_ADDITIONAL_LIGHTS_VERTEX"]);
   assert.deepEqual(lighting({ quality: 0 }).keywords, ["EVALUATE_SH_VERTEX"]);
-  assert.equal(lighting({ rendererIndex: -1 }).renderer, "Editor");
+  assert.equal(lighting({ rendererIndex: -1 }).renderer.m_Name, "Editor");
   const g = (p) => ({ ...GRAPHICS, pipelines: { ...GRAPHICS.pipelines, Best: pipeline(p) } });
   assert.deepEqual(lighting({ graphics: g({ m_ShEvalMode: 3, m_AdditionalLightsRenderingMode: 1 }) }).keywords, ["_ADDITIONAL_LIGHTS"]);
   assert.deepEqual(lighting({ graphics: g({ m_ShEvalMode: 2, m_ReflectionProbeBlending: 1 }) }).keywords,
                    ["EVALUATE_SH_MIXED", "_REFLECTION_PROBE_BLENDING"]);
-  assert.deepEqual(lighting({ graphics: { ...GRAPHICS, qualityLevels: [{ customRenderPipeline: null }] }, quality: 0 }).pipeline, "Best");
+  assert.deepEqual(lighting({ graphics: { ...GRAPHICS, qualityLevels: [{ customRenderPipeline: null }] }, quality: 0 }).pipeline.m_Name, "Best");
   assert.deepEqual(best.globals._MainLightPosition, [0, 0, 1, 0]);
   assert.deepEqual(best.globals._MainLightColor, [0, 0, 0, 1]);
   assert.deepEqual(best.globals._AdditionalLightsCount, [0, 0, 0, 0]);
@@ -517,7 +539,7 @@ const litStore = (renderSettings = RENDER_SETTINGS, home = {}) => {
   const mats = [MATERIALS[0], litMat];
   const ms = [card("near", -4, 0), card("wall", -6, 1, { normals: [0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1] })];
   const nodes = ms.map((m) => ({ path: `room/${m.name}`, active: true, renderQueue: null }));
-  const hostDoc = { format: "ournotes.story-host/1", kind: "home", home: {
+  const hostDoc = { kind: "home", home: {
     spotId: 1, talk: "area", characterId: null, spot: "host/spot/spot.json", room: "host/spot/room.glb", roomNodes: nodes,
     roomMaterials: mats, situation: { name: "s", matched: true },
     sceneRoot: { objRoot: null, lights: [], volumes: [], renderSettings }, lights: [], volume: null, spineMaterials: {},
@@ -555,7 +577,7 @@ test("host: a drawn Lit room gets URP's lighting keywords, normals, light consta
   const { store, host } = litStore();
   const { gl, calls } = litGL();
   const loop = new PlayerLoop(30);
-  const h = await SimpleHomeHost.create(gl, store, loop, host, { camera: DRAWN_CAM, graphics: GRAPHICS, quality: 1, spine: null,
+  const h = await createHome(gl, store, loop, host, { camera: DRAWN_CAM, graphics: GRAPHICS, quality: 1, spine: null,
                                                                   post: postLib() });
   const litPrograms = [...h.lib.cache.values()].filter((p) => p.label.startsWith(LIT));
   assert.deepEqual(litPrograms.map((p) => p.label), [`${LIT}#0.0[EVALUATE_SH_VERTEX _ADDITIONAL_LIGHTS_VERTEX]`]);
@@ -576,7 +598,7 @@ test("host: a drawn Lit room gets URP's lighting keywords, normals, light consta
   h.dispose();
   // a lower quality level: no additional lights keyword
   const low = litStore();
-  const h2 = await SimpleHomeHost.create(litGL().gl, low.store, new PlayerLoop(30), low.host,
+  const h2 = await createHome(litGL().gl, low.store, new PlayerLoop(30), low.host,
                                          { camera: DRAWN_CAM, graphics: GRAPHICS, quality: 0, spine: null, post: postLib() });
   assert.deepEqual([...h2.lib.cache.values()].filter((p) => p.label.startsWith(LIT)).map((p) => p.label), [`${LIT}#0.0[EVALUATE_SH_VERTEX]`]);
   h2.dispose();
@@ -585,7 +607,7 @@ test("host: a drawn Lit room gets URP's lighting keywords, normals, light consta
 test("host: a drawn session checks the lighting before any GL call", async () => {
   const { store, host } = litStore({ ...RENDER_SETTINGS, m_Fog: 1 });
   const loop = new PlayerLoop(30);
-  const h = await SimpleHomeHost.create(null, store, loop, host, { camera: DRAWN_CAM, graphics: GRAPHICS, quality: 1, spine: null });
+  const h = await createHome(null, store, loop, host, { camera: DRAWN_CAM, graphics: GRAPHICS, quality: 1, spine: null });
   h.gl = new Proxy({}, { get: () => { throw new Error("GL call"); } });
   await assert.rejects(h._upload(), /home spot 1: scene fog is not reproduced/);
   h.graphics = null;
@@ -675,7 +697,7 @@ test("host: the main camera draws the spot into its HDR colour target, then its 
   const { store, host } = litStore(RENDER_SETTINGS, { volume: spotVol() });
   const { gl, calls } = litGL();
   const loop = new PlayerLoop(30), post = postLib();
-  const h = await SimpleHomeHost.create(gl, store, loop, host, { camera: DRAWN_CAM, graphics: GRAPHICS, quality: 1, spine: null, post });
+  const h = await createHome(gl, store, loop, host, { camera: DRAWN_CAM, graphics: GRAPHICS, quality: 1, spine: null, post });
   assert.deepEqual(h.missing, []);
   assert.equal(h.volumeStack.Bloom.intensity, F(4 * F(0.05)));
   const target = new GLTarget(gl, 64, 32, { label: "SimpleScreen" });
@@ -712,7 +734,7 @@ test("host: the main camera draws the spot into its HDR colour target, then its 
   // HDR needs the pipeline asset's support as well as the camera's: RGBA8 otherwise
   const ldr = litStore(RENDER_SETTINGS, { volume: spotVol() }), g2 = litGL();
   const graphics = { ...GRAPHICS, pipelines: { ...GRAPHICS.pipelines, Best: pipeline({ m_AdditionalLightsRenderingMode: 2, m_SupportsHDR: 0 }) } };
-  const h2 = await SimpleHomeHost.create(g2.gl, ldr.store, new PlayerLoop(30), ldr.host,
+  const h2 = await createHome(g2.gl, ldr.store, new PlayerLoop(30), ldr.host,
                                          { camera: DRAWN_CAM, graphics, quality: 1, spine: null, post: postLib() });
   assert.equal(h2.hdr, false);
   g2.calls.length = 0;
@@ -734,7 +756,7 @@ test("host: the film grain follows the host option; the grain textures load only
     const { gl } = litGL();
     bindAssets(gl, store);
     const p = postLib();
-    const h = await SimpleHomeHost.create(gl, store, new PlayerLoop(30), host,
+    const h = await createHome(gl, store, new PlayerLoop(30), host,
                                           { camera: DRAWN_CAM, graphics: GRAPHICS, quality: 1, spine: null, post: { ...post, lib: p.lib } });
     const target = new GLTarget(gl, 64, 32, { label: "SimpleScreen" });
     h.render(target, 64, 32);
@@ -761,11 +783,11 @@ test("host: the film grain follows the host option; the grain textures load only
 test("host: a drawn session refuses a spot volume or camera setting the chain does not draw, before any GL call", async () => {
   const { store, host } = litStore(RENDER_SETTINGS, { volume: spotVol({ isGlobal: false }) });
   const loop = new PlayerLoop(30);
-  const h = await SimpleHomeHost.create(null, store, loop, host, { camera: DRAWN_CAM, graphics: GRAPHICS, quality: 1, spine: null,
+  const h = await createHome(null, store, loop, host, { camera: DRAWN_CAM, graphics: GRAPHICS, quality: 1, spine: null,
                                                                    post: postLib() });
   assert.deepEqual(h.missing, []);                                                  // a headless session plays it
   h.gl = new Proxy({}, { get: () => { throw new Error("GL call"); } });
-  await assert.rejects(h._upload(), /home spot 1: local Volume bg/);
+  await assert.rejects(h._upload(), /home spot 1: local Volume .*bg/);
   h.postOpts = {};
   await assert.rejects(h._upload(), /needs the story's shaders/);
   h.cameraSettings = { ...DRAWN_CAM, antialiasing: 1 };
@@ -776,7 +798,7 @@ test("host: a drawn session refuses a spot volume or camera setting the chain do
 
 test("host: an unknown character keeps the camera still and resolves", async () => {
   const { store, host } = makeStore();
-  const loop = new PlayerLoop(30), h = await SimpleHomeHost.create(null, store, loop, host, { camera: CAM, spine: null });
+  const loop = new PlayerLoop(30), h = await createHome(null, store, loop, host, { camera: CAM, spine: null });
   const p = { ...h.camera.position }, warn = console.warn;
   let warned = 0;
   console.warn = () => { warned++; };
@@ -788,17 +810,17 @@ test("host: an unknown character keeps the camera still and resolves", async () 
 
 test("host: a tap talk whose character has no SpotCharacter in the spot is listed in missing", async () => {
   const { store, host } = makeStore({ home: { characterId: 16 } });
-  const h = await SimpleHomeHost.create(null, store, new PlayerLoop(30), host, { camera: CAM, spine: null });
+  const h = await createHome(null, store, new PlayerLoop(30), host, { camera: CAM, spine: null });
   assert.equal(h.tapTarget(16), null);
   assert.equal(h.tapTarget(3).path, "s/A");
   assert.ok(h.missing.includes(NO_TAP_TARGET));
   h.dispose();
   const ok = makeStore();
-  const h2 = await SimpleHomeHost.create(null, ok.store, new PlayerLoop(30), ok.host, { camera: CAM, spine: null });
+  const h2 = await createHome(null, ok.store, new PlayerLoop(30), ok.host, { camera: CAM, spine: null });
   assert.equal(h2.missing.includes(NO_TAP_TARGET), false);
   h2.dispose();
   const area = makeStore({ home: { talk: "area", characterId: null } });                 // area talks focus nobody
-  const h3 = await SimpleHomeHost.create(null, area.store, new PlayerLoop(30), area.host, { camera: CAM, spine: null });
+  const h3 = await createHome(null, area.store, new PlayerLoop(30), area.host, { camera: CAM, spine: null });
   assert.equal(h3.missing.includes(NO_TAP_TARGET), false);
   h3.dispose();
 });
@@ -908,7 +930,7 @@ test("spine: skeletons start at the initial animation's end state, update in the
     ] } }));
   store._text.set("host/spot/spine/a.atlas", "a.png\nb.png\n");
   const loop = new PlayerLoop(30);
-  const h = await SimpleHomeHost.create(null, store, loop, host, { camera: CAM, spine: runtime });
+  const h = await createHome(null, store, loop, host, { camera: CAM, spine: runtime });
   assert.deepEqual(h.missing, []);
   assert.equal(h.skeletons.length, 1);
   const s = h.skeletons[0];
@@ -942,7 +964,7 @@ test("spine: skeletons start at the initial animation's end state, update in the
   assert.deepEqual(log, []);
 });
 
-test("spine: host.json's per-character sortingOrder and page materials, advui material records", async () => {
+test("spine: per-character sorting order and atlas page material objects", async () => {
   const { runtime } = makeFakeSpine();
   const anim = { _animationName: "home_start", loop: 0, timeScale: 1, initialSkinName: "", initialFlipX: 0, initialFlipY: 0,
                  pmaVertexColors: 1, tintBlack: 0, zSpacing: 0 };
@@ -960,13 +982,13 @@ test("spine: host.json's per-character sortingOrder and page materials, advui ma
     animations: [{ name: "home_start", duration: 1 }], slots: [{ x: 0, y: 0, attachment: { type: "region", page: "a.png" } }] } }));
   store._text.set("host/spot/spine/a.atlas", "a.png\nb.png\n");
   const loop = new PlayerLoop(30);
-  const h = await SimpleHomeHost.create(null, store, loop, host, { camera: CAM, spine: runtime });
+  const h = await createHome(null, store, loop, host, { camera: CAM, spine: runtime });
   assert.equal(h.skeletons[0].sortingOrder, 3);
   const b = h.pageMaterials.get("b.png");
-  assert.equal(b.name, "b_Material");
+  assert.equal(b.material, "b_Material");
   assert.equal(b.shader, "Universal Render Pipeline/Spine/Skeleton");
-  assert.deepEqual(b.texEnvs, { _MainTex: { scale: [2, 1], offset: [0, 0.5] } });
-  assert.equal(h.pageMaterials.get("a.png").name, "a_Material");
+  assert.deepEqual(b.textures, { _MainTex: { texture: { name: "a" }, scale: { x: 2, y: 1 }, offset: { x: 0, y: 0.5 } } });
+  assert.equal(h.pageMaterials.get("a.png").material, "a_Material");
   h.dispose();
   // two characters naming different materials for one page: refused
   const spot2 = { ...spot, spineCharacters: [...spot.spineCharacters, { ...spot.spineCharacters[0], path: "s/B" }] };
@@ -974,6 +996,6 @@ test("spine: host.json's per-character sortingOrder and page materials, advui ma
     { path: "s/B", sortingOrder: 0, pageMaterials: { "a.png": "b_Material" } }] } });
   bad.store._text.set("host/spot/spine/a.json", store.text("host/spot/spine/a.json"));
   bad.store._text.set("host/spot/spine/a.atlas", "a.png\nb.png\n");
-  await assert.rejects(SimpleHomeHost.create(null, bad.store, new PlayerLoop(30), bad.host, { camera: CAM, spine: runtime }),
-                       /atlas page a\.png has the materials a_Material and b_Material/);
+  await assert.rejects(createHome(null, bad.store, new PlayerLoop(30), bad.host, { camera: CAM, spine: runtime }),
+                       /atlas page a\.png: conflicting materials/);
 });

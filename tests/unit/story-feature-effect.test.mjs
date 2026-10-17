@@ -9,7 +9,7 @@ import { UnityRandom } from "../../src/engine/random.js";
 import { commandHandler, createStoryUILayers } from "../../src/story/interfaces.js";
 import { disposeStoryFeatures, installStoryFeatures, setStoryFeaturesSpeed } from "../../src/story/features/index.js";
 import { AdvParticleEffect, characterSortBand, createStageParticleGroups, releaseStageParticleGroups, storyEffects } from "../../src/story/features/effect.js";
-import { AnimRecords } from "../../src/story/features/clips.js";
+import { AnimClip, AnimController } from "../../src/engine/anim.js";
 import { Prefab } from "../../src/engine/prefab.js";
 
 const flush = () => new Promise((res) => setImmediate(res));
@@ -39,7 +39,8 @@ const psr = (order) => ({ type: "ParticleSystemRenderer", m_Enabled: 1, m_Render
   m_SortingLayer: 0, m_SortingLayerID: 0, m_SortingOrder: order, m_NormalDirection: 1, m_MaskInteraction: 0,
   m_UseCustomVertexStreams: 0, m_Materials: [{ material: "m", shader: { shader: "Mobile/Particles/Additive" } }] });
 const node = (path, components, active = true) => ({ path, name: path.split("/").pop(), active, layer: 0, tag: 0,
-  localPosition: { x: 0, y: 0, z: 0 }, localRotation: { x: 0, y: 0, z: 0, w: 1 }, localScale: { x: 1, y: 1, z: 1 }, components });
+  localPosition: { x: 0, y: 0, z: 0 }, localRotation: { x: 0, y: 0, z: 0, w: 1 }, localScale: { x: 1, y: 1, z: 1 }, components: components.map(({ type, class: cls, ...fields }, i) =>
+    ({ type, ...(cls ? { script: `Test||${cls}` } : {}), pathId: String(i), fields })) });
 
 const FLT_MIN = -3.4028234663852886e+38;
 const animator = { type: "Animator", m_Enabled: 1, m_UpdateMode: 0, m_CullingMode: 0, m_ApplyRootMotion: false,
@@ -56,6 +57,17 @@ const animator = { type: "Animator", m_Enabled: 1, m_UpdateMode: 0, m_CullingMod
       { name: "stop", speed: 1, cycleOffset: 0, loop: false, writeDefaultValues: true, mirror: false, speedParam: "", timeParam: "",
         blendTrees: [[{ clip: 1, children: [] }]], transitions: [] }] }] } };
 
+const effectObjects = {
+  material: (m) => ({ ...m, id: m.material, shader: m.shader.shader }),
+  mesh: (m) => m,
+  controller: (raw) => {
+    if (!raw) return null;
+    const clips = new Map(raw.clips.filter((c) => c.bindings).map((c) => [c.clip, c]));
+    return AnimController.fromMecanim(raw, (c) => AnimClip.fromMecanim(clips.get(c.clip), c.clip));
+  },
+};
+const effectPrefab = (doc) => { const p = new Prefab(doc); p.ids = ["fixture:effect"]; return p; };
+
 const effectDoc = () => ({ effects: { "fx/a": { key: "Adv/Effect/fx/a", nodes: [
   node("a", [psr(0), ps({ rate: 20, lifetime: 0.5 }), { type: "MonoBehaviour", class: "AdvParticleEffect", _particleSystem: { component: "ParticleSystem", gameObject: "a" } }]),
   node("a/Root", [animator]),
@@ -70,10 +82,10 @@ const makePlayer = () => {
   const fr = { entries, entryOf: (pos) => entries[{ 1: 0, 3: 1, 5: 2, 7: 3, 9: 4 }[pos]] || null, listeners: [],
                onCharacterOrderChanged(fn) { this.listeners.push(fn); return () => {}; } };
   const cam = new Transform("MainCamera"); cam.localPosition = { x: 0, y: 1, z: -10 };
-  const ctx = { loop, ui: { layers: createStoryUILayers(), trueCanvasSortOrder: 300 }, gl: null, renderer: null,
+  const ctx = { objects: effectObjects, data: { asset: () => ({ objects: ["fixture:effect"] }) }, loop, ui: { layers: createStoryUILayers(), trueCanvasSortOrder: 300 }, gl: null, renderer: null,
                 camera: { transform: cam }, field: { stageTransform: (pt) => stageT[{ 1: 0, 3: 1, 5: 2, 7: 3, 9: 4 }[pt]] },
                 fieldRenderer: fr, episode: { commands: [{ i: 0, cmd: "Effect", TargetName: "star", TargetAssetName: "fx/a" }] },
-                story: { effects: "effects.json" }, assets: { json: () => effectDoc() } };
+                story: { effects: "effects.json" }, assets: { prefab: () => effectDoc().effects["fx/a"] } };
   const p = { ctx, playbackSpeed: 10, shortCutIndex: -1, session: { stage: { backgroundFieldPosition: { x: 0, y: 0, z: 20 } } },
               speedRate() { return this.playbackSpeed / 10; }, get shortcut() { return false; } };
   return { ctx, p, loop, fr, stageT };
@@ -149,7 +161,7 @@ test("stage particle groups: effects over the stage prefab, shared between group
   ] });
   const ref = (p) => ({ component: "MonoBehaviour", class: "AdvParticleEffect", gameObject: p });
   const coll = { _groups: [{ _particleEffects: [ref("st/Rain")] }, { _particleEffects: [ref("st/Rain"), ref("st/Off/Snow")] }] };
-  const groups = createStageParticleGroups(t.ctx, "st", stage, coll, new AnimRecords({}));
+  const groups = createStageParticleGroups(t.ctx, "st", stage, coll, effectObjects);
   const [rain, snow] = groups[1];
   assert.equal(groups[0][0], rain);
   assert.equal(rain.isVisible, false);
@@ -170,7 +182,7 @@ test("stage particle groups: effects over the stage prefab, shared between group
   const nested = { _groups: [{ _particleEffects: [ref("st/Off"), ref("st/Off/Snow")] }] };
   const stage2 = new Prefab({ key: "st", nodes: [node("st", []), node("st/Off", [ps({}), psr(0), comp("st/Off")]),
                                                  node("st/Off/Snow", [ps({}), psr(0), comp("st/Off/Snow")])] });
-  assert.throws(() => createStageParticleGroups(t.ctx, "st", stage2, nested, new AnimRecords({})), /nested/);
+  assert.throws(() => createStageParticleGroups(t.ctx, "st", stage2, nested, effectObjects), /nested/);
   disposeStoryFeatures(t.ctx);
 });
 
@@ -183,7 +195,7 @@ test("AdvParticleEffect: a MeshRenderer with its MeshFilter is a renderer of the
   const bg = node("a/Root/Bg", [{ type: "MeshFilter", m_Mesh: quad }, mr]);
   bg.localPosition = { x: 0, y: 0, z: 0.2 }; bg.localScale = { x: 20, y: 15, z: 1 };
   const doc = effectDoc().effects["fx/a"];
-  const e = new AdvParticleEffect("spot", { ...doc, nodes: [...doc.nodes, bg] }, { rng: new UnityRandom(1) });
+  const e = new AdvParticleEffect("spot", effectPrefab({ ...doc, nodes: [...doc.nodes, bg] }), { rng: new UnityRandom(1), objects: effectObjects });
   assert.deepEqual(e.renderers.map((r) => r.kind), ["particle", "particle", "particle", "mesh"]);
   assert.deepEqual(e.relativeSortOrders, [-1, 1, -2, -1]);                // the mesh's 0 ranks with the particles' 0
   e.setSortOrder(305);                                                    // SetSortOrder: particle renderers only
@@ -195,7 +207,7 @@ test("AdvParticleEffect: a MeshRenderer with its MeshFilter is a renderer of the
   assert.ok(Math.abs(it.distance - 10.2) < 1e-5, `${it.distance}`);      // the quad's centre at z 0.2
   const part = e.renderers[3].target.parts[0];
   assert.deepEqual([part.stride, Object.keys(part.attribs)], [8, ["in_POSITION0", "in_NORMAL0", "in_TEXCOORD0"]]);
-  assert.throws(() => new AdvParticleEffect("bad", { ...doc, nodes: [...doc.nodes, node("a/Root/M", [mr])] }), /MeshRenderer without a MeshFilter/);
+  assert.throws(() => new AdvParticleEffect("bad", effectPrefab({ ...doc, nodes: [...doc.nodes, node("a/Root/M", [mr])] })), /MeshRenderer without a MeshFilter/);
 });
 
 test("AdvParticleEffect: a field item's draw hands the field renderer's per-object hook a Transform and the layer", () => {
@@ -208,8 +220,8 @@ test("AdvParticleEffect: a field item's draw hands the field renderer's per-obje
   bg.localPosition = { x: 0, y: 0, z: 0.2 }; bg.localScale = { x: 20, y: 15, z: 1 };
   const doc = effectDoc().effects["fx/a"];
   // FxMaterial.draw calls ctx.perObject(matrix of the draw)
-  const materials = { get: () => ({ queue: 3000, draw: (ctx, mesh, M) => ctx.perObject(M) }) };
-  const e = new AdvParticleEffect("spot", { ...doc, nodes: [...doc.nodes, bg] }, { rng: new UnityRandom(1), materials });
+  const materials = { mesh: (m) => m, record: (m) => m, get: () => ({ queue: 3000, draw: (ctx, mesh, M) => ctx.perObject(M) }) };
+  const e = new AdvParticleEffect("spot", effectPrefab({ ...doc, nodes: [...doc.nodes, bg] }), { rng: new UnityRandom(1), objects: effectObjects, materials });
   e.setLayerRecursively(8);
   const seen = [];
   const frame = { globals: {}, perObject: (t, layer) => { seen.push([Array.from(t.localToWorld()), layer]); return {}; } };
@@ -235,7 +247,7 @@ test("Effect: the command effects and the stage groups draw from a stream of the
   const comp = { type: "MonoBehaviour", class: "AdvParticleEffect", _particleSystem: { component: "ParticleSystem", gameObject: "st/Rain" } };
   const stage = new Prefab({ key: "st", nodes: [node("st", []), node("st/Rain", [ps({ rate: 30 }), psr(0), comp])] });
   const [[rain]] = createStageParticleGroups(t.ctx, "st", stage, { _groups: [{ _particleEffects: [{ ...comp, gameObject: "st/Rain" }] }] },
-                                              new AnimRecords({}));
+                                              effectObjects);
   rain.play();
   await steps(t.loop, 5);
   assert.ok(rain.particleSystem.particles.length > 0);

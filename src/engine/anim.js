@@ -75,7 +75,7 @@ export class AnimClip {
     if (!Array.isArray(names) || names.length !== clip.bindings.length)
       throw new AnimError(`clip ${key}: ${names ? names.length : "no"} names for ${clip.bindings.length} bindings`);
     return AnimClip._mecanim(clip, key, clip.bindings.map((b, i) => ({
-      path: names[i].path, cls: b.class, typeID: b.typeID, attribute: names[i].attribute, curves: b.curves || 1,
+      path: names[i].path, cls: b.scriptClass?.split("|").at(-1) || b.class, typeID: b.typeID, attribute: names[i].attribute, curves: b.curves || 1,
       pptr: !!b.pptr })));
   }
 
@@ -87,7 +87,7 @@ export class AnimClip {
     const bindings = [];
     for (const b of named) {
       if (b.pptr) {
-        if (b.typeID !== 212 || b.attribute !== "m_Sprite")
+        if (!((b.typeID === 212 && b.cls === "SpriteRenderer") || (b.typeID === 114 && b.cls === "Image")) || b.attribute !== "m_Sprite")
           throw new AnimError(`clip ${name}: PPtr curve ${b.cls}.${b.attribute} not implemented`);
         bindings.push({ path: b.path, cls: b.cls, typeID: b.typeID, attr: "m_Sprite", pptr: true });
         continue;

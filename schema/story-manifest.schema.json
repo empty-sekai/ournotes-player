@@ -1,142 +1,146 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/empty-sekai/ournotes-player/main/schema/story-manifest.schema.json",
-  "title": "Story manifest (stories/<advId>.json, or stories/<region>/<advId>.json)",
-  "description": "The logical files of one story (common files and one group per language) and where their bytes are; the file entries are those of a chart manifest. See docs/story-data-format.md.",
+  "title": "Story product manifest",
+  "description": "A story product and the files of its episode and part index.",
   "type": "object",
-  "required": ["format", "advId", "root", "models", "story", "language", "audio", "audioFormat", "fonts", "requires", "files", "languages"],
+  "required": [
+    "schema",
+    "product",
+    "subject",
+    "files",
+    "objects"
+  ],
+  "additionalProperties": false,
   "properties": {
-    "format": { "const": "ournotes.story-manifest/2" },
-    "advId": { "type": "integer", "minimum": 1 },
-    "root": {
-      "description": "The site root relative to the manifest: \"../\" for stories/<advId>.json, \"../../\" for stories/<region>/<advId>.json.",
+    "schema": {
+      "const": "nnnotes.product/1"
+    },
+    "product": {
+      "const": "story"
+    },
+    "subject": {
       "type": "string",
-      "pattern": "^(\\.\\./)+$"
+      "pattern": "^[0-9]+$"
     },
-    "models": {
-      "description": "Model id -> the path of its model manifest (a product manifest of live2d.model) relative to the site root (models/<id>.json), keys sorted: the Live2D models the story's Character rows use.",
+    "files": {
+      "description": "The product's own files by logical path.",
       "type": "object",
-      "propertyNames": { "pattern": "^[a-z0-9_]+$" },
-      "additionalProperties": { "type": "string", "pattern": "^models/[a-z0-9_]+\\.json$" }
-    },
-    "story": { "$ref": "#/$defs/facts" },
-    "regions": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9_-]+$" }, "minItems": 1 },
-    "language": { "$ref": "#/$defs/language" },
-    "audio": { "type": "boolean" },
-    "audioFormat": { "enum": ["aac", "flac", null] },
-    "fonts": { "enum": ["open", "game"] },
-    "requires": {
-      "type": "object",
-      "required": ["commands", "cubismCore", "motionSync"],
-      "properties": {
-        "commands": { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9]*$" } },
-        "cubismCore": { "type": "boolean" },
-        "motionSync": { "type": "boolean" }
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9_][^\\\\]*$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/file"
       }
     },
-    "files": { "$ref": "#/$defs/files" },
-    "host": {
+    "objects": {
+      "description": "Object id (<serialized file>:<path id>) -> the object's class, name and files by role (json, image, index, program:<platform>/<name>, blob:<field>).",
       "type": "object",
-      "required": ["kind", "doc", "ui"],
-      "additionalProperties": false,
-      "properties": {
-        "kind": { "enum": ["home", "afterlive"] },
-        "doc": { "const": "host/host.json" },
-        "ui": { "const": "ui/simple/ui.json" }
-      }
-    },
-    "languages": {
-      "type": "object",
-      "propertyNames": { "$ref": "#/$defs/language" },
+      "propertyNames": {
+        "pattern": "^.+:-?[0-9]+$"
+      },
       "additionalProperties": {
         "type": "object",
-        "required": ["files"],
+        "required": [
+          "class",
+          "files"
+        ],
         "additionalProperties": false,
-        "properties": { "files": { "$ref": "#/$defs/files" } }
+        "properties": {
+          "class": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string"
+          },
+          "files": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/file"
+            }
+          }
+        }
       }
+    },
+    "root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "language": {
+      "enum": [
+        "ja",
+        "en",
+        "zh-Hant",
+        "zh-Hans",
+        "ko"
+      ]
     }
   },
   "$defs": {
-    "language": { "enum": ["ja", "en", "zh-Hant", "zh-Hans", "ko"] },
-    "names": {
-      "type": "object",
-      "propertyNames": { "$ref": "#/$defs/language" },
-      "additionalProperties": { "type": "string", "minLength": 1 }
+    "file": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/whole"
+        },
+        {
+          "$ref": "#/$defs/encoded"
+        }
+      ]
     },
-    "facts": {
-      "type": "object",
-      "required": ["advId", "asset", "playbackMode", "titles", "groups", "commands", "commandCount", "language", "languages"],
-      "properties": {
-        "advId": { "type": "integer", "minimum": 1 },
-        "asset": { "type": "string", "minLength": 1 },
-        "sheetName": { "type": "string" },
-        "playbackMode": { "enum": [0, 1] },
-        "titles": { "$ref": "#/$defs/names" },
-        "groups": { "type": "array", "items": { "type": "object", "required": ["kind", "id", "characters"] } },
-        "commands": { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9]*$" } },
-        "commandCount": { "type": "integer", "minimum": 0 },
-        "language": { "$ref": "#/$defs/language" },
-        "languages": { "type": "array", "items": { "$ref": "#/$defs/language" }, "minItems": 1 }
-      }
+    "asset": {
+      "type": "string",
+      "pattern": "^assets/[0-9a-f]{64}\\.[a-z0-9]+$"
     },
-    "files": {
-      "type": "object",
-      "propertyNames": { "pattern": "^[A-Za-z0-9_][^\\\\]*$" },
-      "additionalProperties": {
-        "anyOf": [{ "$ref": "#/$defs/whole" }, { "$ref": "#/$defs/encoded" }, { "$ref": "#/$defs/parts" }]
-      }
-    },
-    "asset": { "type": "string", "pattern": "^assets/[0-9a-f]{64}\\.[a-z0-9]+$" },
     "encodedAsset": {
-      "description": "An asset stored gzip- or brotli-encoded: the SHA-256 of its decoded bytes, the logical file's extension, then .gz or .br.",
+      "description": "An asset stored gzip- or brotli-encoded: the SHA-256 of its decoded bytes, the file's extension, then .gz or .br.",
       "type": "string",
       "pattern": "^assets/[0-9a-f]{64}\\.[a-z0-9]+\\.(gz|br)$"
     },
-    "size": { "description": "The byte count of the file (decoded).", "type": "integer", "minimum": 0 },
-    "stored": { "description": "The byte count of an encoded asset as stored (less than size).", "type": "integer", "minimum": 0 },
+    "size": {
+      "description": "The byte count of the file (decoded).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "stored": {
+      "description": "The byte count of an encoded asset as stored (less than size).",
+      "type": "integer",
+      "minimum": 0
+    },
     "whole": {
       "type": "object",
-      "required": ["asset", "size"],
+      "required": [
+        "asset",
+        "size"
+      ],
       "additionalProperties": false,
-      "properties": { "asset": { "$ref": "#/$defs/asset" }, "size": { "$ref": "#/$defs/size" } }
+      "properties": {
+        "asset": {
+          "$ref": "#/$defs/asset"
+        },
+        "size": {
+          "$ref": "#/$defs/size"
+        }
+      }
     },
     "encoded": {
       "type": "object",
-      "required": ["asset", "size", "stored"],
+      "required": [
+        "asset",
+        "size",
+        "stored"
+      ],
       "additionalProperties": false,
       "properties": {
-        "asset": { "$ref": "#/$defs/encodedAsset" },
-        "size": { "$ref": "#/$defs/size" },
-        "stored": { "$ref": "#/$defs/stored" }
-      }
-    },
-    "parts": {
-      "type": "object",
-      "required": ["parts", "size"],
-      "additionalProperties": false,
-      "properties": {
-        "parts": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "anyOf": [
-              {
-                "type": "array",
-                "prefixItems": [{ "type": "string" }, { "$ref": "#/$defs/asset" }, { "$ref": "#/$defs/size" }],
-                "minItems": 3,
-                "maxItems": 3
-              },
-              {
-                "type": "array",
-                "prefixItems": [{ "type": "string" }, { "$ref": "#/$defs/encodedAsset" }, { "$ref": "#/$defs/size" },
-                                { "$ref": "#/$defs/stored" }],
-                "minItems": 4,
-                "maxItems": 4
-              }
-            ]
-          }
+        "asset": {
+          "$ref": "#/$defs/encodedAsset"
         },
-        "size": { "$ref": "#/$defs/size" }
+        "size": {
+          "$ref": "#/$defs/size"
+        },
+        "stored": {
+          "$ref": "#/$defs/stored"
+        }
       }
     }
   }
