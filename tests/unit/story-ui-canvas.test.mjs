@@ -785,7 +785,7 @@ test("centre talk window: the UI blur is on (rate 1 at once) while its talk area
   assert.equal(ui.blur.enabled, false);
   // a centre window without the blur settings in the data is refused
   const doc = withCenter(uiDoc()); delete doc.blur;
-  assert.throws(() => create({ doc, fonts: withCenterFonts(fontsDoc()) }), /lacks `blur`/);
+  assert.throws(() => create({ doc, fonts: withCenterFonts(fontsDoc()) }), /lack a UI blur feature/);
 });
 
 test("centre talk window: the blur pass runs on the render target while the blur is on", () => {
