@@ -1,14 +1,14 @@
-import { AnimClip, Animator } from "../../engine/anim.js";
-import { F, join } from "../../engine/core.js";
-import { ShaderLib } from "../../engine/glsl.js";
+import { Animator } from "../../engine/anim.js";
 import { GLTex } from "../../engine/texture.js";
-import { UI_CLIP_TARGET, UIDraw, UIError, UIImage, UILayout, UIMesh, UINode, UISprite, uiCanvasSize, uiColor32 } from "../../engine/ugui.js";
+import { UIDraw, UIError, UIImage, UILayout, UIMesh, UINode, UISprite, uiCanvasSize, uiColor32 } from "../../engine/ugui.js";
 import { TMPText, UIGradientMod } from "../../engine/uitext.js";
+import { uiTree, uiTextBinding } from "../ui-objects.js";
+import { TransformNode, bindCanvasProperty } from "../features/canvas.js";
 import { StoryFontAssets } from "../ui-fonts.js";
 import { StoryText } from "../ui-ruby.js";
 
-// The uGUI documents of the simple player: the simple talk window (UISimpleAdvTalkWindow, ui/simple/ui.json with its
-// fonts) and the host screen's widgets (host/ui/ui.json), in the record format the story UI data uses. A document
+// The uGUI products of the simple player: the simple talk window (UISimpleAdvTalkWindow), its fonts,
+// and the host screen's widgets. A document
 // builds its RectTransform nodes (engine/ugui.js), images, gradients, TMP texts (engine/uitext.js) with their text
 // components (`storyText`: ui-ruby.js StoryText over the font data's binding, as the story UI), animators and layout
 // groups; SimpleCanvas lays out and draws node trees that mix nodes of several documents (the view reparents the talk
@@ -20,69 +20,22 @@ const LANGUAGE_ENGLISH = 1;                  // Fwk.Localization.LanguageMode.En
 const LANGUAGE_KOREAN = 4;                   // Fwk.Localization.LanguageMode.Korean
 const IDENTITY_Q = { x: 0, y: 0, z: 0, w: 1 };
 
-// ------------------------------------------------------------------------------------------------ animation
-// An Animator clip of the host UI data. Curves are keyed "<path>:<Class>.<property>", the path relative to the
-// Animator's node ("" or no path: the node itself; "#<hash>": a path the game data does not resolve, which the
-// Animator binds to nothing), each {keys: [[time, c0, c1, c2, c3]]} (streamed Hermite segments), {discrete:
-// [[time, value]]} (a step curve: the value of the last key at or before the time) or {constant}. A discrete
-// Image.m_Sprite value indexes `pptrCurveMapping` (sprite names).
-export class SimpleUIClip extends AnimClip {
-  constructor(clip) {
-    if (clip.startTime) throw new UIError(`clip ${clip.name}: start time ${clip.startTime}`);
-    if (clip.events && clip.events.length) throw new UIError(`clip ${clip.name}: animation events not implemented`);
-    const curves = Object.entries(clip.curves).map(([key, c]) => {
-      const i = key.lastIndexOf(":"), path = i < 0 ? "" : key.slice(0, i), prop = key.slice(i + 1);
-      const cut = prop.indexOf(".");
-      const binding = { path, cls: prop.slice(0, cut), attr: prop.slice(cut + 1), prop };
-      if ("constant" in c) return { binding, constant: F(c.constant) };
-      const t = [], k = [];
-      if (c.discrete) for (const [time, v] of c.discrete) { t.push(F(time)); k.push(0, 0, 0, F(v)); }
-      else if (c.keys) for (const [time, c0, c1, c2, c3] of c.keys) { t.push(F(time)); k.push(F(c0), F(c1), F(c2), F(c3)); }
-      else throw new UIError(`clip ${clip.name}: curve ${key} in a form not implemented (${Object.keys(c).join(", ")})`);
-      return { binding, t, k };
-    });
-    super({ name: clip.name, length: clip.stopTime, loopTime: clip.loopTime, curves, events: [] });
-    this.pptr = clip.pptrCurveMapping || [];
-  }
-}
-
-// The properties a host UI clip drives besides UI_CLIP_TARGET: Image.m_Sprite (a PPtr curve of the playing state's
-// clip) and GameObject.m_IsActive
-const SIMPLE_CLIP_TARGET = {
-  "Image.m_Sprite": (n, v, anim) => {
-    const name = anim.state.clip.pptr[Math.round(v)], sp = name ? n.doc.sprites.get(name) : null;
-    if (!n.image) throw new UIError(`${n.path}: clip drives the sprite of a node without an Image`);
-    if (!sp) throw new UIError(`${n.path}: clip sprite ${name ?? v} not in the data`);
-    n.image.spriteObj = sp;
-  },
-  "GameObject.m_IsActive": (n, v) => { setActive(n, v !== 0); },
-};
-
-// The Animator of a host UI node: one layer, no transitions or parameters, Write Defaults off (the prefab
-// controllers), each state playing its clip; curve bindings resolve against the node's subtree. Bindings to a
-// "#<hash>" path or a node outside the exported tree bind to nothing (Unity skips a binding whose object is
-// missing); the latter are listed in doc.unbound.
+// The native AnimatorController of a host UI prefab, with object references for discrete sprite curves.
 export class SimpleUIAnimator extends Animator {
-  constructor(node, ctrl, clips, doc) {
-    const states = ctrl.states.map((s) => {
-      const key = `${ctrl.name}/${s.clip}`;
-      const clip = s.clip ? clips[key] || null : null;
-      if (s.clip && !clip) throw new UIError(`${node.path}: clip ${key} not in the data`);
-      if (s.cycleOffset) throw new UIError(`${ctrl.name}.${s.name}: cycle offset not implemented`);
-      return { name: s.name, speed: s.speed ?? 1, clip, writeDefaults: false, transitions: [] };
-    });
-    const defaultState = states.findIndex((s) => s.name === ctrl.defaultState);
-    if (defaultState < 0) throw new UIError(`${ctrl.name}: no default state ${ctrl.defaultState}`);
-    const self = {};
-    super({ name: ctrl.name, states, defaultState, anyState: [], parameters: new Map() }, (b) => {
-      if (b.path.startsWith("#")) return null;
+  constructor(node, ctrl, doc) {
+    super(ctrl, (b) => {
+      if (b.path === null || b.path.startsWith("#")) return null;
       const target = b.path ? doc.nodes.get(`${node.path}/${b.path}`) : node;
       if (!target) { doc.unbound.push(`${ctrl.name}: ${b.path}`); return null; }
-      const ui = UI_CLIP_TARGET[b.prop], own = SIMPLE_CLIP_TARGET[b.prop];
-      if (!ui && !own) throw new UIError(`${ctrl.name}: clip property ${b.prop} not implemented`);
-      return { set: ui ? (v) => ui(target, v) : (v) => own(target, v, self.animator) };
+      if (b.cls === "Image" && b.attr === "m_Sprite") {
+        if (!target.image) throw new UIError(`${target.path}: animated sprite without an Image`);
+        return { get: () => target.image.spriteObj?.name || null,
+          set: (ref) => { target.image.spriteObj = doc.sprite(ref); } };
+      }
+      if (b.cls === "GameObject" && b.attr === "m_IsActive")
+        return { get: () => target.activeSelf ? 1 : 0, set: (v) => setActive(target, v !== 0) };
+      return bindCanvasProperty(node, b);
     });
-    self.animator = this;
     this.node = node;
   }
 
@@ -108,72 +61,86 @@ export const runtimeNodeRecord = (path, name, { min = { x: 0, y: 0 }, max = { x:
 });
 
 export class SimpleUIDoc {
-  // gl may be null (layout and timing only). doc = the ui.json record document; fonts = its fonts.json (texts need
-  // it); language = the story's ui/languages.json; assets = the story's AssetStore; dir = the document's directory
-  constructor(gl, loop, doc, { assets, dir, fonts = null, language = null }) {
-    this.gl = gl; this.loop = loop; this.doc = doc; this.assets = assets; this.dir = dir;
-    this.fonts = fonts; this.language = language;
-    const byPath = new Map(), roots = [];
-    for (const rec of doc.nodes) {                  // hierarchy order (parents first)
-      const i = rec.path.lastIndexOf("/");
-      const parent = i < 0 ? null : byPath.get(rec.path.slice(0, i)) || null;
-      if (i >= 0 && !parent) throw new UIError(`ui node ${rec.path} has no parent in the data`);
-      const n = new UINode(rec, parent);
-      n.doc = this;
-      byPath.set(rec.path, n);
-      if (!parent) roots.push(n);
-    }
-    this.nodes = byPath; this.roots = roots;
-    this.sprites = new Map(Object.entries(doc.sprites || {}).map(([name, s]) => {
-      const t = doc.textures[s.texture];
-      if (!t) throw new UIError(`sprite ${name}: texture ${s.texture} not in the data`);
-      return [name, new UISprite(name, s, t)];
-    }));
-    this._fonts = this.fonts ? new StoryFontAssets(this.fonts, doc, this.language) : null;   // open fonts: the game's line metrics
-    const clips = Object.fromEntries(Object.entries(doc.clips || {}).map(([k, c]) => [k, new SimpleUIClip(c)]));
-    this.animators = [];
-    this.unbound = [];
-    for (const n of byPath.values()) this._setupNode(n, clips);
+  // gl may be null (layout and timing only). roots select prefab subtrees; fonts supplies object-id text bindings.
+  constructor(gl, loop, doc, { objects, roots, data = null, fonts = null, language = null }) {
+    this.gl = gl; this.loop = loop; this.doc = doc; this.objects = objects; this.assets = objects.assets;
+    this.dir = data?.fontDir || ""; this.fonts = fonts; this.language = language;
+    this.dotween = objects.mono(doc.dotween || doc.settings.dotween);
+    const byPath = this.nodes = new Map();
+    const Node = class {
+      constructor(rec, parent) { return rec.rect ? new UINode(rec, parent) : new TransformNode(rec, parent); }
+    };
+    this.roots = roots.map(({ id, include, texts = true }) => {
+      const root = uiTree(objects, id, { nodes: byPath, Node, include });
+      for (const n of byPath.values()) if (n.prefabId === id) { n.doc = this; n.bindText = texts; }
+      return root;
+    });
+    this.sprites = new Map(); this.textures = new Set();
+    this.uiMaterials = new Map([[DEFAULT_UI_MATERIAL, { shader: "UI/Default", keywords: [], floats: {}, colors: {} }]]);
+    this._fonts = fonts ? new StoryFontAssets(fonts, doc, language) : null;
+    this.animators = []; this.unbound = [];
+    for (const n of byPath.values()) this._setupNode(n);
+    for (const n of byPath.values()) this._setupAnimator(n);
   }
 
-  _setupNode(n, clips) {
-    const r = n.rec, doc = this.doc;
-    if (r.image) {
-      const sp = r.image.sprite;
-      if (sp && !this.sprites.has(sp)) throw new UIError(`${n.path}: sprite ${sp} not in the data`);
-      n.image = { ...r.image, spriteObj: sp ? this.sprites.get(sp) : null, material: r.image.material || DEFAULT_UI_MATERIAL };
-      if (!doc.materials[n.image.material]) throw new UIError(`${n.path}: material ${n.image.material} not in the data`);
+  sprite(ref) {
+    const id = this.objects.id(ref, "Sprite");
+    if (id === null) return null;
+    if (!this.sprites.has(id)) {
+      const s = this.objects.sprite(id);
+      this.sprites.set(id, new UISprite(id, { ...s, pixelsPerUnit: s.pixelsToUnits }, s.texture));
+      this.textures.add(s.texture.id);
     }
-    if (r.rawImage) n.rawImage = { ...r.rawImage, material: r.rawImage.material || DEFAULT_UI_MATERIAL,
-                                   textureName: r.rawImage.texture || null, texture: null };
-    if (r.gradient && r.gradient.enabled) n.gradient = r.gradient;
-    if (r.textStyle) {
-      if (!this.fonts) throw new UIError(`${n.path}: a text node without font data`);
-      let t = this.fonts.texts[n.path];
-      if (!t) throw new UIError(`${n.path}: no text binding in the font data`);
-      const mode = this.language ? this.language.mode : 0;
-      // LocalizeKoreanAdjust.Apply: in the Korean language mode ForceNormal (1) clears and ForceBold (2) sets Bold
-      const ko = t.localizeKoreanAdjust;
-      if (ko && ko.m_Enabled && mode === LANGUAGE_KOREAN && (ko._koreanFontStyle === 1 || ko._koreanFontStyle === 2))
+    return this.sprites.get(id);
+  }
+
+  uiMaterial(ref) {
+    const id = this.objects.id(ref, "Material");
+    if (id === null) return DEFAULT_UI_MATERIAL;
+    if (!this.uiMaterials.has(id)) this.uiMaterials.set(id, this.objects.material(id));
+    return id;
+  }
+
+  _setupNode(n) {
+    const g = n.fields("Image"), raw = n.fields("RawImage");
+    if (g) n.image = { ...g, spriteObj: this.sprite(g.m_Sprite), material: this.uiMaterial(g.m_Material) };
+    if (raw) {
+      const textureName = this.objects.id(raw.m_Texture, "Texture2D");
+      if (textureName) this.textures.add(textureName);
+      n.rawImage = { ...raw, material: this.uiMaterial(raw.m_Material), textureName, texture: null };
+    }
+    const gradient = n.fields("UIGradientImage");
+    if (gradient?.m_Enabled) n.gradient = { gradient: gradient._gradient, angleDeg: gradient._angleDeg,
+      splitAtKeysWhenAxisAligned: gradient._splitAtKeysWhenAxisAligned, blendMode: gradient._blendMode };
+    let t = n.bindText && this.fonts ? uiTextBinding(n, this.fonts) : null;
+    if (t) {
+      const mode = this.language?.mode || 0, ko = t.localizeKoreanAdjust;
+      if (ko?.m_Enabled && mode === LANGUAGE_KOREAN && (ko._koreanFontStyle === 1 || ko._koreanFontStyle === 2))
         t = { ...t, m_fontStyle: ko._koreanFontStyle === 2 ? t.m_fontStyle | 1 : t.m_fontStyle & ~1 };
-      n.text = new TMPText(this, n, t);
-      n.text.enabled = !!t.enabled;
-      // LocalizeText.OnFontChanged, English only: word wrapping on unless the object's name contains "nowrap"
+      n.text = new TMPText(this, n, t); n.text.enabled = !!t.enabled;
       if (mode === LANGUAGE_ENGLISH && !n.name.toLowerCase().includes("nowrap")) n.text.setWrapping(1);
       n.storyText = new StoryText(n.text, t);
     }
-    if (r.animator) {
-      const a = r.animator, ctrl = (doc.controllers || {})[a.controller];
-      if (!ctrl) throw new UIError(`${n.path}: controller ${a.controller} not in the data`);
-      if (a.updateMode !== 0 || !a.enabled || a.keepStateOnDisable)
-        throw new UIError(`${n.path}: animator settings outside the prefab values`);
-      n.animator = new SimpleUIAnimator(n, ctrl, clips, this);
-      this.animators.push(n.animator);
+    for (const cls of ["HorizontalLayoutGroup", "VerticalLayoutGroup"]) {
+      const layout = n.fields(cls);
+      if (layout?.m_Enabled) n.layoutGroup = { ...layout, class: cls };
     }
-    if (r.layoutGroup && r.layoutGroup.m_Enabled) n.layoutGroup = r.layoutGroup;
-    if (r.contentSizeFitter && r.contentSizeFitter.m_Enabled) n.contentSizeFitter = r.contentSizeFitter;
-    if (r.layoutElement && r.layoutElement.m_Enabled) n.layoutElement = r.layoutElement;
-    if (r.outline && r.outline.enabled) throw new UIError(`${n.path}: enabled Outline effect not implemented`);
+    const fitter = n.fields("ContentSizeFitter"), element = n.fields("LayoutElement");
+    if (fitter?.m_Enabled) n.contentSizeFitter = fitter;
+    if (element?.m_Enabled) n.layoutElement = element;
+    if (n.fields("Outline")?.m_Enabled) throw new UIError(`${n.path}: enabled Outline effect not implemented`);
+  }
+
+  _setupAnimator(n) {
+    const a = n.fields("Animator");
+    if (a?.m_Controller) {
+      if (a.m_UpdateMode !== 0 || !a.m_Enabled || a.m_KeepAnimatorStateOnDisable)
+        throw new UIError(`${n.path}: animator settings outside the prefab values`);
+      const ctrl = this.objects.controller(a.m_Controller, n.prefabId, n.sourcePath);
+      n.animator = new SimpleUIAnimator(n, ctrl, this); this.animators.push(n.animator);
+      for (const clip of ctrl.clipList) for (const curve of clip.curves)
+        if (curve.binding.pptr) for (const ref of curve.objects) this.sprite(ref);
+    }
   }
 
   node(path) {
@@ -195,31 +162,24 @@ export class SimpleUIDoc {
   async load() {
     const gl = this.gl;
     if (!gl) return;
-    const assets = this.assets || undefined;
-    this.lib = new ShaderLib(gl, join(this.dir, this.doc.shaders.index.replace(/\/shaders\.json$/, "")), assets);
-    this.fontLib = this.fonts && this.fonts.shaders
-      ? new ShaderLib(gl, join(this.dir, this.fonts.shaders.index.replace(/\/shaders\.json$/, "")), assets) : this.lib;
+    this.lib = this.objects.lib;
     this.solid = { white: GLTex.solid(gl, [255, 255, 255, 255], "white"), black: GLTex.solid(gl, [0, 0, 0, 255], "black"),
-                   gray: GLTex.solid(gl, [128, 128, 128, 255], "gray"), bump: GLTex.solid(gl, [128, 128, 255, 255], "bump") };
+      gray: GLTex.solid(gl, [128, 128, 128, 255], "gray"), bump: GLTex.solid(gl, [128, 128, 255, 255], "bump") };
     this.tex = {};
-    const texs = [...Object.entries(this.doc.textures || {}), ...Object.entries(this.fonts ? this.fonts.textures : {})];
-    for (const [name, desc] of texs) {
-      if (this.tex[name]) throw new UIError(`texture name ${name} used twice`);
-      this.tex[name] = await GLTex.load(gl, this.dir, desc, assets);
-    }
-    if (this._fonts) for (const g of this._fonts.browserFonts().values()) this.tex[g.page] = g.texture(gl);   // browser fonts' pages
+    for (const id of this.textures) this.tex[id] = await this.objects.texture(id);
+    for (const [name, desc] of Object.entries(this.fonts?.textures || {}))
+      this.tex[name] = await GLTex.load(gl, this.dir, desc, this.assets);
+    if (this._fonts) for (const g of this._fonts.browserFonts().values()) this.tex[g.page] = g.texture(gl);
     this.materials = {};
-    const add = (lib, mats, keywords) => {
-      for (const [name, m] of Object.entries(mats || {})) {
-        const shader = m.shader.shader, defaults = lib.defaults(shader, this.solid);
-        const num = Object.fromEntries(Object.entries(defaults).filter(([, v]) => typeof v === "number"));
-        this.materials[name] = { lib, shader, keywords: (keywords || {})[name] || [], floats: { ...num, ...m.floats },
-                                 colors: m.colors || {}, defaults };
-        lib.program(shader, 0, this.materials[name].keywords);         // compile up front
-      }
+    const add = (name, m, shader, keywords) => {
+      const lib = this.lib, defaults = lib.defaults(shader, this.solid);
+      const num = Object.fromEntries(Object.entries(defaults).filter(([, v]) => typeof v === "number"));
+      this.materials[name] = { lib, shader, keywords, floats: { ...num, ...m.floats }, colors: m.colors || {}, defaults };
+      lib.program(shader, 0, keywords);
     };
-    add(this.lib, this.doc.materials, this.doc.materialKeywords);
-    if (this.fonts) add(this.fontLib, this.fonts.materials, this.fonts.materialKeywords);
+    for (const [id, m] of this.uiMaterials) add(id, m, m.shader, m.keywords || []);
+    if (this.fonts) for (const [name, m] of Object.entries(this.fonts.materials))
+      add(name, m, this.fonts.shaders[m.shader.shader], this.fonts.materialKeywords[name] || []);
     this.buf = { vao: gl.createVertexArray(), vbo: gl.createBuffer(), ibo: gl.createBuffer() };
   }
 
@@ -237,7 +197,7 @@ export class SimpleUIDoc {
     const img = n.image, sp = img.spriteObj;
     let mesh = UIImage.build(n, img, sp, refPPU);
     if (n.gradient) mesh = UIGradientMod.apply(mesh, n.gradient);
-    return { doc: this, node: n, kind: "image", material: img.material, texture: sp && this.tex ? this.tex[sp.texture.name] : null,
+    return { doc: this, node: n, kind: "image", material: img.material, texture: sp && this.tex ? this.tex[sp.texture.id] : null,
              verts: UIDraw.pack(mesh.verts, n, alpha), idx: Uint32Array.from(mesh.idx) };
   }
 

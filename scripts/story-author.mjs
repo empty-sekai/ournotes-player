@@ -141,7 +141,7 @@ const loadScript = async (site, file) => {
   let base = null;
   if (script.base) {
     try {
-      const languages = Object.keys(site.json(script.base).languages || {});
+      const languages = site.languages(script.base);
       base = await site.base(script.base, languages.includes(script.language) ? script.language : null);
     } catch (e) {
       if (!(e instanceof SiteError)) throw e;

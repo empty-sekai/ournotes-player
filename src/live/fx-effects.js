@@ -22,7 +22,7 @@ import { FxParticleSystem, PS_STOP } from "../engine/particles.js";
 //     UpdateFrame; LiveGameLaneEffectBase.Initialize / SetWidth / Play /
 //     Stop / IsPlaying; Live{Renderer,Particle}OrderInLayerSetter.Awake,
 //     LiveOrderInLayerUtility.GetOrderInLayer.
-//   - Data: the live's objects (LiveObjects): the effect set's LiveNoteEffectAssetSettings (noteeffect.json
+//   - Data: the live's objects (ObjectResources): the effect set's LiveNoteEffectAssetSettings (noteeffect.json
 //     settings) and the lane effects' LiveLaneEffectAssetSettings (notes.json laneEffect), each field a reference to
 //     the LiveNoteEffectAsset / LiveLaneEffectAsset of an effect prefab; the prefabs' prefab.json, controllers and
 //     clips (bindings named by the documents' bindings tables); the score; constants of the scene [EmbScene/Live]
@@ -286,7 +286,7 @@ export class FxSpriteRenderer {
 // One instance of an effect prefab (a root GameObject's prefab.json) inside its pool element: the element
 // GameObject (clone of the scene placeholder container_root/prefabs/<name>, identity, the LiveGameNoteEffectBase /
 // LiveGameLaneEffectBase host) -> placeholder child `root` (identity, _prefabAssetRoot) -> the prefab root.
-//   Components: Animator (its controller and clips through LiveObjects, shared between instances like Unity's
+//   Components: Animator (its controller and clips through ObjectResources, shared between instances like Unity's
 //   assets), SpriteRenderers (FxSpriteRenderer), ParticleSystems (FxParticleSystem, children filled in
 //   hierarchy order), Live{Renderer,Particle}OrderInLayerSetter, LiveNoteEffectAsset / LiveLaneEffectAsset (width
 //   fitting, Play / Stop), AnimationFinishEventTrigger (event at clip.length -> onStop).
@@ -296,7 +296,7 @@ export class FxSpriteRenderer {
 // ENGINE: activation is native; OnEnable / OnDisable run immediately inside SetActive and m_IsActive writes, parent first.
 // The order among siblings has no visible effect here.
 export class FxPrefab {
-  // id: the prefab's root GameObject; opts {objects (LiveObjects), materials (FxMaterials | null), rng (UnityRandom),
+  // id: the prefab's root GameObject; opts {objects (ObjectResources), materials (FxMaterials | null), rng (UnityRandom),
   // parent (Transform of the pool container), name}
   constructor(id, { objects, materials = null, rng = null, parent = null, name = "" } = {}) {
     const pf = Prefab.fromObjects(objects.assets, [id], id);           // a hierarchy of its own per instance
@@ -434,7 +434,7 @@ export class FxPrefab {
   }
 
   // ----------------------------------------------------------------------------------------- Animator
-  // The controller's clips are named for this Animator's node (LiveObjects.controller); `clipList` is
+  // The controller's clips are named for this Animator's node (ObjectResources.controller); `clipList` is
   // runtimeAnimatorController.animationClips, `rawName` the AnimationClip.name AnimationFinishEventTrigger matches.
   _buildAnimator(comp) {
     if (comp.m_KeepAnimatorStateOnDisable || comp.m_WriteDefaultValuesOnDisable || comp.m_UpdateMode !== 0 || comp.m_ApplyRootMotion)
@@ -769,7 +769,7 @@ export const FxContainerChain = (names) => {
 // LiveAllNoteEffectView (LiveGameView/root/LiveGameNoteEffectView): one-shot note effects per judged note and the
 // slide hold loop per held long line. Effects are drawn by LiveEffectCamera (layer 29): camera "effect".
 export class LiveNoteEffects {
-  // opts {objects (LiveObjects), effect (noteeffect.json of the effect set: MasterLiveNoteEffectSkin of NoteEffectId,
+  // opts {objects (ObjectResources), effect (noteeffect.json of the effect set: MasterLiveNoteEffectSkin of NoteEffectId,
   //       its Light set at LiveQuality Low; SoloLiveResourceLoadStateNode.CreateLoadParameter), score
   //       (score/<file>.notes.json), materials (FxMaterials), rng (UnityRandom), sceneInfo (FxScene.read),
   //       judgementRoot3D (localToWorld of judgement_root; default = sceneInfo)}

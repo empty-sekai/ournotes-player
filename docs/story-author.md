@@ -11,7 +11,7 @@ The tool is experimental: the script format and the commands may change between 
 ## Requirements
 
 - Node.js 22 or later.
-- A story site with stories in the model manifest format (`ournotes.story-manifest/2`) and its `models.json`
+- A story site with stories in the story product format (`nnnotes.product/1`) and its `models.json`
   ([story-data-format.md](story-data-format.md)). Pass it with `--site <dir>` or set `OURNOTES_SITE`.
 - For pictures (`render`, `base --out`, `model --out`): Chrome, Chromium or Edge. The tool starts a headless browser
   of its own with a temporary profile and ends it when the command ends. It draws with SwiftShader (WebGL2 on the
@@ -181,10 +181,11 @@ long auto mode then keeps the line before the next one (`_waitTalkTextUnitTime` 
 
 ### build
 
-`build <script> --name <name>`: writes the story into the site as `custom-stories/<name>.json`, a story manifest of
-format `ournotes.story-manifest/2` (advId 0, the script's language only), and adds its own files to `assets/`: the
-compiled `story.json`, `episode.json` and `ui/fonts.json`. Every other file is the base story's or a model's, already
-in the site. A script with errors is not built.
+`build <script> --name <name>` writes `custom-stories/<name>.json`, a `story` product manifest
+(`nnnotes.product/1`, subject `0`) for the script's language. It adds the compiled `story.json`, `episode.json` and
+browser-font `fonts.json` to `assets/`, plus a content-addressed font product manifest under `storyfonts/`.
+The part index refers to the base story's reusable scene, UI, stages and cue sheets, and the cast's model manifests.
+A script with errors is not built.
 
 ### serve
 
@@ -278,7 +279,7 @@ Codes with a known fix are listed under [Fixes](#fixes).
 The tool compiles a script into the story player's data ([story-data-format.md](story-data-format.md)): an
 `episode.json` of the game's command rows (Character, Stage, Bgm, In, Out, Focus, FadeOut, FadeIn, Location, Motion,
 Expression, Talk) with the texts in its text table, a `story.json` naming the models and the music it plays, and the
-base story's `ui/fonts.json` with every font asset drawn by the browser
+base story's font product with every font asset drawn by the browser
 ([browser fonts](story-data-format.md#browser-fonts)): every character of the font family shows, laid out by
 TextMeshPro's rules with the base story's font settings. The other files (stages, talk window, shaders, the player
 settings, the music) are the base story's; the media of its own rows (frames, stills, effects, chat, videos) are left

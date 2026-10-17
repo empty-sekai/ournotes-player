@@ -73,8 +73,8 @@ const lipsAnalyzerFor = (p, info, src) => {
   const ctx = p.ctx;
   let data = lipsData.get(ctx);
   if (data === undefined) {
-    const d = ctx.story && ctx.story.crilips;
-    data = d ? new CriLipsData(ctx.assets.json(d.descriptor), ctx.assets.arrayBuffer(d.data)) : null;
+    const d = ctx.data?.crilips;
+    data = d ? new CriLipsData(d.descriptor, d.data) : null;
     lipsData.set(ctx, data);
   }
   if (!data) return src;
@@ -292,4 +292,3 @@ export const Location = (c, p) => {
     await p.noWait(c, p.ctx.ui.showLocation(name));
   })();
 };
-

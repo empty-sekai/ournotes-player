@@ -1,3 +1,4 @@
+import { componentClass } from "../../engine/prefab.js";
 import { F } from "../../engine/core.js";
 import { UIError } from "../../engine/ugui.js";
 import { StoryCommandError } from "../interfaces.js";
@@ -22,7 +23,7 @@ import { featureSlot, featureState } from "./state.js";
 // tweens paused; Init's deactivation disables the DOTweenSequences (OnDisable: DOKill), which kills the paused tweens of
 // the animations their commands reference. Tweens of other animations stay paused until a callback plays them.
 //
-// AdvStillView (ui/ui.json record `stillView`): _overlay, _background (Awake: its alpha 0), _target. SetStill(s):
+// AdvStillView (story.ui record `stillView`): _overlay, _background (Awake: its alpha 0), _target. SetStill(s):
 // UIAdvWidget.SuppressStillPostEffect, reparented under _target as its last sibling, localPosition 0, ApplyContainedScale
 // (_target scale = min(view width / 1920, view height / 1080), also on every resize). FadeTo(a, d, isShow): hide ->
 // _background DOFade(0) (not awaited); show with a == 0 -> _background DOFade(1) (not awaited); _overlay DOFade(a)
@@ -41,9 +42,10 @@ const STILL_COMPONENTS = new Set(["RectTransform", "CanvasRenderer", "CanvasGrou
 
 // AdvStill with its prefab instance
 export class StillInstance {
-  constructor(view, name, doc) {
+  constructor(view, name, id) {
+    const doc = view.ctx.assets.prefab(id);
     this.view = view; this.name = name;
-    const prefab = this.prefab = new CanvasPrefab(doc.nodes, null, view.screen.canvas.still);
+    const prefab = this.prefab = new CanvasPrefab(doc.nodes, null, view.screen.canvas.still, id);
     this.root = prefab.root;
     const adv = compOf(doc.nodes[0], "AdvStill");
     if (!adv) throw new UIError(`still ${name}: no AdvStill on the root`);
@@ -53,17 +55,17 @@ export class StillInstance {
       node: (p) => prefab.node(p),
       go: (n) => { if (!gos.has(n)) gos.set(n, { gameObject: n.path }); return gos.get(n); },
       abs: (p) => abs.get(p) || [],
-      componentOf: (r) => byRef.get(`${r.gameObject}\u0000${r.class || r.component}`) || null,
+      componentOf: (r) => byRef.get(`${prefab.source.pathOf(r)}\u0000${r.class || r.component}`) || null,
     };
     this.animations = []; this.sequenceComponents = [];
     for (const rec of doc.nodes) {
       const node = prefab.node(rec.path), list = [];
       for (const c of rec.components || []) {
-        const cls = c.class || c.type;
+        const cls = componentClass(c);
         if (!STILL_COMPONENTS.has(cls)) throw new UIError(`still ${name}:${rec.path}: component ${cls} not implemented`);
         let a = null;
-        if (cls === "DOTweenAnimation") { a = new DOTweenAnimation(this.host, node, c); this.animations.push(a); }
-        else if (cls === "DOTweenSequence") { a = new DOTweenSequenceComponent(this.host, node, c); this.sequenceComponents.push(a); }
+        if (cls === "DOTweenAnimation") { a = new DOTweenAnimation(this.host, node, c.fields); this.animations.push(a); }
+        else if (cls === "DOTweenSequence") { a = new DOTweenSequenceComponent(this.host, node, c.fields); this.sequenceComponents.push(a); }
         if (!a) continue;
         list.push(a);
         byRef.set(`${rec.path}\u0000${cls}`, a);
@@ -170,7 +172,7 @@ export class StillView {
     this.ctx = ctx;
     this.screen = storyScreen(ctx);
     this.mgr = storyDOTween(ctx);
-    const { doc, dir } = storyUIDoc(ctx), canvas = this.screen.canvas.still, base = SCREEN_CANVAS_PATH.still;
+    const { doc, prefab } = storyUIDoc(ctx), canvas = this.screen.canvas.still, base = SCREEN_CANVAS_PATH.still;
     const nodes = new Map();
     for (const rec of doc.nodes) {
       if (!rec.path.startsWith(`${base}/`)) continue;
@@ -178,18 +180,19 @@ export class StillView {
       const parent = parentPath === base ? canvas.root : nodes.get(parentPath);
       if (!parent) throw new UIError(`${rec.path}: parent not in the story UI data`);
       const n = new CanvasNode(rec, parent);
-      if (rec.image) {
-        n.image = { ...rec.image, m_Enabled: !!rec.image.m_Enabled, m_Color: { ...rec.image.m_Color },
-                    spriteObj: canvas.uiSprite(doc, rec.image.sprite, dir), material: null };
-        if (rec.image.material) throw new UIError(`${rec.path}: image material not implemented`);
+      const image = compOf(rec, "Image");
+      if (image) {
+        n.image = { ...image, m_Enabled: !!image.m_Enabled, m_Color: { ...image.m_Color },
+          spriteObj: canvas.sprite(image.m_Sprite), material: canvas.material(image.m_Material) };
       }
-      if (rec.rawImage || rec.text || rec.animator) throw new UIError(`${rec.path}: component not implemented on the still canvas`);
+      if (compOf(rec, "RawImage") || compOf(rec, "TextMeshProUGUI") || compOf(rec, "Animator"))
+        throw new UIError(`${rec.path}: component not implemented on the canvas`);
       nodes.set(rec.path, n);
     }
-    const viewRec = doc.nodes.find((r) => r.stillView);
+    const viewRec = doc.nodes.find((r) => compOf(r, "AdvStillView"));
     if (!viewRec || !nodes.has(viewRec.path)) throw new StoryCommandError("the story UI data has no AdvStillView");
-    const sv = viewRec.stillView, get = (p) => {
-      const n = nodes.get(p);
+    const sv = compOf(viewRec, "AdvStillView"), get = (p) => {
+      const n = nodes.get(typeof p === "string" ? p : prefab.pathOf(p));
       if (!n) throw new StoryCommandError(`AdvStillView: ${p} missing`);
       return n;
     };
@@ -224,14 +227,14 @@ export class StillView {
   }
 
   // AdvEpisodeResourceLoader.LoadStill for every Still row with a name (IgnoreData rows are not preloaded)
-  load(doc) {
+  load() {
     for (const c of this.ctx.episode.commands) {
       if (c.cmd !== "Still" || c.IgnoreData) continue;
       const name = c.TargetAssetName ?? "";
       if (!name.trim() || this.stills.has(name)) continue;
-      const d = doc.stills[name];
-      if (!d) throw new StoryCommandError(`still ${name} is not in the story data`);
-      const s = new StillInstance(this, name, d);
+      const d = this.ctx.data.asset(`Adv/Still/${name}`);
+      if (d.objects.length !== 1) throw new StoryCommandError(`still ${name}: expected one prefab root`);
+      const s = new StillInstance(this, name, d.objects[0]);
       this.stills.set(name, s);
       this.list.push(s);
     }
@@ -284,10 +287,8 @@ export const stillView = (ctx) => featureSlot(ctx, "still", () => new StillView(
 export const loadStills = (ctx) => {
   const uses = ctx.episode.commands.some((c) => c.cmd === "Still" && !c.IgnoreData && (c.TargetAssetName ?? "").trim());
   if (!uses) return null;
-  const file = ctx.story && ctx.story.stills;
-  if (!file) throw new StoryCommandError("the story data has no stills.json");
   const v = stillView(ctx);
-  v.load(ctx.assets.json(file));
+  v.load();
   const s = featureState(ctx);
   s.disposers.push(() => v.dispose());
   (s.snapshots = s.snapshots || []).push(() => ({ still: v.snapshot() }));

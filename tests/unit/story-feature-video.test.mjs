@@ -1,3 +1,4 @@
+import { screenResources } from "./story-screen-resources.mjs";
 // Movie / Clip / Subtitles on a real PlayerLoop at 30 fps with synthetic video records and a stand-in UI: the video
 // queue, the view's fades, the clip's frame clock and the timeline Delay rows follow, the clip's end, the stop marker,
 // the Movie's blocking, captions over a clip, the seek re-speed of an audio video on a speed change (the delay
@@ -85,13 +86,14 @@ const makePlayer = (rows, { auto = true } = {}) => {
     isShowingNextIndicator: () => indicator, isShowingTalk: () => false, showAutoButton: log("autoOn"), hideAutoButton: log("autoOff"),
     showFastForwardButton() {}, showVideoButtons: log("videoButtons"), hideVideoButtons() {}, resetPauseVideoButton() {} };
   const docs = { "ui/ui.json": uiDoc(), "videos/videos.json": { videos: { 11: video(11, 60), 12: video(12, 30), 13: video(13, 45, true) } } };
-  const ctx = { loop, ui, gl: null, camera: { setShakeOffset() {} }, field: { root: { localPosition: { ...Z } } },
+  const ctx = { data: { videoFor: (id) => docs["videos/videos.json"].videos[id] }, loop, ui, gl: null, camera: { setShakeOffset() {} }, field: { root: { localPosition: { ...Z } } },
                 background: { root: { localPosition: { ...Z } } },
                 settings: { player: { _waitVideoLingeringTimeOnAutoPlay: 0.3, _waitSubtitlesLingeringTimeOnAutoPlay: 0.1,
                                       _waitTalkTextUnitTime: 0.04, _minTalkDisplayTime: 1.6, _waitAfterVoiceTime: 0.6 } },
                 audio: { stop() {}, play: () => 0, isPlaying: () => false }, localize: (id) => `line ${id}`,
                 episode: { commands: rows.map((r, i) => ({ i, ...r })) }, story: { ui: "ui/ui.json", videos: "videos/videos.json" },
                 assets: { json: (p) => { assert.ok(docs[p], p); return docs[p]; } } };
+  screenResources(ctx, docs["ui/ui.json"], {});
   const p = { ctx, playbackSpeed: 10, cancelled: false, shortCutIndex: -1, isAutoPlay: auto, isPause: false, nextStep: 0, lineIndex: -1,
               session: { voicePlayIds: [], withVoice: true }, errors: [], fail(e) { this.errors.push(e); },
               speedRate() { return this.playbackSpeed / 10; }, get shortcut() { return this.shortCutIndex >= 0; },

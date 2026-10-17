@@ -13,9 +13,9 @@ import { AdvCamera } from "../../src/story/field.js";
 import { StoryRenderer } from "../../src/story/renderer.js";
 import { headlessGL } from "../../scripts/lib/headless.mjs";
 
-const cameraNode = (extra = {}) => ({ path: "CameraManager/MainCamera", components: [{ type: "Camera",
+const cameraNode = (extra = {}) => ({
   "near clip plane": 0.3, "far clip plane": 5000, "field of view": 60, orthographic: false, "orthographic size": 2,
-  m_BackGroundColor: { r: 1, g: 1, b: 1, a: 1 }, ...extra }] });
+  m_BackGroundColor: { r: 1, g: 1, b: 1, a: 1 }, ...extra });
 
 // a program with the given default-block uniforms ([name, type, size]) and one uniform block of vec4 / matrix members
 // ([name, offset in bytes]), as UnityProgram reads a linked program's inputs

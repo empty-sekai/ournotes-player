@@ -22,8 +22,9 @@ const localToWorld = Transform.prototype.localToWorld;
 // session}; `lib`: the ShaderLib of the story's shaders (stage, post-processing); `assets`: the story's AssetStore.
 // Each character draws with its model's own shaders (addCharacter).
 export class StoryRenderer {
-  constructor(gl, lib, scene, quality, loop, { assets } = {}) {
+  constructor(gl, lib, scene, quality, loop, { assets, objects } = {}) {
     this.gl = gl; this.lib = lib; this.scene = scene; this.quality = quality; this.loop = loop; this.assets = assets;
+    this.objects = objects;
     if (!gl.getExtension("EXT_color_buffer_float")) throw new Error("EXT_color_buffer_float is required");
     gl.frontFace(gl.CW);                    // Unity's front-face convention with its world-to-camera matrix
     this.characters = [];                   // {ch: Live2DCharacter, gl: Live2DDrawing}
@@ -41,7 +42,7 @@ export class StoryRenderer {
   // (CreateAdvViewport never pillarboxes)
   grainOptions() { return { grain: this.grain, grainScale: this.grainScale, grainIntensity: this.filmGrain }; }
 
-  async load(base = "") {
+  async load() {
     const gl = this.gl;
     this.tex = {
       white: GLTex.solid(gl, [255, 255, 255, 255], "white"),
@@ -53,21 +54,21 @@ export class StoryRenderer {
     this.sprites = new Map();
     for (const st of this.scene.stageData.values()) {
       const sp = st.backgroundSprite;
-      if (!sp || this.sprites.has(sp.sprite)) continue;
+      if (!sp || this.sprites.has(sp.id)) continue;
       const pos = new Float32Array(sp.vertices.flat()), uv = new Float32Array(sp.uv.flat());
-      this.sprites.set(sp.sprite, { texture: await GLTex.load(gl, base, sp.texture, this.assets),
+      this.sprites.set(sp.id, { texture: await this.objects.texture(sp.texture.id),
                                     pos: this._buffer(pos), uv: this._buffer(uv),
                                     idx: this._buffer(new Uint16Array(sp.indices), gl.ELEMENT_ARRAY_BUFFER),
                                     count: sp.indices.length, bounds: StoryRenderer.bounds(sp.vertices) });
     }
     // background plane mesh (built-in "Plane")
-    const m = this.scene.background.planeMesh;
+    const m = this.objects.mesh(this.scene.background.planeMesh);
     if (m.submeshes.length !== 1) throw new Error("plane mesh submeshes");
     this.plane = { pos: this._buffer(new Float32Array(m.vertices.flat())), uv: this._buffer(new Float32Array(m.uv0.flat())),
                    idx: this._buffer(new Uint16Array(m.submeshes[0]), gl.ELEMENT_ARRAY_BUFFER),
                    count: m.submeshes[0].length, bounds: StoryRenderer.bounds(m.vertices) };
     // post textures: film grain by FilmGrain.type, neutral colour curves, internal LUT
-    this.grain = await URPPost.loadGrain(gl, this.scene.postTextures.filmGrainTex, (d) => GLTex.load(gl, base, d));
+    this.grain = await URPPost.loadGrain(gl, this.scene.postTextures.filmGrainTex, (id) => this.objects.texture(id));
     this.post.initLut();
     for (const c of this.characters) { c.gl.white = this.tex.white; await c.gl.loadTextures(); c.gl.prepare(); }
   }
@@ -287,7 +288,7 @@ export class StoryRenderer {
     items.push({ sortingOrder: bg.planeRenderer.m_SortingOrder ?? -100, dist: this._distance(bg.planeTransform, this.plane.bounds.center),
                  draw: (frame) => this._drawPlane(frame) });
     if (bg.sprite) {
-      const s = this.sprites.get(bg.sprite.sprite);
+      const s = this.sprites.get(bg.sprite.id);
       items.push({ sortingOrder: bg.spriteRenderer.m_SortingOrder, dist: this._distance(bg.spriteTransform, s.bounds.center),
                    draw: (frame) => this._drawSprite(frame, s) });
     }
@@ -346,7 +347,7 @@ export class StoryRenderer {
   }
 
   _drawPlane(frame) {
-    const bg = this.scene.background, mat = bg.planeRenderer.m_Materials[0], shader = mat.shader.shader;
+    const bg = this.scene.background, mat = this.objects.material(bg.planeRenderer.m_Materials[0]), shader = mat.shader;
     const prog = this.lib.program(shader, 0, mat.keywords);
     prog.apply([this._perObject(bg.planeTransform, 12), ...this._material(mat, shader), frame.globals]);
     applyState(this.gl, this.lib.state(shader, 0, mat.floats));
@@ -355,7 +356,7 @@ export class StoryRenderer {
   }
 
   _drawSprite(frame, s) {
-    const bg = this.scene.background, sr = bg.spriteRenderer, mat = sr.m_Materials[0], shader = mat.shader.shader;
+    const bg = this.scene.background, sr = bg.spriteRenderer, mat = this.objects.material(sr.m_Materials[0]), shader = mat.shader;
     const prog = this.lib.program(shader, 0, mat.keywords);
     const c = bg.color, rc = sr.m_Color;
     prog.apply([{ _MainTex: s.texture, unity_SpriteColor: [rc.r * c.r, rc.g * c.g, rc.b * c.b, rc.a * c.a],

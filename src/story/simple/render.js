@@ -52,7 +52,17 @@ export class CameraTargetRenderer {
   }
 }
 
-export const cameraTargetDesc = (host) => (host && host.cameraTarget ? host.cameraTarget : DEFAULT_CAMERA_TARGET);
+export const cameraTargetDesc = (host, objects) => {
+  if (!host?.cameraTarget) return DEFAULT_CAMERA_TARGET;
+  const p = objects.prefab(host.cameraTarget), f = p.find("CameraTargetRenderer").c.fields;
+  const cameraPath = p.pathOf(f._captureCamera), stagePath = p.pathOf(f._stage);
+  const camera = p.fields(cameraPath, "Camera"), node = p.nodes.get(cameraPath).node;
+  return { container: p.nodes.get(cameraPath.slice(0, cameraPath.lastIndexOf("/"))).node,
+    stage: p.nodes.get(stagePath).node,
+    camera: { ...node, fieldOfView: camera["field of view"], near: camera["near clip plane"], far: camera["far clip plane"],
+      orthographic: !!camera.orthographic, orthographicSize: camera["orthographic size"],
+      clearFlags: camera.m_ClearFlags, backgroundColor: camera.m_BackGroundColor } };
+};
 
 // The GL side: Live2D drawings of the loaded characters and the slots' capture textures.
 export class SimpleCaptureRenderer {

@@ -23,7 +23,7 @@ export const LiveLightWeightBackground = {
   ROOT: "Live/RenderCanvas/LightWeightCompositeRoot",
   LAYERS: ["Layer_JacketLarge", "Layer_BaseWhite", "Layer_JacketSmall", "Layer_StageBg"],   // CreateCompositedRenderTexture array order
 
-  // normalised layer rects in the root (pure); objects: LiveObjects, sprites: {stage, jacket} (the band's LightWeight
+  // normalised layer rects in the root (pure); objects: ObjectResources, sprites: {stage, jacket} (the band's LightWeight
   // background sprite, the music's jacket sprite: object ids)
   layers(objects, prefab, sprites) {
     const root = prefab.nodes.get(LiveLightWeightBackground.ROOT).node;

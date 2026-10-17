@@ -528,7 +528,6 @@ Every `ENGINE:` note in `src/`, by file. `npm test` checks that this list matche
 - the ambient probe of a Flat ambient is built natively from the ambient colour; a white Flat ambient is taken as
 - the default reflection of a Skybox-mode scene without a skybox material (and without a custom cube) is taken
 - unity_LightData (native per-object light data): x the offset of the per-object light indices (0), y their
-- atlas page texture import settings are not in the data; bilinear, clamped, no mipmaps here.
 - a Skybox clear without a skybox material clears to the background colour.
 
 **`src/story/simple/home/room.js`**

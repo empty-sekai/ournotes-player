@@ -19,7 +19,7 @@ import { DOTRunner, DOTSequence, UIAffine, UIDraw, UIError, UIImage, UILayout, U
 //   LiveCanvasOrderInLayerSetter.Awake + LiveOrderInLayerUtility.GetOrderInLayer (100 -> 10000);
 //   DOTween: the DOTween model in engine/ugui.js (Punch, SetPunch, Vector3ArrayPlugin and the Sequence cycle follow
 //   the game's DOTween build; the rest follows DOTween's documented behaviour).
-// Data: the scene product through LiveObjects: scene.json `scene` (the nodes under Live/LiveUICanvas),
+// Data: the scene product through ObjectResources: scene.json `scene` (the nodes under Live/LiveUICanvas),
 // prefabs.judgeEffectView (UILiveNoteJudgeEffectView), spriteAssets.judgement / combo (LiveJudgementSpriteAsset,
 // LiveComboSpriteAsset), the UILiveCombo Animator's controller and clips (bindings named for that Animator), the sprites
 // and textures they reference, and UI/Default from the shader name table.
@@ -50,7 +50,7 @@ export const liveComp = (rec, cls) => {
 // The fields UINode reads (path, name, active, rect, localRotation, localScale, canvasGroup) plus the components
 // this module uses; graphics other than Image / TextMeshProUGUI do not occur in the subset (checked).
 export class LiveUITree {
-  // objects: LiveObjects (the sprites and their textures)
+  // objects: ObjectResources (the sprites and their textures)
   constructor(refPPU, objects) {
     this.refPPU = refPPU;
     this.objects = objects;
@@ -329,7 +329,7 @@ export class LiveUIFx {
   // (Only matters if Init / Add arrive inside a running Init fade, which auto play at Perfect never does.)
   // settings: the live settings (settings.js) read by LiveUIView.Initialize (ComboCountDisplay 206,
   // ContinuationEffectDisplay 208, JudgeResultPositionType 103); absent: the defaults.
-  // objects: LiveObjects; scene: scene.json
+  // objects: ObjectResources; scene: scene.json
   constructor(gl, { objects, scene, settings = null }, opts = {}) {
     this.gl = gl;
     this.objects = objects;

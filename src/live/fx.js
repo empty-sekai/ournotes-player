@@ -24,7 +24,7 @@ import { LiveIntroStars } from "./particles.js";
 // (The sync is PostLateUpdate ParticleSystemEndUpdateAll, so stepping in the animation phase is equivalent for drawing.)
 
 export class LiveFx {
-  // gl may be null (Node tests). objects = the live's LiveObjects; scene, notes, effect = scene.json, notes.json and
+  // gl may be null (Node tests). objects = the live's ObjectResources; scene, notes, effect = scene.json, notes.json and
   // the selected effect set's noteeffect.json; score = score/<file>.notes.json. introStars = () => stage.intro.stars()
   // (the 7 lane-in star emitters of the start timeline; the session constructs LiveFx after the stage so that this
   // object's animation hook runs after the timeline evaluation of the frame, as Unity's DirectorUpdateAnimation precedes

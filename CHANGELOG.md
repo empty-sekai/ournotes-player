@@ -2,6 +2,21 @@
 
 All notable changes to this package. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Story products
+
+- Story loading, playback and authoring use `nnnotes.product/1` manifests with shared object resources and language-specific UI and fonts.
+- Home and live-result stories resolve their host prefabs, room geometry, Spine materials and animation bindings by object identity.
+- Data validation checks the story product graph, font bindings, shader variants, audio files and model dependencies. `--lang` selects an explicit language scope.
+- Node story loading accepts a manifest or a product layout containing exactly one story.
+
+### Bug fixes
+
+- Keep Spine index uploads from changing another renderer's vertex array.
+- Keep model and shared-object validation caches independent.
+- Clear loading text after language changes and display configured audio volumes in the controls.
+
 ## [0.1.8](https://github.com/empty-sekai/ournotes-player/compare/v0.1.7..v0.1.8) — 2026-10-16
 
 ### Features
@@ -174,6 +189,4 @@ All notable changes to this package. Versions follow [Semantic Versioning](https
 - install from GitHub until the package is on npm
 - add performance.md: the CPU cost of a frame
 - a file holds each controller and clip once; the validator checks every reference _(story)_
-
-
 

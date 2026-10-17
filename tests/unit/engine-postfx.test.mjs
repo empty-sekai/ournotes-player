@@ -318,11 +318,11 @@ test("film grain: renderer textures by type, a custom texture, none without text
   const tiling = g.v("_Grain_TilingParams");
   assert.deepEqual(tiling.slice(0, 2), [1280 / 256, 720 / 256]);
   assert.deepEqual(tiling.slice(2), URPPost.grainOffsets(7));
-  const desc = { texture: "textures/custom.png", name: "custom", width: 64, height: 32, mipCount: 1 };
+  const desc = { $ref: { file: "texture", pathId: "1" } };
   assert.ok(!uberOf([P("FilmGrain", { type: 10, intensity: 1 })]).b.keywords.includes("_FILM_GRAIN"));
-  assert.throws(() => uberOf([P("FilmGrain", { type: 10, intensity: 1, texture: desc })]), /custom not loaded/);
+  assert.throws(() => uberOf([P("FilmGrain", { type: 10, intensity: 1, texture: desc })]), /texture:1 not loaded/);
   const r = rig(), custom = r.tex(64, 32, "custom");
-  r.post.volumeTextures.set(desc.texture, custom);
+  r.post.volumeTextures.set("texture:1", custom);
   r.post.uber(URPPost.evaluateStack([vol([P("FilmGrain", { type: 10, intensity: 1, texture: desc })])]), r.src, r.o.black, r.dst, r.o);
   assert.equal(r.blits[0].value("_Grain_Texture"), custom);
   assert.deepEqual(r.blits[0].value("_Grain_TilingParams").slice(0, 2), [20, 22.5]);
@@ -346,16 +346,17 @@ test("film grain: the tiling follows the game camera's pixels (grainScale), grai
 test("loadVolumeTextures loads the overridden texture parameters once, with the uber pass's samplers", async () => {
   const r = rig();
   const images = [];
-  const assets = { image: async (p) => { images.push(p); return { width: 64, height: 32, close() {} }; } };
-  const desc = { texture: "textures/custom.png", name: "custom", width: 64, height: 32, mipCount: 1,
-                 settings: { m_FilterMode: 0, m_WrapU: 1, m_WrapV: 1 } };
+  const desc = { $ref: { file: "texture", pathId: "1" } };
+  const objects = { id: (v) => `${v.$ref.file}:${v.$ref.pathId}`, texture: async (id) => {
+    images.push(id); return r.tex(64, 32, id);
+  } };
   const prof = { components: [P("FilmGrain", { type: 10, intensity: 1, texture: desc }),
-                              { asset: "Bloom", active: 1, dirtTexture: { m_OverrideState: 0, m_Value: { ...desc, texture: "textures/dirt.png" } } }] };
+    { asset: "Bloom", active: 1, dirtTexture: { m_OverrideState: 0, m_Value: { $ref: { file: "texture", pathId: "2" } } } }] };
   r.calls.length = 0;
-  await r.post.loadVolumeTextures("base", [prof, prof], assets);
+  await r.post.loadVolumeTextures([prof, prof], objects);
   assert.equal(images.length, 1);
-  assert.ok(r.post.volumeTextures.has("textures/custom.png"));
-  assert.ok(!r.post.volumeTextures.has("textures/dirt.png"));
+  assert.ok(r.post.volumeTextures.has("texture:1"));
+  assert.ok(!r.post.volumeTextures.has("texture:2"));
   const params = r.calls.filter((c) => c.name === "texParameteri").map((c) => c.args.slice(1));
   assert.deepEqual(params.slice(-4), [[r.gl.TEXTURE_MAG_FILTER, r.gl.LINEAR], [r.gl.TEXTURE_MIN_FILTER, r.gl.LINEAR],
                                       [r.gl.TEXTURE_WRAP_S, r.gl.REPEAT], [r.gl.TEXTURE_WRAP_T, r.gl.REPEAT]]);

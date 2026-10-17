@@ -1,0 +1,239 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "$id": "https://raw.githubusercontent.com/empty-sekai/ournotes-player/main/schema/story-simple-ui.schema.json",
+  "title": "Simple story UI objects",
+  "required": [
+    "uiManager",
+    "language",
+    "graphics",
+    "texts",
+    "textStyle",
+    "bindings",
+    "shaders",
+    "format",
+    "settings",
+    "talkWindow",
+    "systemMessage"
+  ],
+  "properties": {
+    "uiManager": {
+      "type": "string",
+      "pattern": "^.+:-?[0-9]+$"
+    },
+    "language": {
+      "type": "object",
+      "title": "Story UI language settings",
+      "required": [
+        "code",
+        "mode",
+        "field",
+        "lineSpacing",
+        "fontNames",
+        "additionalFontNames",
+        "materialTypes",
+        "fontSwap"
+      ],
+      "properties": {
+        "code": {
+          "enum": [
+            "ja",
+            "en",
+            "zh-Hant",
+            "zh-Hans",
+            "ko"
+          ]
+        },
+        "mode": {
+          "enum": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "field": {
+          "enum": [
+            "japanese",
+            "english",
+            "traditionalChinese",
+            "simplifiedChinese",
+            "korean"
+          ]
+        },
+        "lineSpacing": {
+          "type": "number"
+        },
+        "fontNames": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "additionalFontNames": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "materialTypes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "fontSwap": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "graphics": {
+      "type": "object",
+      "required": [
+        "graphics"
+      ],
+      "properties": {
+        "graphics": {
+          "type": "string",
+          "pattern": "^.+:-?[0-9]+$"
+        },
+        "player": {
+          "type": "string",
+          "pattern": "^.+:-?[0-9]+$"
+        },
+        "quality": {
+          "type": "string",
+          "pattern": "^.+:-?[0-9]+$"
+        }
+      }
+    },
+    "texts": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "localized",
+          "style"
+        ],
+        "properties": {
+          "localized": {
+            "type": "object",
+            "required": [
+              "fontAsset",
+              "material",
+              "lineSpacing"
+            ],
+            "properties": {
+              "fontAsset": {
+                "type": "string",
+                "minLength": 1
+              },
+              "material": {
+                "type": "string",
+                "minLength": 1
+              },
+              "lineSpacing": {
+                "type": "number"
+              }
+            }
+          },
+          "style": {
+            "type": "object"
+          }
+        }
+      },
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^.+:-?[0-9]+$"
+      }
+    },
+    "textStyle": {
+      "type": "object"
+    },
+    "bindings": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "path",
+                "attribute"
+              ],
+              "properties": {
+                "path": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "attribute": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^.+:-?[0-9]+$"
+          }
+        }
+      },
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^.+:-?[0-9]+$"
+      }
+    },
+    "shaders": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^.+:-?[0-9]+$"
+      }
+    },
+    "format": {
+      "const": "nnnotes.story-simple-ui/1"
+    },
+    "settings": {
+      "type": "object",
+      "required": [
+        "dotween",
+        "tmpSettings",
+        "localizeManager"
+      ],
+      "properties": {
+        "dotween": {
+          "type": "string",
+          "pattern": "^.+:-?[0-9]+$"
+        },
+        "tmpSettings": {
+          "type": "string",
+          "pattern": "^.+:-?[0-9]+$"
+        },
+        "localizeManager": {
+          "type": "string",
+          "pattern": "^.+:-?[0-9]+$"
+        }
+      }
+    },
+    "talkWindow": {
+      "type": "string",
+      "pattern": "^.+:-?[0-9]+$"
+    },
+    "systemMessage": {
+      "type": "string",
+      "pattern": "^.+:-?[0-9]+$"
+    }
+  }
+}

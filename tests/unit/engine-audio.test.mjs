@@ -47,6 +47,26 @@ test("playbackSpeed: [0.25, 3], within max(|s|, 1) x 1e-6 of 1 plays as is", () 
   assert.throws(() => playbackSpeed(NaN), /outside/);
 });
 
+test("episode sound preload uses the cue product's resolved waveform path", async () => {
+  const meta = { file: "sounds/sheet-a/waveforms/voice.flac", sampleRate: 48000, samples: 48000, categories: ["Voice"] };
+  const episode = { sounds: { 7: { _soundCueSheetID: 3, _cueName: "hello", _category: 0 } },
+    cuesheets: { 3: { _cueSheetName: "sheet-a" } } };
+  const reads = [], context = fakeContext();
+  context.decodeAudioData = async () => context.buffer(1, 48000, 48000);
+  const resolve = Audio.episodeResolver(episode, { cues: (name) => {
+    assert.equal(name, "sheet-a"); return { hello: meta };
+  } });
+  const audio = new Audio(resolve, { time: 0 }, { context, assets: {
+    arrayBuffer: (path) => { reads.push(path); return new ArrayBuffer(0); },
+  } });
+  await audio.preload([7, 7]);
+  assert.deepEqual(reads, [meta.file]);
+  assert.equal(audio.buffers.get("sheet-a/hello").meta, meta);
+  const id = audio.play(7);
+  assert.equal(audio.get(id).gain.to, audio.buses[SOUND_CATEGORY.Voice]);
+  assert.equal(audio.get(id).category, SOUND_CATEGORY.Bgm);
+});
+
 test("option volumes multiply the category bus; All scales by DefaultVolume, a name sets it as is", () => {
   const ctx = fakeContext();
   const a = new Audio(() => null, { time: 0 }, { context: ctx });

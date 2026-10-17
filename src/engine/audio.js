@@ -1,7 +1,7 @@
 // Audio: sound playback with the game's SoundManager semantics over decoded CRI cues
-// (audio/<cueSheet>/<cue>.flac + cues.json), and SoundCategoryVolumes (the CRI category volumes).
+// and SoundCategoryVolumes (the CRI category volumes).
 //
-// A master sound id resolves to {sheet, cue, category, row} through the resolver
+// A master sound id resolves to {sheet, cue, category, row, meta} through the resolver
 // passed to the constructor (LiveSoundManager: the sounds of live-audio.json; a story: Audio.episodeResolver over
 // the episode's -Sound / -SoundCueSheet rows). The row is a MasterSound record ({_category, _soundCueSheetID,
 // _cueName, ...}).
@@ -210,15 +210,15 @@ export class Audio {
   async suspend() { if (this.ctx.state === "running") await this.ctx.suspend(); }
 
   // The resolver of a story episode: sound id -> its -Sound row (episode.sounds) -> the row's -SoundCueSheet row
-  // (episode.cuesheets) -> {sheet: _cueSheetName, cue: _cueName, category: _category, row}; the cue's waveform is
-  // audio/<sheet>/<file of the cue in audio/<sheet>/cues.json>.
-  static episodeResolver(episode) {
+  // (episode.cuesheets), with cue metadata and a product-relative waveform path from StoryData.
+  static episodeResolver(episode, data) {
     return (soundId) => {
       const s = episode.sounds[String(soundId)];
       if (!s) throw new Error(`sound ${soundId} not in the episode's -Sound rows`);
       const sheet = episode.cuesheets[String(s._soundCueSheetID)];
       if (!sheet) throw new Error(`cue sheet ${s._soundCueSheetID} not in the episode's -SoundCueSheet rows`);
-      return { sheet: sheet._cueSheetName, cue: s._cueName, category: s._category, row: s };
+      return { sheet: sheet._cueSheetName, cue: s._cueName, category: s._category, row: s,
+               meta: data.cues(sheet._cueSheetName)[s._cueName] };
     };
   }
 
@@ -232,7 +232,7 @@ export class Audio {
     for (const id of soundIds) {
       const c = this.cueOf(id), key = `${c.sheet}/${c.cue}`;
       if (this.buffers.has(key)) continue;
-      const meta = this.assets.json(`audio/${c.sheet}/cues.json`)[c.cue];
+      const meta = c.meta;
       if (!meta) {
         // a sound row whose cue the sheet does not hold (a line listed with a voice that was never shipped): it
         // plays as an empty sound, so the line runs on and the rest of the episode is not held back
@@ -242,7 +242,7 @@ export class Audio {
         continue;
       }
       // decoded at the context's rate; the loop points below are converted to seconds with the cue's own rate
-      const buf = await this.ctx.decodeAudioData(this.assets.arrayBuffer(`audio/${c.sheet}/${meta.file}`));
+      const buf = await this.ctx.decodeAudioData(this.assets.arrayBuffer(meta.file));
       this.buffers.set(key, { buf, meta });
     }
   }

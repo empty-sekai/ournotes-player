@@ -1,4 +1,3 @@
-import { join } from "../../../engine/core.js";
 import { mat4 } from "../../../engine/math.js";
 import { roomMeshes } from "./glb.js";
 
@@ -32,23 +31,14 @@ export const parseQueueTag = (v) => {
   return base + (m[2] ? Number(m[2].replace(/\s/g, "")) : 0);
 };
 
-// The parsed shader summaries of a packed shader directory (shaders.json + <name>.json), read from the store
+// Parsed shader objects addressed by id, with the product's Shader.Find name table.
 export class ShaderInfo {
-  constructor(store, base) {
-    this.store = store; this.base = base;
-    this.index = new Map(store.json(join(base, "shaders.json")).map((r) => [r.name, r]));
-    this.parsed = new Map();
-  }
+  constructor(objects) { this.objects = objects; }
 
-  has(name) { return this.index.has(name); }
+  has(name) { return !!this.objects.shaderNames[name] || this.objects.assets.hasObject(name); }
 
   info(name) {
-    if (!this.parsed.has(name)) {
-      const rec = this.index.get(name);
-      if (!rec) throw new Error(`shader not packed: ${name}`);
-      this.parsed.set(name, this.store.json(join(this.base, rec.parsed)));
-    }
-    return this.parsed.get(name);
+    return this.objects.shaderInfo(this.objects.shaderNames[name] || name);
   }
 
   // the SubShader URP uses: the first whose RenderPipeline tag is absent or UniversalPipeline
@@ -95,21 +85,25 @@ const distance = (M, c, cam) => {
   return Math.hypot(p.x - cam.x, p.y - cam.y, p.z - cam.z);
 };
 
-// The room: glb nodes joined with host.json roomNodes (same order) and roomMaterials (glb material order).
+// Room geometry and its summary share node and material order. The host supplies activation and queue overrides.
 export class SpotRoom {
-  constructor(glb, home, shaders) {
+  constructor(glb, summary, state, objects, shaders) {
     this.glb = glb;
     this.meshes = roomMeshes(glb);
-    const nodes = home.roomNodes, mats = home.roomMaterials;
+    const nodes = summary.nodes.map(({ path }) => {
+      if (!state.nodes[path]) throw new Error(`room node ${path}: no background state`);
+      return { path, ...state.nodes[path] };
+    });
+    const mats = summary.materialIds.map((id) => objects.material(id));
     if (!Array.isArray(nodes) || nodes.length !== this.meshes.length)
-      throw new Error(`home.roomNodes: ${nodes ? nodes.length : "none"} entries for ${this.meshes.length} glb nodes`);
+      throw new Error(`room nodes: ${nodes.length} entries for ${this.meshes.length} glb nodes`);
     const glbMats = glb.json.materials || [];
     if (!Array.isArray(mats) || mats.length !== glbMats.length)
-      throw new Error(`home.roomMaterials: ${mats ? mats.length : "none"} entries for ${glbMats.length} glb materials`);
+      throw new Error(`room materials: ${mats.length} entries for ${glbMats.length} glb materials`);
     mats.forEach((m, i) => {
-      if (glbMats[i].name !== undefined && m.name !== glbMats[i].name)
-        throw new Error(`home.roomMaterials[${i}] ${m.name} is not glb material ${glbMats[i].name}`);
-      if (!shaders.has(m.shader)) throw new Error(`home.roomMaterials[${i}]: shader ${m.shader} not packed`);
+      if (glbMats[i].name !== undefined && m.material !== glbMats[i].name)
+        throw new Error(`room material ${m.material} is not glb material ${glbMats[i].name}`);
+      if (!shaders.has(m.shader)) throw new Error(`room material ${m.material}: shader ${m.shader} not packed`);
     });
     this.materials = mats;
     this.nodes = nodes;

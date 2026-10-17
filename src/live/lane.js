@@ -105,7 +105,7 @@ export const LiveLaneLayout = {
   },
 
   // the lane skin's sprites (scene.json laneSkins[settings.laneSkin]: lane_base, lane_tap_area, out_side_line) as
-  // LiveObjects sprites
+  // ObjectResources sprites
   skin(objects, scene) {
     const ids = scene.laneSkins[scene.settings.laneSkin];
     if (!ids) throw new Error(`lane skin ${scene.settings.laneSkin} missing`);
@@ -371,7 +371,7 @@ export const LIVE_UI_DEAD_INPUTS = { _ClipRect: [-32767, -32767, 32767, 32767], 
 LiveLane.QUEUE = { Background: 1000, Geometry: 2000, AlphaTest: 2450, Transparent: 3000, Overlay: 4000 };
 
 // Material.renderQueue: the material's custom queue (m_CustomRenderQueue >= 0), else the shader's "Queue" tag
-// ("Transparent", "Geometry+1", ...) of subshader 0. `mat`: a LiveObjects material.
+// ("Transparent", "Geometry+1", ...) of subshader 0. `mat`: a ObjectResources material.
 LiveLane.queue = (lib, mat) => {
   if (mat.renderQueue >= 0) return mat.renderQueue;
   const tags = lib.info(mat.shader).subShaders[0].tags;

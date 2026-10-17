@@ -27,12 +27,10 @@ interpreter's commands, every `AdvCommand` has a handler (`registeredCommands()`
 
 ## Data
 
-The features read the media files that `story.json` names (`frames`, `stills`, `videos`, `effects`, `postEffects`,
-`chat`) and the story UI data (`ui/ui.json`: the video, still, frame and screen canvases, the video and still camera,
-the screen image, the story UI shaders; `ui/fonts.json` `frameTexts`: the text bindings of the frames' text nodes).
-A file is read only when the episode has rows that use it. When a record
-contradicts what the player implements (a canvas with another render mode or scaler, a camera with other clear flags,
-projection, volume mask or volume update mode), the episode is refused with the record's path.
+The features resolve `story.json.parts.assets`, `.videos` and `.chat` products. Prefab components hold the media
+fields, canvas and camera settings; object ids identify textures, meshes, materials, clips and controllers.
+The story UI product supplies its canvas prefabs, and the font product binds text by TMP component id.
+A setting outside the implemented subset is reported with its object or node path when the feature is initialized.
 
 ## What is drawn
 
@@ -76,9 +74,8 @@ projection, volume mask or volume update mode), the episode is refused with the 
   copies the first one), the sender identity and read labels, the typing box and its height, the typing padding of the
   timeline and the scroll to the bottom. The canvas is a layer 11 renderer of the field (sorting order 10000, at the
   canvas' plane distance): in the camera's list, or after the offscreen composite while the foreground entry is active.
-  A drawing session needs the story UI's chat data (`ui/ui.json` `chatWidget` and `chatTexts`, `ui/fonts.json`
-  `chatTexts`) and refuses a chat episode without it; a headless session with that data lays the phone out as well,
-  without it it keeps the same state without the layout (the scroll tweens run on a 0 position).
+  The story UI product references `chatWidget`, chat window/icon/stamp products provide their prefabs, and
+  `story.fonts.texts` binds their TMP components. A missing binding is reported with the component's identity.
 
 ## What is not drawn
 

@@ -1,3 +1,4 @@
+import { uiTextBinding } from "../ui-objects.js";
 import { F } from "../../engine/core.js";
 import { uiCanvasSize } from "../../engine/ugui.js";
 import { StoryCommandError } from "../interfaces.js";
@@ -12,7 +13,7 @@ import { featureSlot, featureState } from "./state.js";
 // phone's foreground entry on the field renderer (AdvForegroundFieldRendererEntry). The view does what AdvChatView
 // does to the window's objects: screen modes and slides, the bubbles (copies of the window's node templates) and the
 // lock-screen timeline, identities and read labels, the typing box, the scroll positions. With the story UI's chat data
-// (ui/ui.json `chatWidget`, ui/fonts.json `chatTexts`) the window is a laid-out uGUI tree (ui-chat.js) and a drawing
+// (story.ui `chatWidget`, story.fonts `texts`) the window is a laid-out uGUI tree (ui-chat.js) and a drawing
 // session draws it on the ADV camera; without it (a headless session over other data) the same state is kept without
 // the layout, the scroll tweens running on a 0 position.
 
@@ -26,7 +27,7 @@ export const CHAT_WIDGET = Object.freeze({
   typingTextBoxMinHeight: 63, screenModeTransitionDuration: 0.18, screenModeTransitionEase: 9,
   incomingCallPositionOffset: Object.freeze({ x: 0, y: 0 }), targetPosition: Object.freeze({ x: 0, y: 0 }),
 });
-// the AdvChatView record of ui/ui.json `chatWidget` in CHAT_WIDGET's form
+// the AdvChatView record of story.ui `chatWidget` in CHAT_WIDGET's form
 const widgetConfig = (phone) => {
   if (!phone) return CHAT_WIDGET;
   const v = phone.chatView, t = phone.target.anchoredPosition;
@@ -126,7 +127,7 @@ export class ChatWindow {
     this.nodes = built.nodes; this.root = built.root;
     const w = compOf(this.root.raw, "AdvChatWindow");
     if (!w) throw new StoryCommandError(`chat window ${name}: no AdvChatWindow`);
-    const node = (r) => (r ? this._node(r.gameObject || r.transform) : null);
+    const node = (r) => (r ? this._node(host.pathOf(r)) : null);
     this.normal = node(w._normalScreenObject); this.lock = node(w._lockScreenObject); this.incoming = node(w._incomingCallObject);
     this.chatNodeParent = node(w._chatNodeParent); this.lockChatNodeParent = node(w._lockChatNodeParent);
     this.scrollRect = node(w._scrollRect); this.lockScrollRect = node(w._lockScrollRect);
@@ -181,7 +182,7 @@ export class ChatWindow {
   }
 
   // RefreshStatusTexts: LocalizeText.SetMasterTextId of the two status texts (their text: the MasterText in the
-  // language, ui/ui.json `chatStatusTexts`)
+  // language, story.ui `chatStatusTexts`)
   refreshStatusTexts(statusTexts) {
     this.text.status = [this.statusKeys.incoming, this.statusKeys.lock];
     for (const [n, key] of this.statusTexts) {
@@ -270,7 +271,7 @@ const chatNodeParts = (root) => {
   const c = compOf(root.raw, "AdvMyChatNode") || compOf(root.raw, "AdvOtherChatNode");
   const get = (r) => {
     if (!r) return null;
-    const n = root.lookup.get(r.gameObject || r.transform);
+    const n = root.lookup.get(root.pathOf(r));
     if (!n || (n !== root && !isUnder(n, root))) throw new StoryCommandError(`${root.src}: ${r.gameObject || r.transform} is outside the chat node`);
     return n;
   };
@@ -317,7 +318,7 @@ const typingTask = (loop, plain, total, delaySec, setVisible, cancelled) => {
 };
 
 export class ChatView {
-  // phone: the laid-out widget (ChatCanvasUI) or null; statusTexts: ui/ui.json `chatStatusTexts`; sprite(kind, name):
+  // phone: the laid-out widget (ChatCanvasUI) or null; statusTexts: story.ui `chatStatusTexts`; sprite(kind, name):
   // a chat icon ("icons") or stamp ("stamps") sprite by asset name, or null
   constructor(ctx, phone = null, statusTexts = null, sprite = () => null) {
     this.ctx = ctx;
@@ -495,7 +496,7 @@ export class ChatView {
   _scrollRectOf(node) {
     const s = node.scrollRect;
     if (!s) throw new StoryCommandError(`${node.path}: no ScrollRect`);
-    const w = this.window, get = (r) => (r ? w._node(r.transform || r.gameObject) : null);
+    const w = this.window, get = (r) => (r ? w._node(w.host.pathOf(r)) : null);
     return new ChatScrollRect(node, get(s.m_Content), get(s.m_Viewport), () => this._layout());
   }
 
@@ -946,19 +947,18 @@ export class ChatView {
 // rows of the chat rows) and the session's chat fields. `ui` = the story UI (its chat widget, status texts and the
 // chat windows' text bindings; null or without them: not laid out).
 export class StoryChat {
-  constructor(ctx, doc, ui = null) {
-    this.ctx = ctx; this.doc = doc;
-    this.chats = new Map(Object.entries(doc.chats || {}).map(([k, v]) => [Number(k), v]));
+  constructor(ctx, data, ui = null) {
+    this.ctx = ctx; this.data = data;
+    this.chats = new Map(Object.entries(data.story.chats || {}).map(([k, v]) => [Number(k), v]));
     this.windows = new Map(); this.icons = new Map(); this.stamps = new Map();
-    const bindings = ui && ui.fonts && ui.fonts.chatTexts ? ui.fonts.chatTexts : null;
-    const widget = ui && ui.doc && ui.doc.chatWidget ? ui.doc.chatWidget : null;
-    this.phone = bindings && widget ? new ChatCanvasUI(widget) : null;
-    this.sprites = new Map();                                          // chat texture path -> descriptor (GL load)
+    this.phone = ui?.fonts?.texts && data.ui.chatWidget ? new ChatCanvasUI(ctx.objects.prefab(data.ui.chatWidget)) : null;
+    this.sprites = new Map();
     this._spriteCache = new Map();
-    const host = (name) => ({
+    const host = (id) => ({
+      prefabId: id, pathOf: (ref) => ctx.objects.prefab(id).pathOf(ref),
       sprite: (s) => (this.phone ? this._chatSprite(s) : null),
-      binding: (src) => (this.phone ? bindings[name][src] || null : null),
-      textHost: ui, languageMode: ui && ui.language ? ui.language.mode : 0, requireTexts: !!this.phone, visual: !!this.phone,
+      binding: (src, node) => this.phone ? uiTextBinding(node, ui.fonts) : null,
+      textHost: ui, languageMode: ui?.language?.mode || 0, requireTexts: !!this.phone, visual: !!this.phone,
     });
     const addresses = new Set();
     for (const c of ctx.episode.commands) {
@@ -969,18 +969,16 @@ export class StoryChat {
         const name = chat._chatWindowAssetName;
         if (!addresses.has(name)) {                                    // one load per address, kept for the first id
           addresses.add(name);
-          const rec = (doc.windows || {})[name];
-          if (!rec) throw new StoryCommandError(`chat window ${name} not in the chat data`);
-          if (this.phone && !bindings[name]) throw new StoryCommandError(`chat window ${name}: no text bindings in the story UI data`);
-          if (!this.windows.has(id)) this.windows.set(id, new ChatWindow(id, name, rec, host(name)));
+          const root = this.assetRoot(`Adv/Chat/Prefabs/${name}`), rec = ctx.assets.prefab(root);
+          if (!this.windows.has(id)) this.windows.set(id, new ChatWindow(id, name, rec, host(root)));
         }
       }
       if ((c.cmd === "ChatTalk" || c.cmd === "ChatStamp") && chat && chat._chatIconAssetName && !this.icons.has(id)) {
-        if (!(doc.icons || {})[chat._chatIconAssetName]) throw new StoryCommandError(`chat icon ${chat._chatIconAssetName} not in the chat data`);
+        this.assetRoot(`Adv/Chat/Icon/${chat._chatIconAssetName}`);
         this.icons.set(id, chat._chatIconAssetName);
       }
       if (c.cmd === "ChatStamp" && (c.TargetAssetName ?? "").trim() && !this.stamps.has(c.TargetAssetName)) {
-        if (!(doc.stamps || {})[c.TargetAssetName]) throw new StoryCommandError(`chat stamp ${c.TargetAssetName} not in the chat data`);
+        this.assetRoot(`Adv/Chat/Stamp/${c.TargetAssetName}`);
         this.stamps.set(c.TargetAssetName, c.TargetAssetName);
       }
     }
@@ -993,12 +991,13 @@ export class StoryChat {
   // a chat sprite record -> UISprite (its texture registered for the GL load)
   _chatSprite(s) {
     if (!s) return null;
-    const key = `${s.sprite}@${s.texture && s.texture.texture}`;
+    s = this.ctx.objects.sprite(s);
+    const key = s.id;
     let sp = this._spriteCache.get(key);
     if (!sp) {
       sp = chatSprite(s);
       this._spriteCache.set(key, sp);
-      this.sprites.set(sp.texture.name, sp.desc);
+      this.sprites.set(sp.texture.id, sp.desc);
     }
     return sp;
   }
@@ -1006,9 +1005,13 @@ export class StoryChat {
   // an icon or stamp of chat.json by asset name, as a sprite (null without the layout)
   sprite(kind, name) {
     if (!this.phone || !name) return null;
-    const rec = (this.doc[kind] || {})[name];
-    if (!rec) throw new StoryCommandError(`chat ${kind === "icons" ? "icon" : "stamp"} ${name} not in the chat data`);
-    return this._chatSprite(rec);
+    return this._chatSprite(this.assetRoot(`Adv/Chat/${kind === "icons" ? "Icon" : "Stamp"}/${name}`));
+  }
+
+  assetRoot(address) {
+    const product = this.data.asset(address);
+    if (product.objects.length !== 1) throw new StoryCommandError(`${address}: expected one root object`);
+    return product.objects[0];
   }
 
   // The texts the laid-out phone will show, each checked against the chat window texts that show it (the texts of every
@@ -1062,10 +1065,10 @@ export class StoryChat {
   }
 
   // the GL resources of the drawn phone: the chat sprites' textures (windows, and the icons and stamps the rows use)
-  async loadGL(gl, assets) {
+  async loadGL(gl) {
     for (const id of this.icons.keys()) this.sprite("icons", this.icons.get(id));
     for (const name of this.stamps.keys()) this.sprite("stamps", name);
-    this.gl = new ChatCanvasGL(gl, this.ctx.ui, assets);
+    this.gl = new ChatCanvasGL(gl, this.ctx.ui, this.ctx.objects);
     await this.gl.load(this.sprites);
   }
 
@@ -1108,15 +1111,13 @@ export const storyChat = (ctx) => featureState(ctx).chat || null;
 export const loadChat = async (ctx) => {
   const uses = ctx.episode.commands.some((c) => !c.IgnoreData && c.cmd.startsWith("Chat"));
   if (!uses) return null;
-  const file = ctx.story && ctx.story.chat;
-  if (!file) throw new StoryCommandError("the story data has no chat.json");
   const s = featureState(ctx);
-  const chat = featureSlot(ctx, "chat", () => new StoryChat(ctx, ctx.assets.json(file), ctx.ui || null));
+  const chat = featureSlot(ctx, "chat", () => new StoryChat(ctx, ctx.data, ctx.ui || null));
   if (chat.phone) chat.checkTexts();
   if (ctx.gl) {
-    if (!chat.phone) throw new StoryCommandError("the chat phone needs the story UI's chat widget and chat window text bindings (ui/ui.json chatWidget, ui/fonts.json chatTexts)");
+    if (!chat.phone) throw new StoryCommandError("the chat phone needs the story UI's chat widget and chat window text bindings (story.ui chatWidget, story.fonts texts)");
     if (!ctx.renderer) throw new StoryCommandError("the chat phone needs the story renderer");
-    await chat.loadGL(ctx.gl, ctx.assets);
+    await chat.loadGL(ctx.gl);
     const source = () => chat.fieldItems();
     ctx.renderer.addFieldItems(source);
     s.disposers.push(() => ctx.renderer.removeFieldItems(source));

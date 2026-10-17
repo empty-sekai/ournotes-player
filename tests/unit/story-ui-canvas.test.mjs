@@ -9,6 +9,7 @@ import { test } from "node:test";
 import { F } from "../../src/engine/core.js";
 import { PlayerLoop } from "../../src/engine/loop.js";
 import { StoryCommandError, checkStoryUI } from "../../src/story/interfaces.js";
+import { uiResources } from "./story-ui-resources.mjs";
 import { StoryUI } from "../../src/story/ui.js";
 import { hasRubyInFirstLine, netSingleToString, replaceRubyTags } from "../../src/story/ui-ruby.js";
 import { StoryTalkWindow, countRenderedCharacters, removeTagsKeepingRuby, removeTagsWithRuby } from "../../src/story/ui-talk.js";
@@ -247,7 +248,8 @@ const fontsDoc = (koAdjust = null) => ({
 });
 const create = ({ mode = 2, lang = "zh-Hant", koAdjust = null, doc = uiDoc(), fonts = fontsDoc(koAdjust), attach = true } = {}) => {
   const loop = new PlayerLoop(30);
-  const ui = new StoryUI(null, loop, doc, { lang, fonts, language: { language: lang, mode, lineSpacing: 5 } });
+  const resources = uiResources(doc, fonts, { code: lang, mode, lineSpacing: 5 });
+  const ui = new StoryUI(null, loop, resources.doc, resources);
   if (attach) ui.setTalkWindow("UIDefaultTalkWindow");                  // AdvPlayer PlayInitialCommands
   return { loop, ui, step: async (n = 1) => { for (let i = 0; i < n; i++) await loop.step(); } };
 };
@@ -272,7 +274,7 @@ test("StoryUI contract, the state after Refresh and the loaded window before and
   ui.layout(2340, 1080);
   assert.deepEqual(ui.drawList(ui.front).map((it) => it.node.name), []);  // no window attached yet
   assert.equal(ui.isShowingTalk(), false);
-  assert.equal(ui.trueCanvasSortOrder, null);
+  assert.equal(ui.trueCanvasSortOrder, 99999);
   assert.equal(ui.talkShakeTarget(), null);
   assert.equal(ui.talk, null);
   ui.setTalkWindow("UIDefaultTalkWindow");
@@ -660,7 +662,7 @@ test("video buttons: shown with or without skip, laid out, the black filter on t
 test("talk window without background, indicator and icons (optional references)", async () => {
   const { ui, step } = create();
   const fake = { part: { ...Win(ui), background: null, nextIndicator: null, autoIcon: null, fastIcon: null },
-                 loop: ui.loop, tweens: ui.tweens, language: ui.language, doc: ui.doc, setActive: (n, v) => ui.setActive(n, v) };
+                 loop: ui.loop, tweens: ui.tweens, language: ui.language, dotween: ui.dotween, setActive: (n, v) => ui.setActive(n, v) };
   const w = new StoryTalkWindow(fake);
   w.refresh();
   w.showTalk();

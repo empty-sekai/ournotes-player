@@ -9,11 +9,11 @@ import { UIError } from "../engine/ugui.js";
 export class StoryRuleTransition {
   constructor(ui) {
     this.ui = ui;
-    const node = ui.part.rule, rt = node.rec.ruleTransition, doc = ui.doc;
-    if (!rt || !doc.materials[rt.material]) throw new UIError("RuleTransition: UI-Transition material not in the data");
+    const node = ui.part.rule, rt = node.fields("UIAdvRuleTransitionView");
+    if (!rt?._material) throw new UIError("RuleTransition: UI-Transition material not in the data");
     // UIRuleTransitionView: the Image draws with `_material` (UI-Transition); its properties are set per fade
-    node.image.material = rt.material;
-    const tm = doc.materials[rt.material];
+    node.image.material = ui.uiMaterial(rt._material);
+    const tm = ui.objects.material(rt._material);
     this.node = node;
     this.texture = null;
     this.color = tm.colors._Color; this.val = tm.floats._Val; this.useGradient = tm.floats._UseGradient;
@@ -36,12 +36,12 @@ export class StoryRuleTransition {
 
   // GetTransitionSettings(address) -> Fwk.Transition.RuleTransitionSettings (_texture, _gradient, _easingCurve)
   settings(address) {
-    const s = this.ui.doc.transitions[address];
-    if (!s) throw new UIError(`transition ${address} not in the data`);
+    const a = this.ui.data.asset(`Adv/Transition/${address}`);
+    if (a.objects.length !== 1) throw new UIError(`transition ${address}: expected one settings object`);
+    const s = this.ui.objects.mono(a.objects[0]);
     const keys = s._easingCurve.m_Curve;
     if (!keys.length || keys.some((k) => k.weightedMode !== 0)) throw new UIError(`${address}: weighted easing curve not implemented`);
-    const texture = s._texture ? s._texture.texture : null;
-    if (texture && !this.ui.doc.textures[texture]) throw new UIError(`${address}: rule texture not in the data`);
+    const texture = this.ui.objects.id(s._texture, "Texture2D");
     return { address, texture, gradient: s._gradient, curve: keys };
   }
 
@@ -73,8 +73,8 @@ export class StoryLetterBox {
     this.ui = ui;
     const doc = ui.doc, p = ui.part;
     // UIAdvWidget.SetLetterBoxSprite (AdvPlayer.Init): Textures/letterbox-image on both band Images
-    const lb = ui.sprites.get(doc.letterBoxSprite);
-    if (!lb) throw new UIError(`letterbox sprite ${doc.letterBoxSprite} not in the data`);
+    const lb = ui.sprite(doc.letterbox);
+    if (!lb) throw new UIError(`letterbox sprite ${doc.letterbox} not in the data`);
     p.topBand.image.spriteObj = lb; p.bottomBand.image.spriteObj = lb;
     this.root = ui.letterBox;
     this._key = null;

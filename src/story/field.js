@@ -1,6 +1,5 @@
 import { F } from "../engine/core.js";
 import { URPPost } from "../engine/postfx.js";
-import { Prefab } from "../engine/prefab.js";
 import { Transform, mat4 } from "../engine/math.js";
 import { EASE } from "../engine/tween.js";
 
@@ -46,8 +45,7 @@ export const advScreenSize = (width, height, level) => {
 
 // Fwk.Cam.UniversalCamera behind CameraManager.MainCamera
 export class AdvCamera {
-  constructor(loop, cameraNode) {
-    const cam = cameraNode.components.find((c) => c.type === "Camera");
+  constructor(loop, cam) {
     this.loop = loop;
     this.near = cam["near clip plane"];
     this.far = cam["far clip plane"];
@@ -126,11 +124,11 @@ export class AdvCamera {
 export class AdvCharacterField {
   constructor(loop, prefab, parent) {
     this.loop = loop;
-    this.prefab = new Prefab(prefab);
+    this.prefab = prefab;
     this.root = this.prefab.root;
     this.root.setParent(parent);
-    const c = this.prefab.component(this.root.name, "AdvCharacterField");
-    const tf = (ref) => this.prefab.transform(ref.transform);
+    const c = this.prefab.fields(this.root.name, "AdvCharacterField");
+    const tf = (ref) => this.prefab.transformOf(ref);
     this.field = tf(c._field);
     this.stages = c._characterStages.map(tf);
     this.anchors = c._focusAnchors.map(tf);
@@ -233,18 +231,18 @@ export class AdvCharacterField {
 // AdvBackgroundField
 export class AdvBackgroundField {
   constructor(prefab, parent) {
-    this.prefab = new Prefab(prefab);
+    this.prefab = prefab;
     this.root = this.prefab.root;
     this.root.setParent(parent);
-    const c = this.prefab.component(this.root.name, "AdvBackgroundField");
-    this.field = this.prefab.transform(c._field.transform);
-    const srPath = c._renderer.gameObject;
+    const c = this.prefab.fields(this.root.name, "AdvBackgroundField");
+    this.field = this.prefab.transformOf(c._field);
+    const srPath = this.prefab.pathOf(c._renderer);
     this.spriteTransform = this.prefab.transform(srPath);
-    this.spriteRenderer = this.prefab.component(srPath, "SpriteRenderer");
-    const planePath = `${c._field.transform}/BaseRenderer`;
+    this.spriteRenderer = this.prefab.fields(srPath, "SpriteRenderer");
+    const planePath = `${this.prefab.pathOf(c._field)}/BaseRenderer`;
     this.planeTransform = this.prefab.transform(planePath);
-    this.planeRenderer = this.prefab.component(planePath, "MeshRenderer");
-    this.planeMesh = this.prefab.component(planePath, "MeshFilter").m_Mesh;
+    this.planeRenderer = this.prefab.fields(planePath, "MeshRenderer");
+    this.planeMesh = this.prefab.fields(planePath, "MeshFilter").m_Mesh;
     this.active = false;
     this.sprite = null;
     this.color = { r: 1, g: 1, b: 1, a: 1 };                 // the SpriteRenderer's colour
@@ -278,14 +276,14 @@ export class AdvBackgroundField {
 
 // AdvGlobalVolume + the main camera's volume stack
 export class AdvGlobalVolume {
-  constructor(prefab, quality) {
-    this.prefab = new Prefab(prefab);
+  constructor(prefab, quality, objects) {
+    this.prefab = prefab;
     const root = this.prefab.root.name;
-    const c = this.prefab.component(root, "AdvGlobalVolume");
-    const vol = (path) => this.prefab.component(path, "Volume");
-    this.all = { volume: vol(c._allVolume.gameObject), profile: null, enabled: false, weight: 1 };
-    const wu = `${c._warmupObjects.gameObject}/VolumeAll`;
-    this.warmup = { volume: vol(wu), profile: vol(wu).sharedProfile, enabled: true, weight: vol(wu).weight };
+    const c = this.prefab.fields(root, "AdvGlobalVolume");
+    const vol = (path) => this.prefab.fields(path, "Volume");
+    this.all = { volume: vol(this.prefab.pathOf(c._allVolume)), profile: null, enabled: false, weight: 1 };
+    const wu = `${this.prefab.pathOf(c._warmupObjects)}/VolumeAll`;
+    this.warmup = { volume: vol(wu), profile: objects.profile(vol(wu).sharedProfile), enabled: true, weight: vol(wu).weight };
     this.quality = quality;
     // ENGINE: global volumes of equal priority blend in the volume manager's registration order (VolumeCollection:
     // Register appends, SortByPriority is a stable sort); a Volume registers in OnEnable and unregisters in OnDisable,

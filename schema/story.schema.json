@@ -1,50 +1,176 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/empty-sekai/ournotes-player/main/schema/story.schema.json",
-  "title": "Story index (story.json)",
-  "description": "The index of a story's logical files: episode, scene, UI, models, cue sheet directories and the media files of the kinds the episode uses. See docs/story-data-format.md.",
   "type": "object",
-  "required": ["advId", "episode", "scene", "ui", "models", "audio", "frames", "effects", "postEffects", "stills", "talkWindows", "chat", "videos"],
+  "$id": "https://raw.githubusercontent.com/empty-sekai/ournotes-player/main/schema/story.schema.json",
+  "title": "Story part index",
+  "required": [
+    "format",
+    "advId",
+    "episode",
+    "parts"
+  ],
   "properties": {
-    "advId": { "type": "integer", "minimum": 1 },
-    "episode": { "$ref": "#/$defs/path" },
-    "scene": { "$ref": "#/$defs/path" },
-    "ui": { "$ref": "#/$defs/path" },
-    "models": {
-      "description": "Model address (the address the Character rows name) -> the model's id: its model.json is under live2d/<id>/ of the story's file set, its objects in the store's object table.",
+    "format": {
+      "const": 1
+    },
+    "advId": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "episode": {
+      "const": "episode.json"
+    },
+    "chats": {
+      "type": "object"
+    },
+    "effects": {
       "type": "object",
-      "propertyNames": { "pattern": "^Character/Live2D/[^/]+/[^/]+/model/[^/]+$" },
-      "additionalProperties": { "type": "string", "pattern": "^[a-z0-9_]+$" }
-    },
-    "modelsDir": {
-      "description": "A story directory only (not a site): the directory holding the models (<modelsDir>/<id>/model.json, ...), relative to the story directory, \"/\"-separated.",
-      "type": "string",
-      "minLength": 1
-    },
-    "audio": {
-      "type": "object",
-      "propertyNames": { "minLength": 1 },
-      "additionalProperties": { "$ref": "#/$defs/path" }
-    },
-    "frames": { "$ref": "#/$defs/optionalPath" },
-    "effects": { "$ref": "#/$defs/optionalPath" },
-    "postEffects": { "$ref": "#/$defs/optionalPath" },
-    "stills": { "$ref": "#/$defs/optionalPath" },
-    "talkWindows": { "$ref": "#/$defs/optionalPath" },
-    "chat": { "$ref": "#/$defs/optionalPath" },
-    "videos": { "$ref": "#/$defs/optionalPath" },
-    "crilips": {
-      "description": "The CRI Lips analysis data (docs/crilips.md): the descriptor (crilips.json) and the float32 weights (crilips.bin). null (or absent in older sites) when no voice of the story reaches the CRI Lips analysis.",
-      "type": ["object", "null"],
-      "required": ["descriptor", "data"],
-      "properties": {
-        "descriptor": { "type": "string", "pattern": "^[A-Za-z0-9_][^\\\\]*\\.json$" },
-        "data": { "type": "string", "pattern": "^[A-Za-z0-9_][^\\\\]*\\.bin$" }
+      "additionalProperties": {
+        "type": "string"
       }
+    },
+    "host": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "parts": {
+      "type": "object",
+      "required": [
+        "scene",
+        "assets",
+        "models",
+        "sounds",
+        "ui",
+        "fonts"
+      ],
+      "properties": {
+        "scene": {
+          "type": "string",
+          "pattern": "^[^/\\\\?#]+(?:/[^/\\\\?#]+)+\\.json$"
+        },
+        "chat": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[^/\\\\?#]+(?:/[^/\\\\?#]+)+\\.json$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "crilips": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[^/\\\\?#]+(?:/[^/\\\\?#]+)+\\.json$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "assets": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[^/\\\\?#]+(?:/[^/\\\\?#]+)+\\.json$"
+          }
+        },
+        "models": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[^/\\\\?#]+(?:/[^/\\\\?#]+)+\\.json$"
+          }
+        },
+        "sounds": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[^/\\\\?#]+(?:/[^/\\\\?#]+)+\\.json$"
+          }
+        },
+        "videos": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[^/\\\\?#]+(?:/[^/\\\\?#]+)+\\.json$"
+          }
+        },
+        "host": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[^/\\\\?#]+(?:/[^/\\\\?#]+)+\\.json$"
+          }
+        },
+        "spots": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[^/\\\\?#]+(?:/[^/\\\\?#]+)+\\.json$"
+          }
+        },
+        "rooms": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[^/\\\\?#]+(?:/[^/\\\\?#]+)+\\.json$"
+          }
+        },
+        "ui": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[^/\\\\?#]+(?:/[^/\\\\?#]+)+\\.json$"
+          },
+          "propertyNames": {
+            "enum": [
+              "ja",
+              "en",
+              "zh-Hant",
+              "zh-Hans",
+              "ko"
+            ]
+          }
+        },
+        "fonts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[^/\\\\?#]+(?:/[^/\\\\?#]+)+\\.json$"
+          },
+          "propertyNames": {
+            "enum": [
+              "ja",
+              "en",
+              "zh-Hant",
+              "zh-Hans",
+              "ko"
+            ]
+          }
+        },
+        "simpleui": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[^/\\\\?#]+(?:/[^/\\\\?#]+)+\\.json$"
+          },
+          "propertyNames": {
+            "enum": [
+              "ja",
+              "en",
+              "zh-Hant",
+              "zh-Hans",
+              "ko"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
     }
-  },
-  "$defs": {
-    "path": { "type": "string", "pattern": "^[A-Za-z0-9_][^\\\\]*$" },
-    "optionalPath": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9_][^\\\\]*\\.json$" }
   }
 }
