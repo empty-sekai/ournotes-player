@@ -197,7 +197,7 @@ LiveCameraMath.sortItems = (items, opaqueDrawn = true) => {
 };
 
 // ------------------------------------------------------------------------------------------------ renderer
-// `objects` = LiveObjects of the live (its `lib` draws), `scene` = scene.json of the live.scene part (the scene roots,
+// `objects` = ObjectResources of the live (its `lib` draws), `scene` = scene.json of the live.scene part (the scene roots,
 // settings, graphics objects), `loop` = PlayerLoop. The scene's root prefabs make one hierarchy (`prefab`).
 // Screen size: resize(W, H) (Screen.width / height; LiveGameView.FullInitialize runs again on a size change).
 // `settings`: the live settings (settings.js) read by the lane and the render canvas; absent: the data's defaults.
@@ -240,11 +240,7 @@ export class LiveRenderer {
   // The profile's components are VolumeComponent assets (URPPost.evaluateStack reads them by class, `asset`).
   _effectStack() {
     const vol = this.prefab.fields("LiveGameView/LiveGameCamera/LiveEffectCamera", "Volume");
-    const shared = this.objects.mono(vol.sharedProfile);
-    const profile = { components: shared.components.map((v) => {
-      const c = JSON.parse(JSON.stringify(this.objects.mono(v)));
-      return { ...c, asset: c.class };
-    }) };
+    const profile = structuredClone(this.objects.profile(vol.sharedProfile));
     if (this.quality !== LIVE_QUALITY.High)
       for (const c of profile.components)
         if (c.asset === "Bloom") c.maxIterations = { m_OverrideState: 1, m_Value: Math.max(4, c.maxIterations.m_Value - 1) };
@@ -255,12 +251,7 @@ export class LiveRenderer {
   // -> m_RendererDataList[UniversalAdditionalCameraData.m_RendererIndex, -1: m_DefaultRendererIndex] -> its
   // postProcessData (SiriusPostProcessData) -> textures.filmGrainTex (Texture2D ids).
   grainTextures() {
-    const O = this.objects, graphics = O.assets.objectJson(this.scene.graphics.graphics);
-    const pipeline = O.mono(graphics.m_CustomRenderPipeline);
-    const index = this.cameras.effect.uacd.m_RendererIndex;
-    const renderer = O.mono(pipeline.m_RendererDataList[index >= 0 ? index : pipeline.m_DefaultRendererIndex]);
-    const post = O.mono(renderer.postProcessData);
-    return post.textures.filmGrainTex.map((v) => O.id(v, "Texture2D"));
+    return this.objects.grainTextures(this.scene.graphics.graphics, this.cameras.effect.uacd.m_RendererIndex);
   }
 
   async load() {
@@ -401,7 +392,7 @@ export const liveFitSheets = (prog, sheets) => {
 
 // material property sheet [floats with every scalar shader default filled in, colours as arrays] for render state
 // lookups (passState reads state properties such as _ColorMask / _Stencil* from the material floats); `mat`: a
-// LiveObjects material (or a material of the same form whose `shader` is a key of `lib`)
+// ObjectResources material (or a material of the same form whose `shader` is a key of `lib`)
 export const liveMaterialSheets = (lib, mat, tex) => {
   const shader = mat.shader, defaults = lib.defaults(shader, tex), floats = {}, colors = {};
   for (const [k, v] of Object.entries(defaults)) if (typeof v === "number") floats[k] = v;

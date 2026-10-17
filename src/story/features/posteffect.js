@@ -69,18 +69,19 @@ export class ChildVolume {
 export const postEffects = (ctx) => featureSlot(ctx, "postEffect", () => ({ profiles: new Map(), children: new Map() }));
 
 export const loadPostEffects = async (ctx) => {
-  const pe = postEffects(ctx), file = ctx.story && ctx.story.postEffects;
-  if (!file) return pe;
-  const doc = ctx.assets.json(file);
-  for (const [name, profile] of Object.entries(doc.postEffects || {})) {
-    if (profile.asset !== "VolumeProfile") throw new StoryCommandError(`post effect ${name}: not a VolumeProfile`);
-    pe.profiles.set(name, profile);
+  const pe = postEffects(ctx);
+  for (const address of Object.keys(ctx.data?.parts?.assets || {})) {
+    if (!address.startsWith("Adv/PostEffect/")) continue;
+    const product = ctx.data.asset(address);
+    if (product.objects.length !== 1 || ctx.objects.mono(product.objects[0]).class !== "VolumeProfile")
+      throw new StoryCommandError(`post effect ${address}: not a VolumeProfile`);
+    pe.profiles.set(address.slice("Adv/PostEffect/".length), ctx.objects.profile(product.objects[0]));
   }
   const s = featureState(ctx);
   s.disposers.push(() => { for (const c of pe.children.values()) c.refresh(); pe.children.clear(); });
   s.snapshots = s.snapshots || [];
   s.snapshots.push(() => ({ postEffect: [...pe.children.values()].map((c) => [c.name, c.volume.enabled, c.volume.weight]) }));
-  if (ctx.renderer) await ctx.renderer.post.loadVolumeTextures("", [...pe.profiles.values()], ctx.assets);
+  if (ctx.renderer) await ctx.renderer.post.loadVolumeTextures([...pe.profiles.values()], ctx.objects);
   return pe;
 };
 

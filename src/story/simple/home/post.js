@@ -52,46 +52,24 @@ export const checkSpotCamera = (cam, what = "home spot") => {
   return cam;
 };
 
-// The spot's Volumes in registration order (Volume.OnEnable): the Spot scene's, loaded before any spot is placed, then
-// the placed background prefab's (SpotSceneRoot.SetObject). Records (host.json): {path, active (activeInHierarchy),
-// enabled, isGlobal, weight, priority, blendDistance, layer, profile, components: [{class, active, <overridden
-// parameter>: value}]}.
-export const spotVolumes = (home) =>
-  [...((home.sceneRoot && home.sceneRoot.volumes) || []), ...(home.volume ? [home.volume] : [])];
-
-// a profile component of a record in the form URPPost.evaluateStack reads (overridden parameters as
-// {m_OverrideState, m_Value}); texture parameters are refused (the host data does not carry the textures)
-const profileComponent = (c, where) => {
-  const { class: cls, active, ...params } = c;
-  const kinds = VOLUME_PARAMS[cls];
-  if (!kinds) throw new Error(`${where}: volume component ${cls} not implemented`);
-  const out = { asset: cls, active: active ? 1 : 0 };
-  for (const [k, v] of Object.entries(params)) {
-    if (!kinds[k]) throw new Error(`${where}: ${cls}.${k}: unknown parameter`);
-    if (kinds[k] === "n" && VOLUME_DEFAULTS[cls][k] === null)
-      throw new Error(`${where}: ${cls}.${k}: texture parameters not implemented`);
-    out[k] = { m_OverrideState: 1, m_Value: v };
-  }
-  return out;
-};
-
-// VolumeManager.Update(stack, trigger, layerMask) for the spot: the default state, then the registered volumes whose
-// layer is in the mask, sorted by priority (VolumeCollection.SortByPriority: a stable insertion sort), each skipped
-// when disabled, without a profile or without weight; a global volume blends by Mathf.Clamp01(weight). A local volume
-// (blended by its colliders' distance to the trigger) is refused.
-export const spotVolumeStack = (home, mask = HOME_VIEW_MASK, what = "home spot") => {
-  const registered = spotVolumes(home).filter((v) => {
-    if (typeof v.active !== "boolean") throw new Error(`${what}: Volume ${v.path}: activeInHierarchy is not in the host data`);
-    return v.active && v.enabled;
-  });
-  const grabbed = registered.filter((v) => ((mask >>> v.layer) & 1) === 1);
-  const sorted = grabbed.map((v, i) => [v, i]).sort((a, b) => (a[0].priority - b[0].priority) || (a[1] - b[1])).map(([v]) => v);
+// Volume registrations in scene order, then the placed prefabs; component fields and profile objects stay native.
+export const spotVolumeStack = (volumes, mask = HOME_VIEW_MASK, what = "home spot") => {
+  for (const v of volumes) if (typeof v.active !== "boolean") throw new Error(`${what}: Volume ${v.path}: activeInHierarchy is not in the host data`);
+  const sorted = volumes.filter((v) => v.active && v.fields.m_Enabled && ((mask >>> v.layer) & 1))
+    .map((v, i) => [v, i]).sort((a, b) => (a[0].fields.priority - b[0].fields.priority) || (a[1] - b[1]));
   const blended = [];
-  for (const v of sorted) {
-    if (!v.profile || !(v.weight > 0)) continue;
-    if (!v.isGlobal) throw new Error(`${what}: local Volume ${v.path} (blend distance ${v.blendDistance}) not implemented`);
-    const where = `${what}: Volume ${v.path} profile ${v.profile}`;
-    blended.push({ profile: { components: (v.components || []).map((c) => profileComponent(c, where)) }, weight: v.weight });
+  for (const [v] of sorted) {
+    const f = v.fields;
+    if (!v.profile || !(f.weight > 0)) continue;
+    if (!f.m_IsGlobal) throw new Error(`${what}: local Volume ${v.path} (blend distance ${f.blendDistance}) not implemented`);
+    for (const c of v.profile.components) {
+      if (!c.active) continue;
+      const kinds = VOLUME_PARAMS[c.asset];
+      if (!kinds) throw new Error(`${what}: volume component ${c.asset} not implemented`);
+      for (const [k, p] of Object.entries(c)) if (p?.m_OverrideState && kinds[k] === "n" && VOLUME_DEFAULTS[c.asset][k] === null)
+        throw new Error(`${what}: ${c.asset}.${k}: texture parameters not implemented`);
+    }
+    blended.push({ profile: v.profile, weight: f.weight });
   }
   return URPPost.evaluateStack(blended);
 };

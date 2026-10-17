@@ -4,7 +4,8 @@ import { TMPText } from "../../engine/uitext.js";
 import { StoryCommandError } from "../interfaces.js";
 import { StoryText } from "../ui-ruby.js";
 import { CanvasAnimator, CanvasNode, CanvasPrefab, bindCanvasProperty, compOf, compsOf } from "./canvas.js";
-import { AnimRecords } from "./clips.js";
+import { componentClass } from "../../engine/prefab.js";
+import { uiTextBinding } from "../ui-objects.js";
 import { DOFloat } from "./dotween.js";
 import { stretchView, storyScreen } from "./screen.js";
 import { featureSlot, featureState } from "./state.js";
@@ -139,10 +140,10 @@ const LANGUAGE_ENGLISH = 1;                            // Fwk.Localization.Langu
 // (LocalizeManager's emoji sprite asset for UIText.SetText) and the serialized text as TMP's own. A node without a
 // binding keeps no text component: a drawing session refuses row texts for it (checkTexts), and it raises when it
 // would draw a text.
-const bindFrameTexts = (ui, name, prefab, bindings) => {
+const bindFrameTexts = (ui, name, prefab) => {
   for (const n of prefab.nodes.values()) {
-    if (!n.tmp || !bindings[n.path]) continue;
-    const b = bindings[n.path], loc = compOf(n.rec, "LocalizeText");
+    if (!n.tmp) continue;
+    const b = uiTextBinding(n, ui.fonts), loc = compOf(n.rec, "LocalizeText");
     if (loc && loc.m_Enabled && loc._localizeEnabled && loc._masterTextID && loc._masterTextID !== "0")
       throw new UIError(`frame ${name}: ${n.path}: a localized serialized text (LocalizeText) not implemented`);
     if (b.localizeKoreanAdjust && b.localizeKoreanAdjust.m_Enabled)
@@ -159,10 +160,11 @@ const bindFrameTexts = (ui, name, prefab, bindings) => {
 
 // AdvFrame
 export class FrameInstance {
-  constructor(view, name, doc) {
+  constructor(view, name, id) {
+    const doc = view.ctx.assets.prefab(id);
     const screen = view.screen, canvas = screen.canvas.frame;
     this.view = view; this.name = name; this.screen = screen;
-    const prefab = this.prefab = new CanvasPrefab(doc.nodes, null, canvas);
+    const prefab = this.prefab = new CanvasPrefab(doc.nodes, null, canvas, id);
     const rootRec = doc.nodes[0], comp = compOf(rootRec, "AdvFrame");
     if (!comp) throw new UIError(`frame ${name}: no AdvFrame`);
     this.root = prefab.root;
@@ -170,7 +172,7 @@ export class FrameInstance {
     if (!this.group || !this.group.canvasGroup) throw new UIError(`frame ${name}: no CanvasGroup`);
     if (comp._screenPadding) throw new UIError(`frame ${name}: AdvFrameScreenPadding not implemented`);
     // Coffee UIParticle and the particle systems of the prefab (uiparticle.js)
-    const hasParticles = doc.nodes.some((r) => (r.components || []).some((c) => ["UIParticle", "ParticleSystem"].includes(c.class || c.type)));
+    const hasParticles = doc.nodes.some((r) => (r.components || []).some((c) => ["UIParticle", "ParticleSystem"].includes(componentClass(c))));
     this.particles = hasParticles ? new PrefabParticles(screen.canvasParticles("frame"), prefab, doc.nodes, name) : null;
     // Animators of the prefab (the AdvFrame's own one drives the states)
     this.animators = [];
@@ -178,10 +180,10 @@ export class FrameInstance {
       for (const a of compsOf(rec, "Animator")) {
         const node = prefab.node(rec.path);
         const an = new CanvasAnimator(node, a, (b) => bindCanvasProperty(node, b, (n, prop) => this._bindExtra(n, prop)),
-                                    `${name}:${rec.path}`, view.records);
+                                    `${name}:${rec.path}`, view.ctx.objects);
         this.animators.push(an);
         screen.animators.push(an);
-        if (comp._animator && comp._animator.gameObject === rec.path) this.animator = an;
+        if (comp._animator && prefab.source.pathOf(comp._animator) === rec.path) this.animator = an;
       }
     if (comp._animator && !this.animator) throw new UIError(`frame ${name}: Animator ${comp._animator.gameObject} missing`);
     // StretchPosition (MonoBehaviour Update: offsetMax.x = -(positionPercent / 100) x parent width)
@@ -204,7 +206,7 @@ export class FrameInstance {
     }
     // with the story UI's fonts the texts are laid out (and drawn) as the story UI lays out its own
     const ui = view.ctx.ui, fonts = ui && ui.fonts;
-    if (fonts && fonts.frameTexts && fonts.frameTexts[name]) bindFrameTexts(ui, name, prefab, fonts.frameTexts[name]);
+    if (fonts) bindFrameTexts(ui, name, prefab);
     this.init();
   }
 
@@ -345,15 +347,14 @@ export class FrameView {
   }
 
   // AdvEpisodeResourceLoader.LoadFrame for every Frame row (IgnoreData rows are not preloaded)
-  load(doc) {
-    this.records = new AnimRecords(doc, UIError);
+  load() {
     for (const c of this.ctx.episode.commands) {
       if (c.cmd !== "Frame" || c.IgnoreData) continue;
       const name = c.TargetAssetName ?? "";
       if (!name.trim() || this.frames.has(name)) continue;
-      const d = doc.frames[name];
-      if (!d) throw new StoryCommandError(`frame ${name} is not in the story data`);
-      this.frames.set(name, new FrameInstance(this, name, d));
+      const d = this.ctx.data.asset(`Adv/Frame/${name}`);
+      if (d.objects.length !== 1) throw new StoryCommandError(`frame ${name}: expected one prefab root`);
+      this.frames.set(name, new FrameInstance(this, name, d.objects[0]));
     }
     for (const f of this.frames.values()) f.checkTexts(this.ctx);
   }
@@ -374,12 +375,10 @@ export class FrameView {
 export const frameView = (ctx) => featureSlot(ctx, "frame", () => new FrameView(ctx));
 
 export const loadFrames = (ctx) => {
-  const file = ctx.story && ctx.story.frames;
   const uses = ctx.episode.commands.some((c) => c.cmd === "Frame" && !c.IgnoreData && (c.TargetAssetName ?? "").trim());
   if (!uses) return null;
-  if (!file) throw new StoryCommandError("the story data has no frames.json");
   const v = frameView(ctx);
-  v.load(ctx.assets.json(file));
+  v.load();
   const s = featureState(ctx);
   s.snapshots = s.snapshots || [];
   s.snapshots.push(() => ({ frames: v.snapshot() }));

@@ -965,3 +965,9 @@ exactly the files the viewer and the story player read.
 
 It needs Node.js 22 or later and no dependencies. The opt-in data tests (`OURNOTES_DATA=<dir> npm run test:data`) go
 further and run lives and charts through the player in Node (see [CONTRIBUTING.md](../CONTRIBUTING.md)).
+
+## Song and replay data
+
+The song catalog example reads `music-data.json` with format `nnnotes.music-data/1`. Replay presets read
+`nnnotes.deck-data/1` for the caller-provided deck capabilities, and the replay worker accepts
+`nnnotes.replay-manifest/1` references. These are separate inputs from the live, model and story product manifests.

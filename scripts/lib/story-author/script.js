@@ -261,7 +261,7 @@ export const applyFixes = (doc, problems) => {
 // The music of a base story: the sound rows of its episode whose cue sheet is a BGM sheet the story has the sound
 // files of (story.json audio) -> [{cue, label, sound, sheet}], by cue name.
 export const musicChoices = (episode, story) => {
-  const audio = (story && story.audio) || {}, out = new Map();
+  const audio = story?.parts?.sounds || {}, out = new Map();
   for (const [id, row] of Object.entries((episode && episode.sounds) || {})) {
     const sheet = episode.cuesheets && episode.cuesheets[row._soundCueSheetID];
     const name = sheet && sheet._cueSheetName;
@@ -274,9 +274,9 @@ export const musicChoices = (episode, story) => {
 // The stages of a base story: [{id, key, caption}] in the order its episode sets them (the others last, by key). The
 // id is the key's last segment, or the whole key where two keys end alike; the caption is the first location caption
 // (in `language`) the episode shows while that stage is set, or "".
-export const stageChoices = (scene, episode, language) => {
+export const stageChoices = (assets, episode, language) => {
   const field = STORY_LANGUAGES[language];
-  const keys = Object.keys((scene && scene.stages) || {}), captions = new Map(), order = [];
+  const keys = Object.keys(assets || {}).filter((k) => k.startsWith("Adv/Stage/")).map((k) => k.slice(10)), captions = new Map(), order = [];
   let cur = null;
   for (const c of (episode && episode.commands) || []) {
     if (c.IgnoreData) continue;
@@ -294,15 +294,10 @@ export const stageChoices = (scene, episode, language) => {
   return order.map((key) => ({ id: count.get(last(key)) > 1 ? key : last(key), key, caption: captions.get(key) || "" }));
 };
 
-// The texture path of a stage's background sprite (a prefab of scene.json stages), or null.
-export const stageBackground = (prefab) => {
-  for (const n of (prefab && prefab.nodes) || []) for (const c of n.components || []) {
-    if (c && c.class === "AdvStage") {
-      const t = c._backgroundSprite && c._backgroundSprite.texture;
-      return t && typeof t.texture === "string" ? t.texture : null;
-    }
-  }
-  return null;
+// The Texture2D object id of the stage's background Sprite, or null.
+export const stageBackground = (prefab, objects) => {
+  const stage = prefab.find("AdvStage").c.fields;
+  return objects.sprite(stage._backgroundSprite)?.texture.id || null;
 };
 
 // ------------------------------------------------------------------------------------------------ models
@@ -340,7 +335,7 @@ export const resolveMotion = (motion, slot, motions) => {
 
 // ------------------------------------------------------------------------------------------------ fonts
 
-// ui/fonts.json of the base story with every font asset drawn by the browser in `family` (the story player's browser
+// The base story's font product with every font asset drawn by the browser in `family` (the story player's browser
 // fonts): the asset keeps its point size, padding, render mode, style settings, line metrics and fallbacks; its
 // characters and glyphs are made as texts use them, so every character of the family shows (no missing glyph). The
 // glyph cell margin keeps the room the asset's text materials need for their underlay offset.
@@ -358,6 +353,10 @@ export const withBrowserFonts = (fonts, family) => {
     f.characters = {};
     f.glyphs = {};
     delete f.missingGlyph;
+  }
+  if (out.coverage) {
+    out.coverage.characters = 0; out.coverage.missing = [];
+    delete out.coverage.missingGlyph;
   }
   return out;
 };
@@ -610,13 +609,14 @@ export const compileScript = (script, site, language) => {
 
   // the models: one Character row per cast member that comes on stage (the player loads them before playing)
   const onStageEver = new Set(script.beats.flatMap((b) => (b.positions || []).map((p) => p.cast)));
-  const story = { ...base.story, advId: 0, episode: "episode.json", models: {}, audio: {},
-                  frames: null, effects: null, postEffects: null, stills: null, talkWindows: null, chat: null,
-                  videos: null, crilips: null };
+  const story = { format: 1, advId: 0, episode: "episode.json", chats: {}, effects: {},
+    parts: { scene: base.story.parts.scene, ui: { ...base.story.parts.ui }, fonts: { ...base.story.parts.fonts },
+      assets: Object.fromEntries(Object.entries(base.story.parts.assets).filter(([key]) => /^Adv\/(Stage|Transition)\//.test(key))),
+      models: {}, sounds: {}, videos: {} } };
   for (const c of script.cast) {
     if (!onStageEver.has(c.id)) continue;
     const key = models[c.model];
-    story.models[key] = c.model;
+    story.parts.models[key] = c.model;
     row("Character", { TargetName: c.id, TargetAssetName: key.replace(/^Character\/Live2D\//, "") });
   }
 
@@ -701,14 +701,14 @@ export const compileScript = (script, site, language) => {
     const s = base.episode.sounds[r.BgmID], sheet = base.episode.cuesheets[s._soundCueSheetID];
     sounds[r.BgmID] = s;
     cuesheets[s._soundCueSheetID] = sheet;
-    story.audio[sheet._cueSheetName] = base.story.audio[sheet._cueSheetName];
+    story.parts.sounds[sheet._cueSheetName] = base.story.parts.sounds[sheet._cueSheetName];
   }
   const title = script.title.trim();
   const episode = {
     advId: 0, asset: "", commandCount: rows.length, commands: rows,
     text: { ...(title ? { [TITLE_ID]: { [field]: plainText(title) } } : {}), ...text },
     sounds, cuesheets, videos: {}, resources: [],
-    master: { _id: 0, _sheetName: "", _advEpisodeAsset: "", _titleTextId: title ? TITLE_ID : 0, _rubyTitleTextId: 0,
+    master: { _id: 0, _sheetName: "", _advEpisodeAsset: "", _titleTextId: title ? TITLE_ID : "", _rubyTitleTextId: "",
               _playbackMode: 0 },
     title: title ? { [field]: plainText(title) } : null,
   };

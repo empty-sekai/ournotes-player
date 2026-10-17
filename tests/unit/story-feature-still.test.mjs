@@ -1,3 +1,4 @@
+import { screenResources } from "./story-screen-resources.mjs";
 // Still (AdvStillCommand) and the DOTween model under it, on a real PlayerLoop at 30 fps with a synthetic still prefab
 // and story UI records: tween startup, delays, loops, deferred kills, Sequence inserts and callbacks, the filtered
 // Play / Kill; the still's show / hide fades, the view's overlay / background fades, sequences and their callbacks,
@@ -177,6 +178,7 @@ const makePlayer = () => {
                 field: { root: { localPosition: { ...Z } } }, background: { root: { localPosition: { ...Z } } },
                 episode: { commands: [{ i: 0, cmd: "Still", TargetAssetName: "st" }] },
                 story: { stills: "stills.json", ui: "ui/ui.json" }, assets: { json: (p) => { assert.ok(docs[p], p); return docs[p]; } } };
+  screenResources(ctx, docs["ui/ui.json"], docs["stills.json"].stills);
   const p = { ctx, playbackSpeed: 10, cancelled: false, shortCutIndex: -1,
               speedRate() { return this.playbackSpeed / 10; }, get shortcut() { return this.shortCutIndex >= 0; },
               calcDuration(d, def = 0) { return this.shortcut ? 0 : (d ? Math.max(d, 0) : def) / this.speedRate(); },

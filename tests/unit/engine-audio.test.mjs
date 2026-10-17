@@ -2,7 +2,7 @@
 // a voice played time-stretched and the movie bus of the videos' sound; engine/timestretch.js on synthetic PCM.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Audio, playbackSpeed } from "../../src/engine/audio.js";
+import { Audio, SOUND_CATEGORY, busOf, playbackSpeed } from "../../src/engine/audio.js";
 import { timeStretch } from "../../src/engine/timestretch.js";
 
 const F = Math.fround;
@@ -16,7 +16,7 @@ const fakeContext = () => {
   };
   return {
     sampleRate: 48000, currentTime: 0, state: "running", destination: {},
-    createGain() { return { gain: param(1), connect(n) { return n; } }; },
+    createGain() { return { gain: param(1), to: null, connect(n) { this.to = n; return n; } }; },
     createMediaElementSource(el) {
       const n = { el, to: null, connect(x) { n.to = x; return x; }, disconnect() { n.to = null; } };
       this.media.push(n);
@@ -47,6 +47,26 @@ test("playbackSpeed: [0.25, 3], within max(|s|, 1) x 1e-6 of 1 plays as is", () 
   assert.throws(() => playbackSpeed(NaN), /outside/);
 });
 
+test("episode sound preload uses the cue product's resolved waveform path", async () => {
+  const meta = { file: "sounds/sheet-a/waveforms/voice.flac", sampleRate: 48000, samples: 48000, categories: ["Voice"] };
+  const episode = { sounds: { 7: { _soundCueSheetID: 3, _cueName: "hello", _category: 0 } },
+    cuesheets: { 3: { _cueSheetName: "sheet-a" } } };
+  const reads = [], context = fakeContext();
+  context.decodeAudioData = async () => context.buffer(1, 48000, 48000);
+  const resolve = Audio.episodeResolver(episode, { cues: (name) => {
+    assert.equal(name, "sheet-a"); return { hello: meta };
+  } });
+  const audio = new Audio(resolve, { time: 0 }, { context, assets: {
+    arrayBuffer: (path) => { reads.push(path); return new ArrayBuffer(0); },
+  } });
+  await audio.preload([7, 7]);
+  assert.deepEqual(reads, [meta.file]);
+  assert.equal(audio.buffers.get("sheet-a/hello").meta, meta);
+  const id = audio.play(7);
+  assert.equal(audio.get(id).gain.to, audio.buses[SOUND_CATEGORY.Voice]);
+  assert.equal(audio.get(id).category, SOUND_CATEGORY.Bgm);
+});
+
 test("option volumes multiply the category bus; All scales by DefaultVolume, a name sets it as is", () => {
   const ctx = fakeContext();
   const a = new Audio(() => null, { time: 0 }, { context: ctx });
@@ -63,6 +83,28 @@ test("option volumes multiply the category bus; All scales by DefaultVolume, a n
   assert.equal(a.getOptionVolume("Bgm"), 1);
   assert.equal(a.buses[0].gain.value, F(F(0.7) * 0.5));
   assert.ok(Number.isNaN(a.getOptionVolume("Nope")));
+});
+
+test("a cue plays on the bus of its sheet's CRI categories; its row's category decides what stopAll reaches", () => {
+  const ctx = fakeContext(), loop = { time: 0 };
+  const cue = { sheet: "s", cue: "c", category: SOUND_CATEGORY.Bgm, row: {} };     // a voice cue whose row says Bgm
+  const a = new Audio(() => cue, loop, { context: ctx });
+  const put = (categories) => a.buffers.set("s/c", { buf: ctx.buffer(1, 48000, 48000),
+    meta: { sampleRate: 48000, samples: 48000, ...(categories ? { categories } : {}) } });
+  put(["Voice", "VoiceConfig"]);
+  const voice = a.get(a.play(1, { crossFade: 0 }));
+  put(null);
+  const row = a.get(a.play(1, { crossFade: 0 }));
+  assert.deepEqual([voice.gain.to === a.buses[SOUND_CATEGORY.Voice], row.gain.to === a.buses[SOUND_CATEGORY.Bgm]], [true, true]);
+  assert.deepEqual([voice.category, row.category], [SOUND_CATEGORY.Bgm, SOUND_CATEGORY.Bgm]);
+  a.stopAll(SOUND_CATEGORY.Bgm);
+  assert.deepEqual([a.isPlaying(voice.id), a.isPlaying(row.id)], [false, false]);
+  a.setOptionVolume("Bgm", 0);
+  put(["Voice", "VoiceConfig"]);
+  a.play(1, { crossFade: 0 });
+  assert.equal(a.buses[SOUND_CATEGORY.Voice].gain.value, 1);
+  assert.equal(busOf({ categories: ["Other", "Se"] }, SOUND_CATEGORY.Bgm), SOUND_CATEGORY.Se);
+  assert.equal(busOf({ categories: ["Other"] }, SOUND_CATEGORY.Voice), SOUND_CATEGORY.Voice);
 });
 
 test("a video's sound: on the movie bus at the movie volume, which no category or option volume changes", () => {

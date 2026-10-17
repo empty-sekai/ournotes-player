@@ -19,7 +19,7 @@ const fakeSession = (lineCount = 10, line = -1) => ({
 // a StoryPlayer without its DOM: the members _startSession, play, pause and setLanguage read
 const bare = () => Object.assign(Object.create(StoryPlayer.prototype), {
   opts: {}, gl: null, store: {}, _lang: "ja", _auto: false, _speed: 10, _volumes: { Bgm: 1 }, _paused: false,
-  disposed: false, controls: null, session: null, _audioContext: null, _manifest: {}, _abort: new AbortController(),
+  disposed: false, controls: null, statusEl: {}, session: null, _audioContext: null, _manifest: {}, _abort: new AbortController(),
   _pixelSize: () => [130, 60], _emit() {}, _loadStore: async () => ({}), _exclusive: async (fn) => fn(),
 });
 
@@ -49,6 +49,7 @@ test("a seek before the first play, then a language: the new language starts at 
     assert.deepEqual([opts[0].line, p._startLine, p.line, p.session.held], [5, 5, 4, [true]]);   // held while paused
     await p.setLanguage("en");
     assert.equal(opts[1].line, 5);
+    assert.equal(p.statusEl.hidden, true);
     p.session.line = 7;                                                  // played on: the current line
     await p.setLanguage("ko");
     assert.equal(opts[2].line, 7);

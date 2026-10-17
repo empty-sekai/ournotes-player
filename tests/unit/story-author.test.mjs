@@ -13,7 +13,10 @@ import {
   withBrowserFonts,
 } from "../../scripts/lib/story-author/script.js";
 import { Site } from "../../scripts/lib/story-author/site.js";
+import { compile } from "../../scripts/lib/json-schema.mjs";
 import { fileFetch, nodeDecode } from "../../scripts/lib/headless.mjs";
+import { StoryData } from "../../src/story/data.js";
+import { Prefab } from "../../src/engine/prefab.js";
 import { loadStoryStore } from "../../src/story/assets.js";
 import { StoryPlayerCore } from "../../src/story/player-core.js";
 import "../../src/story/features/index.js";
@@ -39,13 +42,14 @@ const EPISODE = {
              { i: 2, cmd: "Stage", TargetAssetName: "other/hall" }],
   text: { t1: { english: "<b>Garden</b>" } },
 };
-const STORY = { advId: 9, episode: "episode.json", scene: "scene.json", ui: "ui/ui.json", models: { [MODELS.m_a]: "m_a" },
-                audio: { sound_bgm_adv_quiet_morning: "audio/sound_bgm_adv_quiet_morning", sound_se_adv_door: "audio/se" },
-                frames: "frames.json", chat: "chat.json", videos: "videos/videos.json" };
-const SCENE = { stages: { "st/garden": {}, "other/hall": {}, "st/hall": {} },
-                settings: { playerSettings: { _initializeEpisodes: [], _finalizeEpisodes: [] } } };
+const STORY = { format: 1, advId: 9, episode: "episode.json", parts: {
+  scene: "storyscenes/default.json", ui: { en: "storyui/en.json", ja: "storyui/ja.json" },
+  fonts: { en: "storyfonts/9_en.json", ja: "storyfonts/9_ja.json" },
+  models: { [MODELS.m_a]: "models/m_a.json" }, assets: { "Adv/Stage/st/garden": "storyassets/garden.json",
+    "Adv/Stage/other/hall": "storyassets/other_hall.json", "Adv/Stage/st/hall": "storyassets/hall.json" },
+  sounds: { sound_bgm_adv_quiet_morning: "cuesheets/sound_bgm_adv_quiet_morning.json", sound_se_adv_door: "cuesheets/se.json" } } };
 const BASE = { language: "en", languages: ["en", "ja"], story: STORY, episode: EPISODE,
-               stages: stageChoices(SCENE, EPISODE, "en"), music: musicChoices(EPISODE, STORY) };
+               stages: stageChoices(STORY.parts.assets, EPISODE, "en"), music: musicChoices(EPISODE, STORY) };
 const SITE = { base: BASE, models: MODELS, actions: ACTIONS };
 
 const script = (beats, extra = {}) => ({
@@ -80,9 +84,9 @@ test("the base story's stages with short ids and captions, its music and a stage
                                  { id: "st/hall", key: "st/hall", caption: "" }]);
   assert.deepEqual(BASE.music, [{ cue: "sound_bgm_adv_quiet_morning", label: "Quiet Morning", sound: 11,
                                   sheet: "sound_bgm_adv_quiet_morning" }]);
-  const prefab = { nodes: [{ components: [{ class: "Transform" }, { class: "AdvStage", _backgroundSprite: { texture: { texture: "textures/bg.png" } } }] }] };
-  assert.equal(stageBackground(prefab), "textures/bg.png");
-  assert.equal(stageBackground({ nodes: [] }), null);
+  const prefab = new Prefab({ nodes: [node("Stage", [mb("AdvStage", { _backgroundSprite: ref("test:1") })])] });
+  assert.equal(stageBackground(prefab, { sprite: () => ({ texture: { id: "test:2" } }) }), "test:2");
+  assert.equal(stageBackground(prefab, { sprite: () => null }), null);
 });
 
 test("a model's motions and expressions; the clip a motion plays at a position", () => {
@@ -189,10 +193,10 @@ test("a scene compiles to the game's rows: stage, music, entrances, focus, capti
   assert.equal(c.episode.master._titleTextId, "custom_title");
   assert.deepEqual(c.episode.sounds, { 11: EPISODE.sounds[11] });
   assert.deepEqual(c.episode.cuesheets, { 5: EPISODE.cuesheets[5] });
-  assert.deepEqual(c.story.audio, { sound_bgm_adv_quiet_morning: "audio/sound_bgm_adv_quiet_morning" });
-  assert.deepEqual(c.story.models, { [MODELS.m_a]: "m_a", [MODELS.m_b]: "m_b" });
-  assert.equal(c.story.ui, "ui/ui.json");
-  for (const k of ["frames", "chat", "videos"]) assert.equal(c.story[k], null);
+  assert.deepEqual(c.story.parts.sounds, { sound_bgm_adv_quiet_morning: "cuesheets/sound_bgm_adv_quiet_morning.json" });
+  assert.deepEqual(c.story.parts.models, { [MODELS.m_a]: "m_a", [MODELS.m_b]: "m_b" });
+  assert.deepEqual(c.story.parts.ui, STORY.parts.ui);
+  assert.deepEqual(c.story.parts.videos, {});
   assert.deepEqual(c.lines, [
     { line: 0, beat: 1, path: "/beats/1", id: "hi", speaker: "a", name: "Ann", text: "Hi <you>" },
     { line: 1, beat: 2, path: "/beats/2", speaker: null, name: "", text: "Wind." },
@@ -230,7 +234,7 @@ test("a second scene fades out, clears the stage and fades in; a positions beat 
     { cmd: "Talk", AdvTextID: "custom_line_4", TargetName: "b", TargetTextIDs: ["custom_name_b"], TargetTextColors: ["#FFFFFF"] },
   ]);
   assert.equal(c.episode.title, null);
-  assert.equal(c.episode.master._titleTextId, 0);
+  assert.equal(c.episode.master._titleTextId, "");
   assert.deepEqual(c.episode.sounds, {});                  // music stopped while none plays: no row
   assert.equal(c.scenes, 2);
 });
@@ -355,7 +359,7 @@ test("the compiled rows are commands the story player runs", () => {
     { scene: "st/hall", music: "stop" },
     { narrate: "end" },
   ])).episode;
-  const settings = SCENE.settings.playerSettings;
+  const settings = { _initializeEpisodes: [], _finalizeEpisodes: [] };
   const missing = StoryPlayerCore.requiredCommands(ep, settings).filter((c) => !StoryPlayerCore.supportedCommands().includes(c));
   assert.deepEqual(missing, []);
   StoryPlayerCore.checkEpisode(ep, settings, "story script");
@@ -364,6 +368,7 @@ test("the compiled rows are commands the story player runs", () => {
 test("browser fonts: every font asset drawn in the family, with room for its underlay", () => {
   const fonts = {
     source: "open",
+    coverage: { characters: 1, missing: [], missingGlyph: ["x"] },
     fonts: {
       "F (G SDF)": { atlasPadding: 4, faceInfo: { m_PointSize: 40 }, characters: { 65: { glyph: 1 } }, glyphs: { 1: {} },
                      missingGlyph: { unicode: 9633, characters: [1] }, source: { generator: { margin: 8 } }, fallbacks: [] },
@@ -377,6 +382,7 @@ test("browser fonts: every font asset drawn in the family, with room for its und
   assert.deepEqual(out.fonts["F (G SDF)"].characters, {});
   assert.deepEqual(out.fonts["F (G SDF)"].glyphs, {});
   assert.equal(out.fonts["F (G SDF)"].missingGlyph, undefined);
+  assert.deepEqual(out.coverage, { characters: 0, missing: [] });
   assert.deepEqual(out.fonts["H (K SDF)"].fallbacks, ["F (G SDF)"]);
   assert.deepEqual(fonts.fonts["F (G SDF)"].characters, { 65: { glyph: 1 } });          // the input is kept
   assert.match(fontFamily({ preset: "sans" }, "zh-Hans"), /Noto Sans SC/);
@@ -386,7 +392,7 @@ test("browser fonts: every font asset drawn in the family, with room for its und
 
 // ------------------------------------------------------------------------------------------------ a synthetic site
 
-const FONTS = { format: 1, source: "open", language: "en", fonts: { "F SDF": { atlasPadding: 4, faceInfo: { m_PointSize: 40 },
+const FONTS = { format: "nnnotes.story-fonts/1", source: "open", language: "en", fonts: { "F SDF": { atlasPadding: 4, faceInfo: { m_PointSize: 40 },
   characters: { 65: { glyph: 1 } }, glyphs: { 1: {} }, fallbacks: [] } }, materials: {}, textures: {} };
 
 // a site with the base story stories/9.json (format /2, languages en and ja) and the models m_a and m_b
@@ -400,24 +406,27 @@ const makeSite = () => {
     models.push({ id, group: "g", key: man.subject, manifest: `models/${id}.json` });
   }
   fs.writeFileSync(path.join(dir, "models.json"), JSON.stringify({ format: 2, models }));
-  const scene = { ...SCENE, stages: { "st/garden": { nodes: [{ components: [{ class: "AdvStage",
-    _backgroundSprite: { texture: { texture: "textures/bg.png" } } }] }] }, "st/hall": {} } };
-  const story = { ...STORY, models: { "Character/Live2D/g/m_a/model/m_a": "m_a" } };
-  const files = putFiles(dir, {
-    "story.json": story, "episode.json": EPISODE, "scene.json": scene, "ui/ui.json": { nodes: [] },
-    "frames.json": {}, "chat.json": {}, "textures/bg.png": png(8, 4), "textures/unused.png": png(2, 2),
-    "audio/sound_bgm_adv_quiet_morning/cues.json": { cues: [] }, "audio/se/cues.json": { cues: [1] },
-  });
-  const lang = (l) => ({ files: putFiles(dir, { "ui/fonts.json": { ...FONTS, language: l }, "ui/languages.json": { language: l } }) });
-  const manifest = {
-    format: "ournotes.story-manifest/2", advId: 9, root: "../", language: "en", audio: true, audioFormat: "flac", fonts: "open",
-    story: { advId: 9, asset: "s", playbackMode: 0, titles: { en: "Base" }, groups: [], commands: [], commandCount: 0,
-             language: "en", languages: ["en", "ja"] },
-    requires: { commands: [], cubismCore: true, motionSync: false }, files, models: { m_a: "models/m_a.json" },
-    languages: { en: lang("en"), ja: lang("ja") },
+  const product = (file, kind, subject, own, objects = {}, extra = {}) => {
+    const manifest = { schema: "nnnotes.product/1", product: kind, subject, files: putFiles(dir, own), objects, ...extra };
+    fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+    fs.writeFileSync(path.join(dir, file), JSON.stringify(manifest));
   };
-  fs.mkdirSync(path.join(dir, "stories"), { recursive: true });
-  fs.writeFileSync(path.join(dir, "stories", "9.json"), JSON.stringify(manifest));
+  const story = structuredClone(STORY);
+  delete story.parts.assets["Adv/Stage/other/hall"];
+  story.parts.models = { "Character/Live2D/g/m_a/model/m_a": "models/m_a.json" };
+  const o = new ModelObjects("stage"), texture = o.texture("background", { image: png(8, 4), width: 8, height: 4 });
+  const sprite = o.add("Sprite", "background", { json: JSON.stringify({ sprite: { m_Name: "background" },
+    renderData: { texture: ref(texture), uvTransform: { x: 1, y: 0, z: 1, w: 0 } } }) });
+  const prefab = o.prefab([node("Stage", [mb("AdvStage", { _backgroundSprite: ref(sprite) })])]);
+  const objects = Object.fromEntries(Object.entries(o.objects).map(([id, object]) => [id, { ...object, files: putFiles(dir, object.files) }]));
+  for (const [key, file] of Object.entries(story.parts.assets)) product(file, "story.asset", key, { "asset.json": { format: 1, objects: [prefab] } }, objects);
+  product(story.parts.scene, "story.scene", "default", { "scene.json": { format: 1, settings: {} } });
+  for (const lang of ["en", "ja"]) {
+    product(story.parts.ui[lang], "story.ui", lang, { "ui.json": { format: 1, language: { code: lang } } });
+    product(story.parts.fonts[lang], "story.fonts", `9/${lang}`, { "fonts.json": { ...FONTS, language: lang } });
+  }
+  for (const [sheet, file] of Object.entries(story.parts.sounds)) product(file, "story.sound", sheet, { "cues.json": {} });
+  product("stories/9.json", "story", "9", { "story.json": story, "episode.json": { ...EPISODE, advId: 9 } }, {}, { language: "en" });
   fs.writeFileSync(path.join(dir, "stories.json"), JSON.stringify({ format: "ournotes.stories/1", stories: [
     { id: "9", manifest: "stories/9.json", advId: 9, asset: "s", playbackMode: 0, titles: { en: "Base" }, groups: [],
       language: "en", languages: ["en", "ja"] },
@@ -439,13 +448,14 @@ test("a site: base stories, the stories a script can use, models and their actio
     const b = await site.base("stories/9.json", "ja");
     assert.equal(b.language, "ja");
     assert.deepEqual(b.languages, ["en", "ja"]);
-    assert.deepEqual(b.stages.map((s) => [s.id, s.background]), [["garden", "textures/bg.png"], ["hall", null]]);
+    assert.deepEqual(b.stages.map((s) => [s.id, s.background]), [["garden", "stage:1"], ["hall", "stage:1"]]);
+    assert.deepEqual((await site.baseFiles(b, ["stage:1"])).get("stage:1"), png(8, 4));
     assert.deepEqual(b.cast, ["m_a"]);
     assert.equal(b.fonts.language, "ja");
     assert.deepEqual((await site.model("m_b")).actions,
                      { motions: ["mtn_idle"], expressions: ["exp_idle"], defaultMotion: "mtn_idle", defaultExpression: "exp_idle" });
     await assert.rejects(site.model("m_x"), /not in models.json/);
-    await assert.rejects(site.base("stories/9.json", "ko"), /no language ko/);
+    await assert.rejects(site.base("stories/9.json", "ko"), /no ui for language ko/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -481,16 +491,27 @@ test("the commands without a browser: new, check, build; the built story loads",
     assert.equal(r.out.manifest, "custom-stories/mine.json");
     const url = pathToFileURL(path.join(dir, "custom-stories", "mine.json")).href;
     const man = JSON.parse(fs.readFileSync(new URL(url), "utf8"));
-    assert.deepEqual(Object.keys(man.languages), ["en"]);
-    assert.deepEqual(man.models, { m_a: "models/m_a.json", m_b: "models/m_b.json" });
-    assert.ok(!man.files["frames.json"] && !man.files["chat.json"] && !man.files["textures/unused.png"] && !man.files["audio/se/cues.json"]);
-    assert.ok(man.files["textures/bg.png"] && man.files["audio/sound_bgm_adv_quiet_morning/cues.json"]);
-    assert.equal(man.audio, true);
-    const store = await loadStoryStore(url, { fetch: fileFetch, decode: nodeDecode });
-    assert.equal(store.json("episode.json").commands.filter((c) => c.cmd === "Talk").length, 2);
-    assert.deepEqual(store.json("story.json").models, { "Character/Live2D/g/m_a/model/m_a": "m_a", "Character/Live2D/g/m_b/model/m_b": "m_b" });
-    assert.deepEqual(store.json("ui/fonts.json").fonts["F SDF"].browser.family.split(",")[0], "\"Noto Sans\"");
-    assert.ok(store.has("live2d/m_b/model.json"));
+    assert.equal(man.schema, "nnnotes.product/1");
+    assert.equal(man.product, "story");
+    assert.equal(man.language, "en");
+    assert.deepEqual(Object.keys(man.files), ["episode.json", "story.json"]);
+    const store = await loadStoryStore(url, { fetch: fileFetch, decode: nodeDecode }), data = new StoryData(store);
+    const episodeSchema = compile(JSON.parse(fs.readFileSync(new URL("../../schema/episode.schema.json", import.meta.url), "utf8")));
+    assert.deepEqual(episodeSchema(data.episode), []);
+    assert.equal(data.episode.commands.filter((c) => c.cmd === "Talk").length, 2);
+    assert.deepEqual(data.story.parts.models, { "Character/Live2D/g/m_a/model/m_a": "models/m_a.json", "Character/Live2D/g/m_b/model/m_b": "models/m_b.json" });
+    assert.deepEqual(Object.keys(data.story.parts.sounds), ["sound_bgm_adv_quiet_morning"]);
+    assert.deepEqual(data.fonts.fonts["F SDF"].browser.family.split(",")[0], "\"Noto Sans\"");
+    assert.ok(store.has("models/m_b/model.json"));
+
+    fs.writeFileSync(file, JSON.stringify({ ...doc, language: "ja", title: "" }));
+    r = run(["build", file, "--site", dir, "--name", "japanese"]);
+    assert.equal(r.status, 0, r.err);
+    const japanese = new StoryData(await loadStoryStore(pathToFileURL(path.join(dir, r.out.manifest)).href,
+      { fetch: fileFetch, decode: nodeDecode }));
+    assert.equal(japanese.ui.language.code, "ja");
+    assert.equal(japanese.fonts.language, "ja");
+    assert.deepEqual(episodeSchema(japanese.episode), []);
 
     fs.writeFileSync(file, JSON.stringify({ ...doc, beats: [{ say: "b", text: "x" }] }));
     r = run(["check", file, "--site", dir]);

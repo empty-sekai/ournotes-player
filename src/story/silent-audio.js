@@ -24,7 +24,7 @@ export class SilentAudio {
 
   cueOf(soundId) {
     const c = this.resolve(soundId);
-    const meta = this.assets.json(`audio/${c.sheet}/cues.json`)[c.cue];
+    const meta = c.meta;
     if (!meta) throw new Error(`cue ${c.cue} not in ${c.sheet}`);
     return { ...c, meta };
   }

@@ -53,22 +53,24 @@ test("modelIndex: model.json at the store's root or in a directory, the classes 
   assert.throws(() => modelIndex(o.store(model), "live2d/none"), /live2d\/none\/model\.json/);
 });
 
-test("storyModels: a model id names the model.json under live2d/<id>/; one model and ShaderLib per id", () => {
+test("storyModels: product directories share one model and shader library", () => {
   const gl = headlessGL();
   const { o, model } = objects();
-  const s = o.store({ dir: "live2d/m1", ...model });
-  const story = { models: { "Character/Live2D/g/a/model/a": "m1", "Character/Live2D/g/b/model/b": "m1",
-                            "Character/Live2D/g/c/model/c": "" } };
-  const modelOf = storyModels(gl, s, story, "story 7");
+  const assets = o.store({ dir: "models/m1", ...model });
+  const data = { assets, model: (address) => {
+    if (!["Character/Live2D/g/a/model/a", "Character/Live2D/g/b/model/b"].includes(address))
+      throw new Error(`story model ${address}: not listed`);
+    return { dir: "models/m1" };
+  } };
+  const modelOf = storyModels(gl, data);
   const a = modelOf("Character/Live2D/g/a/model/a");
-  assert.equal(a, modelOf("Character/Live2D/g/b/model/b"));      // one model (and ShaderLib) per id
-  assert.equal(a.id, "m1");
+  assert.equal(a, modelOf("Character/Live2D/g/b/model/b"));
+  assert.equal(a.id, "models/m1");
   assert.deepEqual(a.model, o.modelJson(model));
-  assert.equal(a.lib.info(LIT).name, LIT);                        // the ShaderLib of model.json shaders
-  assert.throws(() => modelOf("Character/Live2D/g/x/model/x"), /story 7: model Character\/Live2D\/g\/x\/model\/x is not in the story/);
-  assert.throws(() => modelOf("Character/Live2D/g/c/model/c"), /story 7: model Character\/Live2D\/g\/c\/model\/c is not in the story/);
-  const headless = storyModels(null, s, story, "story 7")("Character/Live2D/g/a/model/a");
-  assert.equal(headless.lib, null);                               // no GL: no shaders
+  assert.equal(a.lib.info(LIT).name, LIT);
+  assert.throws(() => modelOf("missing"), /story model missing: not listed/);
+  const headless = storyModels(null, data)("Character/Live2D/g/a/model/a");
+  assert.equal(headless.lib, null);
   assert.equal(headless.model.moc, model.moc);
 });
 

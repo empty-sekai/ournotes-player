@@ -1,7 +1,7 @@
 // Audio: sound playback with the game's SoundManager semantics over decoded CRI cues
-// (audio/<cueSheet>/<cue>.flac + cues.json), and SoundCategoryVolumes (the CRI category volumes).
+// and SoundCategoryVolumes (the CRI category volumes).
 //
-// A master sound id resolves to {sheet, cue, category, row} through the resolver
+// A master sound id resolves to {sheet, cue, category, row, meta} through the resolver
 // passed to the constructor (LiveSoundManager: the sounds of live-audio.json; a story: Audio.episodeResolver over
 // the episode's -Sound / -SoundCueSheet rows). The row is a MasterSound record ({_category, _soundCueSheetID,
 // _cueName, ...}).
@@ -22,7 +22,19 @@ export const SOUND_CATEGORY = { Bgm: 0, Se: 1, Voice: 2, NotesSe: 3, All: 9999 }
 // buffer (rounded by `round`). At equal rates the count is n itself. Times in seconds (loop points, start offsets, the
 // audio-synced time) do not depend on the rate.
 export const framesAt = (n, from, to, round = Math.round) => (from === to ? n : round(n * to / from));
+export const SOUND_CATEGORY_NAME = { 0: "Bgm", 1: "Se", 2: "Voice" };        // SoundCategory enum names
 export const SOUND_BUS_GAIN = { 0: 0.7, 1: 1.0, 2: 1.0 };
+
+// The bus of a cue. ENGINE: the game never attaches a category to a sound (SoundCache.CreateSoundSource and
+// SoundPlayer.Play call no CriAtomExPlayer.SetCategory), so the CRI category volumes reach a cue through the
+// categories its sheet puts it in (cues.json `categories`: the CRI category names of the cue in the ACB), whatever
+// category its -Sound row names. The row's category decides which sounds StopAll and the BGM crossfade reach
+// (SoundInfo.Category). A cue without categories plays on its row's.
+export const busOf = (meta, category) => {
+  for (const name of (meta && meta.categories) || [])
+    for (const k of Object.keys(SOUND_CATEGORY_NAME)) if (SOUND_CATEGORY_NAME[k] === name) return Number(k);
+  return category;
+};
 
 // Fwk.Sound.SoundVolume over the CRI category volumes. SoundVolumeSettings gives each category name its
 // DefaultVolume; SoundManager.Boot calls ChangeVolume("All", 1.0), so every category starts at DefaultVolume.
@@ -37,7 +49,6 @@ export const SOUND_BUS_GAIN = { 0: 0.7, 1: 1.0, 2: 1.0 };
 //   ChangeConfigVolume (the app's volume options): "All" -> every settings name's "<name>Config" = DefaultVolume x v;
 //     any other name -> CriAtomExCategory.SetVolume(name + "Config", v); RestoreConfigVolume = ChangeConfigVolume(1).
 export const SOUND_VOLUME_SETTINGS = { Bgm: 0.7, Se: 1.0, Voice: 1.0, LiveBgm: 1.0, LiveSe: 1.0, LiveNotesSe: 1.0, LiveVoice: 1.0 };
-export const SOUND_CATEGORY_NAME = { 0: "Bgm", 1: "Se", 2: "Voice" };        // SoundCategory enum names
 export class SoundCategoryVolumes {
   constructor(onChange) {
     this.onChange = onChange;               // (name, volume) after a CRI category volume changed
@@ -196,15 +207,15 @@ export class Audio {
   async suspend() { if (this.ctx.state === "running") await this.ctx.suspend(); }
 
   // The resolver of a story episode: sound id -> its -Sound row (episode.sounds) -> the row's -SoundCueSheet row
-  // (episode.cuesheets) -> {sheet: _cueSheetName, cue: _cueName, category: _category, row}; the cue's waveform is
-  // audio/<sheet>/<file of the cue in audio/<sheet>/cues.json>.
-  static episodeResolver(episode) {
+  // (episode.cuesheets), with cue metadata and a product-relative waveform path from StoryData.
+  static episodeResolver(episode, data) {
     return (soundId) => {
       const s = episode.sounds[String(soundId)];
       if (!s) throw new Error(`sound ${soundId} not in the episode's -Sound rows`);
       const sheet = episode.cuesheets[String(s._soundCueSheetID)];
       if (!sheet) throw new Error(`cue sheet ${s._soundCueSheetID} not in the episode's -SoundCueSheet rows`);
-      return { sheet: sheet._cueSheetName, cue: s._cueName, category: s._category, row: s };
+      return { sheet: sheet._cueSheetName, cue: s._cueName, category: s._category, row: s,
+               meta: data.cues(sheet._cueSheetName)[s._cueName] };
     };
   }
 
@@ -218,10 +229,10 @@ export class Audio {
     for (const id of soundIds) {
       const c = this.cueOf(id), key = `${c.sheet}/${c.cue}`;
       if (this.buffers.has(key)) continue;
-      const meta = this.assets.json(`audio/${c.sheet}/cues.json`)[c.cue];
+      const meta = c.meta;
       if (!meta) throw new Error(`cue ${c.cue} not decoded in ${c.sheet}`);
       // decoded at the context's rate; the loop points below are converted to seconds with the cue's own rate
-      const buf = await this.ctx.decodeAudioData(this.assets.arrayBuffer(`audio/${c.sheet}/${meta.file}`));
+      const buf = await this.ctx.decodeAudioData(this.assets.arrayBuffer(meta.file));
       this.buffers.set(key, { buf, meta });
     }
   }
@@ -237,7 +248,7 @@ export class Audio {
       forceFadeIn = true;
       for (const i of [...this.playing.values()]) if (i.category === SOUND_CATEGORY.Bgm) this._stopInfo(i, true, crossFade);
     }
-    const bus = this.buses[c.category];
+    const bus = this.buses[busOf(entry.meta, c.category)];
     if (!bus) throw new Error(`sound category ${c.category}`);
     const info = { id: this.nextId++, soundId, category: c.category, cue: c, meta: entry.meta, buf: entry.buf,
                    fade: 0, fadeStart: 0, fadeDur: 0, finished: false, stopped: false, onFinished: [],

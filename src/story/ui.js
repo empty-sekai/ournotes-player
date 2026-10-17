@@ -1,10 +1,10 @@
-import { F, join } from "../engine/core.js";
-import { ShaderLib } from "../engine/glsl.js";
+import { F } from "../engine/core.js";
 import { GLTex } from "../engine/texture.js";
 import { Tweens } from "../engine/tween.js";
-import { UIAnimator, UIClip, UIDraw, UIError, UIImage, UINode, UISprite, UITween, uiCanvasSize } from "../engine/ugui.js";
+import { UIAnimator, UIDraw, UIError, UIImage, UISprite, UITween, uiCanvasSize } from "../engine/ugui.js";
 import { TMPText, UIGradientMod, tmpSpriteAsset, tmpUnsupported } from "../engine/uitext.js";
 import { ADV_CANVAS_LAYER, StoryCommandError, createStoryUILayers } from "./interfaces.js";
+import { uiTree, uiTextBinding } from "./ui-objects.js";
 import { StoryFontAssets } from "./ui-fonts.js";
 import { StoryLayout } from "./ui-layout.js";
 import { StoryText, countedText, shownText } from "./ui-ruby.js";
@@ -23,10 +23,8 @@ import { DualKawaseBlur, UIBlur, blurPass } from "./simple/home/blur.js";
 // ui-ruby.js, the rule transition and the letterbox ui-transition.js. The UI's timing runs on the player loop with or
 // without a GL context (gl = null: layout, geometry and timing only).
 //
-// Data: ui/ui.json (nodes, sprites, textures, UI materials, clips, controllers, transitions, player settings, the blur
-// pass settings with a backdrop-filter talk window), the language's ui/fonts.json (font assets, glyph pages, text
-// materials, the emoji sprite asset, per text node the TMP text record and its localized font binding) and
-// ui/languages.json (LanguageMode of the language).
+// Data: story.ui references prefabs and settings by object id. story.fonts supplies per-component font and material
+// bindings, glyph pages and sprite assets. story.ui.language holds the language mode and localization settings.
 
 export const ADVUI_WIDGET = "UIAdvWidget";
 export const ADVUI_FRONT = "UIAdvWidget/FrontCanvas";
@@ -61,95 +59,80 @@ const MENU_PARTS = {
 };
 
 export class StoryUI {
-  // gl may be null (layout, geometry and timing only). doc = ui/ui.json; fonts = ui/fonts.json and language =
-  // ui/languages.json of the language `lang`; assets = the story's AssetStore (textures, shaders, glyph pages; the
-  // store bound to gl when omitted); dir = the ui directory in the store.
-  constructor(gl, loop, doc, { assets, dir = "ui", lang, fonts, language }) {
-    if (!fonts || !fonts.texts) throw new UIError("StoryUI: ui/fonts.json missing");
-    if (!language || typeof language.mode !== "number") throw new UIError("StoryUI: ui/languages.json missing");
+  // gl may be null for layout, geometry and timing. doc is story.ui; data supplies the selected language's font
+  // product, and objects resolves the shared prefab, material, texture and animation objects.
+  constructor(gl, loop, doc, { assets, data, objects }) {
+    const fonts = data.fonts, language = doc.language, lang = data.language;
+    if (!fonts?.texts) throw new UIError("StoryUI: font product missing");
+    if (typeof language?.mode !== "number") throw new UIError("StoryUI: language missing");
     this.gl = gl; this.loop = loop; this.doc = doc; this.fonts = fonts; this.language = language; this.lang = lang;
-    this.assets = assets; this.dir = dir;
-    this._materialInstances = new Map();            // TMP_Text.fontMaterial instances: name -> text material record
+    this.assets = assets; this.data = data; this.objects = objects; this.dir = data.fontDir;
+    this.dotween = objects.mono(doc.settings.dotween);
+    this._materialInstances = new Map();
     this._spriteAssets = new Map();
-    // LocalizeManager.EmojiSpriteAsset (UIText gives it to its text; TmpTextHelper.CombineEmojiSequences' fallback)
     this.emojiSpriteAsset = fonts.emojiSpriteAsset ? tmpSpriteAsset(this.spriteAsset(fonts.emojiSpriteAsset)) : null;
-    // hierarchy order (parents first, siblings in order); the widget's other canvases are skipped with their subtrees
-    const byPath = new Map(), skipped = new Set();
-    for (const rec of doc.nodes) {
-      const parentPath = rec.path.slice(0, rec.path.lastIndexOf("/"));
-      if (skipped.has(parentPath)) { skipped.add(rec.path); continue; }
-      const parent = byPath.get(parentPath) || null;
-      if (!parent && parentPath === ADVUI_WIDGET && rec.path !== ADVUI_FRONT && rec.path !== ADVUI_LETTERBOX) {
-        skipped.add(rec.path); continue;
-      }
-      if (!parent && rec.path !== ADVUI_FRONT && rec.path !== ADVUI_LETTERBOX)
-        throw new UIError(`ui node ${rec.path} has no parent in the data`);
-      byPath.set(rec.path, new UINode(rec, parent));
+    const byPath = this.nodes = new Map();
+    this.front = uiTree(objects, doc.widget, { root: ADVUI_FRONT, nodes: byPath });
+    this.letterBox = uiTree(objects, doc.widget, { root: ADVUI_LETTERBOX, nodes: byPath });
+    const neededWindows = new Set([ADVUI_DEFAULT_WINDOW, ...data.episode.commands
+      .filter((c) => c.cmd === "TalkWindow" && !c.IgnoreData).map((c) => c.TargetAssetName)]);
+    const talkView = this.front.find(ADVUI_TALK_VIEW);
+    for (const name of neededWindows) {
+      const id = doc.talkWindows[name];
+      if (!id) throw new UIError(`talk window ${name}: not in the UI product`);
+      uiTree(objects, id, { parent: talkView, nodes: byPath });
     }
-    this.nodes = byPath;
-    this.front = byPath.get(ADVUI_FRONT);
-    this.letterBox = byPath.get(ADVUI_LETTERBOX);
-    if (!this.front || !this.letterBox) throw new UIError("ui.json lacks FrontCanvas or AdvLetterBoxCanvas");
-    const scaler = this.front.rec.canvasScaler;
+    const scaler = this.front.fields("CanvasScaler");
     if (!scaler || !scaler.m_Enabled || scaler.m_UiScaleMode !== 1 || scaler.m_ScreenMatchMode !== 1)
       throw new UIError("FrontCanvas: CanvasScaler is not ScaleWithScreenSize / Expand");
-    if (this.front.rec.canvas.m_RenderMode !== 1 || this.letterBox.rec.canvas.m_RenderMode !== 0 ||
-        this.front.rec.canvas.m_PixelPerfect || this.letterBox.rec.canvas.m_PixelPerfect)
+    const frontCanvas = this.front.fields("Canvas"), letterCanvas = this.letterBox.fields("Canvas");
+    if (frontCanvas.m_RenderMode !== 1 || letterCanvas.m_RenderMode !== 0 || frontCanvas.m_PixelPerfect || letterCanvas.m_PixelPerfect)
       throw new UIError("canvas render modes differ from the prefab (Camera / Overlay, not pixel perfect)");
     this.scaler = scaler;
-    // uGUI auto layout (ui-layout.js); the text component of a node is its ILayoutElement when enabled
-    this.autoLayout = new StoryLayout(scaler.m_ReferencePixelsPerUnit, (n) => (n.text && n.text.enabled ? n.text : null));
-    this.sprites = new Map(Object.entries(doc.sprites).map(([n, s]) => {
-      const t = doc.textures[s.texture];
-      if (!t) throw new UIError(`sprite ${n}: texture ${s.texture} not in the data`);
-      return [n, new UISprite(n, s, t)];
-    }));
-    this._fonts = new StoryFontAssets(fonts, doc, language);   // open fonts: the game's line metrics
-    this._clipCache = Object.fromEntries(Object.entries(doc.clips).map(([k, c]) => [k, new UIClip(c)]));
+    this.autoLayout = new StoryLayout(scaler.m_ReferencePixelsPerUnit, (n) => n.text?.enabled ? n.text : null);
+    this.sprites = new Map();
+    this.uiMaterials = new Map([[ADVUI_DEFAULT_MATERIAL,
+      { shader: "UI/Default", keywords: [], floats: {}, colors: {} }]]);
+    this._fonts = new StoryFontAssets(fonts, doc, language);
     this.animators = [];
     for (const n of byPath.values()) {
-      const r = n.rec;
-      if (r.image) {
-        const sp = r.image.sprite;
-        if (sp && !this.sprites.has(sp)) throw new UIError(`${n.path}: sprite ${sp} not in the data`);
-        n.image = { ...r.image, spriteObj: sp ? this.sprites.get(sp) : null, material: r.image.material || ADVUI_DEFAULT_MATERIAL };
-        if (!doc.materials[n.image.material]) throw new UIError(`${n.path}: material ${n.image.material} not in the data`);
+      const g = n.fields("Image");
+      if (g) {
+        n.image = { ...g, spriteObj: this.sprite(g.m_Sprite), material: this.uiMaterial(g.m_Material) };
       }
-      if (r.gradient && r.gradient.enabled) n.gradient = r.gradient;
-      if (r.textStyle) {
-        let t = fonts.texts[n.path];
-        if (!t) throw new UIError(`${n.path}: no text binding in ui/fonts.json`);
-        // BiliBili.Locale.LocalizeKoreanAdjust.Apply (from OnEnable and the font-changed callback OnEnable registers,
-        // so only for an enabled component): in the Korean language mode _koreanFontStyle ForceNormal (1) clears and
-        // ForceBold (2) sets the Bold style of the serialized font style; other modes keep it
+      const gradient = n.fields("UIGradientImage");
+      if (gradient?.m_Enabled) n.gradient = { gradient: gradient._gradient, angleDeg: gradient._angleDeg,
+        splitAtKeysWhenAxisAligned: gradient._splitAtKeysWhenAxisAligned, blendMode: gradient._blendMode };
+      let t = uiTextBinding(n, fonts);
+      if (t) {
         const ko = t.localizeKoreanAdjust;
-        if (ko && ko.m_Enabled && language.mode === LANGUAGE_KOREAN && (ko._koreanFontStyle === 1 || ko._koreanFontStyle === 2))
+        if (ko?.m_Enabled && language.mode === LANGUAGE_KOREAN && (ko._koreanFontStyle === 1 || ko._koreanFontStyle === 2))
           t = { ...t, m_fontStyle: ko._koreanFontStyle === 2 ? t.m_fontStyle | 1 : t.m_fontStyle & ~1 };
         n.text = new TMPText(this, n, t);
-        n.text.enabled = !!t.enabled;
-        n.textClass = t.class;
-        // LocalizeText.OnFontChanged, English only: enableWordWrapping = true (and overflow mode 0) unless the object's
-        // name contains "nowrap" (IndexOf, ordinal ignore case)
+        n.text.enabled = t.enabled; n.textClass = t.class;
         if (language.mode === LANGUAGE_ENGLISH && !n.name.toLowerCase().includes("nowrap")) n.text.setWrapping(1);
         n.storyText = new StoryText(n.text, t, this.emojiSpriteAsset);
       }
-      if (r.animator) {
-        const a = r.animator;
-        const ctrl = doc.controllers[a.controller];
-        if (!ctrl) throw new UIError(`${n.path}: controller ${a.controller} not in the data`);
-        if (a.updateMode !== 0 || !a.enabled || a.keepStateOnDisable)
+      const a = n.fields("Animator");
+      if (a?.m_Controller) {
+        if (a.m_UpdateMode !== 0 || !a.m_Enabled || a.m_KeepAnimatorStateOnDisable)
           throw new UIError(`${n.path}: animator settings outside the prefab values`);
-        n.animator = new UIAnimator(n, ctrl, this._clipCache);
+        n.animator = UIAnimator.fromObjects(n, objects, a.m_Controller, n.prefabId, n.sourcePath);
         this.animators.push(n.animator);
       }
-      if (r.layoutGroup && r.layoutGroup.m_Enabled) n.layoutGroup = r.layoutGroup;
-      if (r.contentSizeFitter && r.contentSizeFitter.m_Enabled) n.contentSizeFitter = r.contentSizeFitter;
-      if (r.layoutElement && r.layoutElement.m_Enabled) n.layoutElement = r.layoutElement;
-      if (r.outline && r.outline.enabled) throw new UIError(`${n.path}: enabled Outline effect not implemented`);
-      if (r.safeAreaEdgeAnchor && r.safeAreaEdgeAnchor.enabled) n.safeAreaEdgeAnchor = r.safeAreaEdgeAnchor;
+      for (const cls of ["HorizontalLayoutGroup", "VerticalLayoutGroup"]) {
+        const layout = n.fields(cls);
+        if (layout?.m_Enabled) n.layoutGroup = { ...layout, class: cls };
+      }
+      const fitter = n.fields("ContentSizeFitter"), element = n.fields("LayoutElement");
+      if (fitter?.m_Enabled) n.contentSizeFitter = fitter;
+      if (element?.m_Enabled) n.layoutElement = element;
+      if (n.fields("Outline")?.m_Enabled) throw new UIError(`${n.path}: enabled Outline effect not implemented`);
+      const edge = n.fields("UISafeAreaEdgeAnchor");
+      if (edge?.m_Enabled) n.safeAreaEdgeAnchor = edge;
     }
     const F_ = (p) => this.front.find(p);
-    const opt = (p) => byPath.get(`${ADVUI_FRONT}/${p}`) || null, ref = (p) => (p ? byPath.get(p) || null : null);
+    const opt = (p) => byPath.get(`${ADVUI_FRONT}/${p}`) || null, ref = (r) => (r ? this.front.ref(r) : null);
     const flashView = opt("FlashView"), subtitlesView = opt("UISafeArea/UIContainer/SubtitlesView");
     this.part = {
       rule: F_("RuleTransition"), location: F_("LocationVIew"), locationText: F_("LocationVIew/LocationText"),
@@ -160,9 +143,9 @@ export class StoryUI {
       topBand: this.letterBox.find("TopBand"), bottomBand: this.letterBox.find("BottomBand"),
       uiContainer: F_("UISafeArea/UIContainer"),
       // AdvFlashView._flash; AdvSubtitlesView._subtitles / _subtitlesText; AdvFrontScreenView._nextIndicator
-      flash: flashView && flashView.rec.flashView ? ref(flashView.rec.flashView._flash) : null,
-      subtitles: subtitlesView && subtitlesView.rec.subtitlesView ? ref(subtitlesView.rec.subtitlesView._subtitles) : null,
-      subtitlesText: subtitlesView && subtitlesView.rec.subtitlesView ? ref(subtitlesView.rec.subtitlesView._subtitlesText) : null,
+      flash: flashView?.fields("AdvFlashView") ? ref(flashView.fields("AdvFlashView")._flash) : null,
+      subtitles: subtitlesView?.fields("AdvSubtitlesView") ? ref(subtitlesView.fields("AdvSubtitlesView")._subtitles) : null,
+      subtitlesText: subtitlesView?.fields("AdvSubtitlesView") ? ref(subtitlesView.fields("AdvSubtitlesView")._subtitlesText) : null,
       frontNextIndicator: opt("UISafeArea/UIContainer/NextIndicator"),
       menu: opt(MENU),
       // UIAdvWidget._centerTalkBackdropCanvasGroup / _centerTalkBackdropImage (in the data with a backdrop-filter window)
@@ -177,16 +160,16 @@ export class StoryUI {
       return n.canvasGroup;
     };
     // AdvTalkLogView._canvasGroup (the backlog, in the data with its view record)
-    const talkLogView = opt("TalkLogView"), tl = talkLogView && talkLogView.rec.talkLogView;
+    const talkLogView = opt("TalkLogView"), tl = talkLogView?.fields("AdvTalkLogView");
     p.talkLog = tl ? { group: groupRef(tl._canvasGroup, "AdvTalkLogView._canvasGroup") } : null;
     // AdvChoiceView._canvasGroup and _choiceItems: each item's GameObject and AdvChoiceItem._canvasGroup
-    const choiceView = opt("UISafeArea/UIContainer/ChoiceView"), cv = choiceView && choiceView.rec.choiceView;
+    const choiceView = opt("UISafeArea/UIContainer/ChoiceView"), cv = choiceView?.fields("AdvChoiceView");
     p.choices = cv ? {
       group: groupRef(cv._canvasGroup, "AdvChoiceView._canvasGroup"),
       items: cv._choiceItems.map((path) => {
-        const n = ref(path), rec = n && n.rec.behaviours && n.rec.behaviours.AdvChoiceItem;
-        if (!rec || rec.length !== 1) throw new UIError(`AdvChoiceView._choiceItems: ${path} has no AdvChoiceItem in the data`);
-        return { node: n, group: groupRef(rec[0]._canvasGroup, "AdvChoiceItem._canvasGroup") };
+        const n = ref(path), rec = n?.fields("AdvChoiceItem");
+        if (!rec) throw new UIError(`AdvChoiceView._choiceItems: ${path} has no AdvChoiceItem in the data`);
+        return { node: n, group: groupRef(rec._canvasGroup, "AdvChoiceItem._canvasGroup") };
       }),
     } : null;
     if (p.flash && !p.flash.image) throw new UIError("FlashView: no Image");
@@ -209,7 +192,7 @@ export class StoryUI {
       const find = (rel) => (rel ? node.find(rel) : null);
       const part = { window: node };
       for (const [k, rel] of Object.entries(refs)) part[k] = find(rel);
-      const host = { part, loop, tweens: this.tweens, language, doc, setActive: (n, v) => this.setActive(n, v),
+      const host = { part, loop, tweens: this.tweens, language, dotween: this.dotween, setActive: (n, v) => this.setActive(n, v),
                      setTextColor: (n, c) => this._setTextColor(n, c), setTextOutlineColor: (n, c) => this._setOutlineColor(n, c) };
       this.windows.set(node.name, { name: node.name, node, part, talk: new StoryTalkWindow(host) });
     }
@@ -221,12 +204,12 @@ export class StoryUI {
     this._window = null;
     this._view = { playbackSpeed: 1, autoIcon: false, fastIcon: false };
     this._backdropFade = null;
-    // the UI blur (UIManager's UIBlurController and the renderer feature's pass settings, ui.json `blur`) and
+    // the UI blur (UIManager's UIBlurController and the renderer feature's pass settings, UIRendererFeature settings) and
     // UIAdvWidget's blur scope (_advBlurScope, _isAdvBlurScopeForBackdrop, _isTalkLogVisible: the backlog is not
     // opened here)
-    this.blurParams = doc.blur || null;
+    this.blurParams = objects.uiBlur(doc.graphics.graphics, 0);
     if ([...this.windows.values()].some((w) => w.talk.useBackdropFilter) && !this.blurParams)
-      throw new UIError("ui.json lacks `blur`, which a backdrop-filter talk window needs");
+      throw new UIError("story graphics lack a UI blur feature, which a backdrop-filter talk window needs");
     this.blur = new UIBlur(loop);
     this._advBlurScope = null;
     this._isAdvBlurScopeForBackdrop = false;
@@ -252,6 +235,23 @@ export class StoryUI {
   }
 
   // ------------------------------------------------------------ text host (engine/uitext.js)
+  sprite(ref) {
+    const id = this.objects.id(ref, "Sprite");
+    if (id === null) return null;
+    if (!this.sprites.has(id)) {
+      const s = this.objects.sprite(id);
+      this.sprites.set(id, new UISprite(id, { ...s, pixelsPerUnit: s.pixelsToUnits }, s.texture));
+    }
+    return this.sprites.get(id);
+  }
+
+  uiMaterial(ref) {
+    const id = this.objects.id(ref, "Material");
+    if (id === null) return ADVUI_DEFAULT_MATERIAL;
+    if (!this.uiMaterials.has(id)) this.uiMaterials.set(id, this.objects.material(id));
+    return id;
+  }
+
   fontAsset(name) {
     const f = this._fonts.get(name);
     if (!f) throw new UIError(`font asset ${name} not in ui/fonts.json`);
@@ -358,19 +358,26 @@ export class StoryUI {
     const gl = this.gl;
     if (!gl) return;
     const assets = this.assets || undefined;
-    this.lib = new ShaderLib(gl, join(this.dir, this.doc.shaders.index.replace(/\/shaders\.json$/, "")), assets);
+    this.lib = this.objects.lib;
     this.solid = {
       white: GLTex.solid(gl, [255, 255, 255, 255], "white"), black: GLTex.solid(gl, [0, 0, 0, 255], "black"),
       gray: GLTex.solid(gl, [128, 128, 128, 255], "gray"), bump: GLTex.solid(gl, [128, 128, 255, 255], "bump"),
     };
     this.tex = {};
-    for (const [name, desc] of [...Object.entries(this.doc.textures), ...Object.entries(this.fonts.textures)]) {
-      if (this.tex[name]) throw new UIError(`texture name ${name} used twice`);
-      this.tex[name] = await GLTex.load(gl, this.dir, desc, assets);
+    for (const sprite of this.sprites.values()) {
+      const id = sprite.texture.id;
+      this.tex[id] = await this.objects.texture(id);
     }
+    for (const address of Object.keys(this.data.parts.assets || {})) {
+      if (!address.startsWith("Adv/Transition/")) continue;
+      const s = this.rule.settings(address.slice("Adv/Transition/".length));
+      if (s.texture) this.tex[s.texture] = await this.objects.texture(s.texture);
+    }
+    for (const [name, desc] of Object.entries(this.fonts.textures))
+      this.tex[name] = await GLTex.load(gl, this.dir, desc, assets);
     for (const g of this._fonts.browserFonts().values()) this.tex[g.page] = g.texture(gl);   // pages of browser fonts
     this.materials = {};
-    this._addMaterials(new Map(Object.entries(this.doc.materials)), this.doc.materialKeywords);
+    this._addMaterials(this.uiMaterials);
     this._addMaterials(new Map(Object.entries(this.fonts.materials)), this.fonts.materialKeywords);
     this._addMaterials(this._materialInstances, this.fonts.materialKeywords);
     this.buf = { vao: gl.createVertexArray(), vbo: gl.createBuffer(), ibo: gl.createBuffer() };
@@ -378,12 +385,13 @@ export class StoryUI {
   }
 
   // GL material records (compiled up front); an instance takes the keywords of its base material
-  _addMaterials(mats, keywords) {
+  _addMaterials(mats, keywords = {}) {
     if (!this.gl) return;
     for (const [name, m] of mats) {
-      const shader = m.shader.shader, defaults = this.lib.defaults(shader, this.solid);
+      const shader = typeof m.shader === "string" ? m.shader : this.fonts.shaders[m.shader.shader];
+      const defaults = this.lib.defaults(shader, this.solid);
       const num = Object.fromEntries(Object.entries(defaults).filter(([, v]) => typeof v === "number"));
-      const kw = keywords[m.baseName || name] || [];
+      const kw = keywords[m.baseName || name] || m.keywords || [];
       this.materials[name] = { shader, keywords: kw, floats: { ...num, ...m.floats }, colors: m.colors || {}, defaults };
       this.lib.program(shader, 0, kw);                                   // compile up front
     }
@@ -458,7 +466,7 @@ export class StoryUI {
     let mesh = UIImage.build(n, img, sp, this.scaler.m_ReferencePixelsPerUnit);
     if (n.gradient) mesh = UIGradientMod.apply(mesh, n.gradient);
     return { node: n, kind: n === this.part.rule ? "rule" : "image", material: img.material,
-             texture: sp ? sp.texture.name : null, verts: UIDraw.pack(mesh.verts, n, alpha),
+             texture: sp ? sp.texture.id : null, verts: UIDraw.pack(mesh.verts, n, alpha),
              idx: Uint32Array.from(mesh.idx), mesh };
   }
 
@@ -602,9 +610,8 @@ export class StoryUI {
   // Fwk.UI.UIWidget.TrueCanvasSortOrder: the sorting order of the widget's first canvas (_canvases[0]), 99999 without
   // canvases; null when the UI data does not carry the widget's canvas list (ui.json `widget`)
   get trueCanvasSortOrder() {
-    const w = this.doc.widget;
-    if (!w || !Array.isArray(w.canvases)) return null;
-    return w.canvases.length ? w.canvases[0].sortingOrder : 99999;
+    const p = this.objects.prefab(this.doc.widget), w = p.find("UIAdvWidget").c.fields;
+    return w._canvases.length ? p.componentOf(w._canvases[0], "Canvas").fields.m_SortingOrder : 99999;
   }
 
   // ------------------------------------------------------------ StoryUI: talk window
@@ -735,7 +742,7 @@ export class StoryUI {
     const a = cg.alpha;
     if (Math.abs(1 - a) < Math.max(F(Math.max(Math.abs(a), 1) * 1e-6), F(1.401298464324817e-45 * 8))) return;
     this._backdropFade = new UITween(this.tweens, { duration: BACKDROP_FADE, getFrom: () => cg.alpha, to: 1,
-                                                    ease: this.doc.dotween.defaultEaseType, apply: (v) => { cg.alpha = v; } });
+                                                    ease: this.dotween.defaultEaseType, apply: (v) => { cg.alpha = v; } });
   }
 
   // UIAdvWidget.ResetAdvBlurAndBackdrop: DisposeAdvBlurScope, backlog not shown, DOKill on the backdrop CanvasGroup
@@ -789,7 +796,7 @@ export class StoryUI {
       this.setActive(f, false);
       resolve();
     };
-    const tw = new UITween(this.tweens, { duration, getFrom: () => color.a, to: 0, ease: this.doc.dotween.defaultEaseType,
+    const tw = new UITween(this.tweens, { duration, getFrom: () => color.a, to: 0, ease: this.dotween.defaultEaseType,
                                           apply: (v) => { color.a = v; }, onComplete: end });
     rec.kill = () => { tw.kill(); end(); };
     this._flash = rec;
@@ -847,9 +854,9 @@ export class StoryUI {
 
   // PauseVideoButton.ChangeNormalState: the ButtonImageState target shows the normal sprite
   resetPauseVideoButton() {
-    const b = this._need("pauseVideoButton", "pause video button"), st = b.rec.buttonImageState;
+    const b = this._need("pauseVideoButton", "pause video button"), st = b.fields("ButtonImageState");
     if (!st) throw new UIError(`${b.path}: no ButtonImageState`);
-    const target = this.nodes.get(st.target), sp = this.sprites.get(st.normal);
+    const target = b.ref(st._target), sp = this.sprite(st._normaledSprite);
     if (!target || !target.image || !sp) throw new UIError(`${b.path}: ButtonImageState target or sprite not in the data`);
     target.image.spriteObj = sp;
   }
@@ -876,12 +883,12 @@ export class StoryUI {
   // advances by _duration when > 0; timeScale = the view's playback speed), Play, then WaitWhile(IsPlaying) at
   // PlayerLoopTiming.Update. The CustomEvent of both views calls SimpleAnimationTrigger.PlayAnimation("Play").
   _playSequence(node) {
-    const ts = node.rec.tweenSequence;
-    if (!ts || ts.raw.updateType !== 0 || ts.raw.isSpeedBased) throw new UIError(`${node.path}: DOTweenSequence settings`);
+    const ts = node.fields("DOTweenSequence");
+    if (!ts || ts.updateType !== 0 || ts.isSpeedBased) throw new UIError(`${node.path}: DOTweenSequence settings`);
     if (node.sequence) { node.sequence.kill(); node.sequence = null; }
     let at = 0;
     const at0 = [];
-    for (const cmd of ts.list) {
+    for (const cmd of ts._list) {
       if (cmd._commandType !== 1 || at !== 0) throw new UIError(`${node.path}: sequence command outside the implemented subset`);
       at0.push(() => this._playAnimation(node, "Play"));
       if (cmd._duration > 0) at += cmd._duration;
