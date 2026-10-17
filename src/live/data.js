@@ -27,7 +27,8 @@ export class LiveData {
     this.dir = info.dir;
     this.products = info.products;
     this.live = checkFormat(assets.json(`${this.dir}/live.json`), LIVE_JSON_FORMAT, `${this.dir}/live.json`);
-    this.parts = Object.fromEntries(Object.entries(this.live.parts).map(([part, p]) => [part, productDir(p)]));
+    this.parts = Object.fromEntries(Object.entries(this.live.parts).filter(([, p]) => typeof p === "string")
+      .map(([part, p]) => [part, productDir(p)]));
     this._docs = new Map();
   }
 

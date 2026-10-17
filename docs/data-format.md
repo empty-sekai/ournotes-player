@@ -119,6 +119,10 @@ Rules:
 
 ### Objects
 
+Several products may retain different file roles of the same object. Loading their manifests combines these
+roles; overlapping roles and object metadata must agree. Product paths may include region directories, and are
+relative to the layout root.
+
 An object is one Unity object, converted. Its id is `<serialized file>:<path id>` (the path id as decimal digits,
 possibly negative), the same in every product that uses it. An object's JSON names another object by a reference
 `{ "$ref": { "file": "<serialized file>", "pathId": "<path id>" } }`, the object `<file>:<pathId>`; `null` names none.
@@ -179,6 +183,9 @@ A chart manifest of a [chart site](#chart-sites) is read as a live as well.
 | `notes` | The score, a file of the live ([Score](#score)). |
 | `notesMirror` | Optional. The score converted mirrored (the game's `MirrorChart` option: lanes and flick directions mirrored while the score is converted), same format as `notes`. Without it the `MirrorChart` option is not offered. |
 | `parts` | Part → the manifest path of the product, relative to the root ([Lives](#lives)). |
+
+The optional `live.json` field `parts.ui` maps language codes to UI product manifests. These entries are
+language-specific resources; the shared scene, score and audio parts remain ordinary manifest paths.
 
 ## Score
 
