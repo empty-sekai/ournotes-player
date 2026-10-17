@@ -66,10 +66,26 @@ const live = () => {
   return L;
 };
 
-test("productDir: a manifest path without .json, one directory and a file", () => {
+test("productDir: a product manifest path without .json", () => {
   assert.equal(productDir("scenes/default.json"), "scenes/default");
   assert.equal(productDir("sounds/NoteSePatternId=1,3.json"), "sounds/NoteSePatternId=1,3");
-  for (const bad of ["scene.json", "a/b/c.json", "scenes/default"]) assert.throws(() => productDir(bad), /not a product manifest path/);
+  assert.equal(productDir("region/scenes/default.json"), "region/scenes/default");
+  for (const bad of ["scene.json", "a/../c.json", "scenes/default"])
+    assert.throws(() => productDir(bad), /not a product manifest path/);
+});
+
+test("LiveData accepts language-indexed UI parts beside shared parts", async () => {
+  const L = live();
+  const manifest = L.files.get("lives/7_expert.json"), path = manifest.files["live.json"].asset;
+  const doc = JSON.parse(new TextDecoder().decode(L.files.get(path)));
+  doc.parts.ui = { ja: "liveui/7_expert_ja.json", en: "liveui/7_expert_en.json" };
+  const bytes = new TextEncoder().encode(JSON.stringify(doc));
+  L.files.set(path, bytes);
+  manifest.files["live.json"].size = bytes.byteLength;
+  const data = new LiveData(await loadLiveStore(`${ROOT}lives/7_expert.json`, { fetch: L.fetch }));
+  assert.equal(data.scene.format, 1);
+  assert.deepEqual(data.score().notes, [1]);
+  assert.equal(data.live.parts.ui.ja, "liveui/7_expert_ja.json");
 });
 
 test("loadLiveStore: the live, its parts and the variants, each under its directory, one object table", async () => {
