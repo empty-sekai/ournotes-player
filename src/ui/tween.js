@@ -1,4 +1,5 @@
-import {component,mergeResources,referenceNode,resolveNodeIndex,nodeReferences} from './runtime.js';
+import { componentClass } from '../engine/prefab.js';
+import {component,componentRecord,referenceNode,resolveNodeIndex,nodeReferences} from './runtime.js';
 import {AnimatorRuntime} from './animator.js';
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -24,24 +25,23 @@ export function tweenEase(type,t){
 
 function animationDuration(c){return Math.max(0,c.delay||0)+Math.max(0,c.duration||0)*(c.loops<0?1:Math.max(1,c.loops||1));}
 
-// Timing is from hash-checked CreateSequence (ELF 0x6aded88): Insert atPosition,
-// then advance by the command's positive serialized _duration. Zero durations
-// place consecutive tweens in parallel, rather than appending them.
+// CreateSequence inserts atPosition, then advances by each command's positive _duration.
+// Consecutive tweens with zero duration start at the same time.
 export function sequencePlan(pack,rootPath,stack=new Set()){
-  const rootIndex=resolveNodeIndex(pack,rootPath),node=pack.document.nodes[rootIndex],sequence=component(node,'DOTweenSequence'),items=[],diagnostics=[];rootPath=node.path;
+  const rootIndex=resolveNodeIndex(pack,rootPath),node=pack.nodes[rootIndex],sequence=component(node,'DOTweenSequence'),items=[],diagnostics=[];rootPath=node.path;
   if(!sequence)return {rootPath,duration:0,items,diagnostics:[{reason:'sequence_not_found',node:rootPath}]};
   if(stack.has(rootIndex))return {rootPath,duration:0,items,diagnostics:[{reason:'sequence_cycle',node:rootPath}]};
   stack=new Set([...stack,rootIndex]);let position=0,duration=0;
   for(const [index,command] of sequence._list.entries()){
     if(command._commandType===1){for(const call of calls(command._tweenEvent))items.push({kind:'callback',start:position,call,index,ownerIndex:rootIndex});}
     else if(command._commandType===0){
-      const resolved=referenceNode(pack,command._tweenAnimation,rootIndex),target=resolved?.node,animations=target?.components.filter(c=>['DOTweenAnimation','DOTweenSequence'].includes(c.class))||[];
-      const selected=animations[command._tweenIndex]||component(target,command._tweenAnimation?.class);
-      if(target?.path===rootPath&&selected===sequence)continue;
+      const resolved=referenceNode(pack,command._tweenAnimation,rootIndex),target=resolved?.node,animations=target?.components.filter(c=>['DOTweenAnimation','DOTweenSequence'].includes(componentClass(c)))||[];
+      const selected=animations[command._tweenIndex]||componentRecord(target,command._tweenAnimation?.class);
+      if(target?.path===rootPath&&selected?.fields===sequence)continue;
       if(!selected)diagnostics.push({reason:'tween_not_found',index,node:refPath(command._tweenAnimation)});
-      else if(selected.class==='DOTweenSequence'){
+      else if(componentClass(selected)==='DOTweenSequence'){
         const nested=sequencePlan(pack,resolved.index,stack);items.push(...nested.items.map(item=>({...item,start:item.start+position})));diagnostics.push(...nested.diagnostics);duration=Math.max(duration,position+nested.duration);
-      }else{items.push({kind:'tween',start:position,animation:selected,owner:target.path,ownerIndex:resolved.index,index});duration=Math.max(duration,position+animationDuration(selected));}
+      }else{items.push({kind:'tween',start:position,animation:selected.fields,owner:target.path,ownerIndex:resolved.index,index});duration=Math.max(duration,position+animationDuration(selected.fields));}
     }else if(command._commandType!==2)diagnostics.push({reason:'command_not_supported',index,type:command._commandType});
     position+=Math.max(0,command._duration||0);duration=Math.max(duration,position);
   }
@@ -54,7 +54,7 @@ export function sequenceAnimatorCalls(pack,plan){
     const resolved=referenceNode(pack,item.call.m_Target,item.ownerIndex??plan.rootIndex),node=resolved?.node,trigger=component(node,'SimpleAnimationTrigger');
     const animator=trigger?._animator?referenceNode(pack,trigger._animator,resolved.index):resolved,root=animator?.node.path;
     result.push({...item,node:node?.path,nodeIndex:resolved?.index,root,rootIndex:animator?.index,state:item.call.m_Arguments?.m_StringArgument,blendTime:trigger?._blendTime||0,
-      supported:item.call.m_Target?.class==='SimpleAnimationTrigger'&&item.call.m_MethodName==='PlayAnimation'&&item.call.m_Mode===5&&!!trigger&&!!component(animator?.node,'Animator')});
+      supported:item.call.m_MethodName==='PlayAnimation'&&item.call.m_Mode===5&&!!trigger&&!!component(animator?.node,'Animator')});
   }
   return result;
 }
@@ -68,7 +68,7 @@ function progress(animation,time){
 }
 
 function tweenTarget(pack,owner,a){
-  const ownerIndex=resolveNodeIndex(pack,owner),target=a.targetIsSelf?{node:pack.document.nodes[ownerIndex],index:ownerIndex}:referenceNode(pack,a.targetGO||a.target,ownerIndex);
+  const ownerIndex=resolveNodeIndex(pack,owner),target=a.targetIsSelf?{node:pack.nodes[ownerIndex],index:ownerIndex}:referenceNode(pack,a.targetGO||a.target,ownerIndex);
   return target||{};
 }
 
@@ -130,8 +130,7 @@ export class SequenceRuntime {
       const refs=nodeReferences(pack);let active=true;for(let i=item.nodeIndex;i>=0;i=refs.parents[i])if(refs.nodes[i].active===false)active=false;
       if(!active){events.push({node:item.node,state:item.state,at:item.start,skipped:'inactive_target'});continue;}
       const exported=this.controllers.get(item.rootIndex)||this.controllers.get(item.root);if(!exported){diagnostics.push({reason:'sequence_controller_not_found',node:item.root});continue;}
-      mergeResources(pack,exported.resources);
-      let entry=animators.get(item.rootIndex);if(!entry){entry={runtime:new AnimatorRuntime(exported.document,item.rootIndex),time:0};animators.set(item.rootIndex,entry);}
+      let entry=animators.get(item.rootIndex);if(!entry){entry={runtime:new AnimatorRuntime(exported,item.rootIndex),time:0};animators.set(item.rootIndex,entry);}
       const machine=entry.runtime.machine,index=machine?.states.findIndex(s=>s.name===item.state||s.path===item.state);
       if(index===undefined||index<0){diagnostics.push({reason:'sequence_state_not_found',node:item.root,state:item.state});continue;}
       entry.runtime.advance(Math.max(0,item.start-entry.time));entry.runtime.crossFade(index,item.blendTime);entry.time=item.start;

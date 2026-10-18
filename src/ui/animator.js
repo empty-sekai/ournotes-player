@@ -12,12 +12,12 @@ export function controllerParameters(controller){
   }));
 }
 
-export function stateMotion(controller,state){
+export function stateMotion(controller,state,clipOf){
   const trees=state?.blendTrees||[],nodes=trees.flat();
   if(nodes.some(n=>n.children?.length))return {unsupported:'blend_tree',duration:1};
   const motions=nodes.filter(n=>Number.isInteger(n.clip)&&controller.clips[n.clip]);
   if(motions.length>1)return {unsupported:'multiple_motions',duration:1};
-  const clip=motions.length?controller.clips[motions[0].clip]:null;
+  const clip=motions.length?clipOf(motions[0].clip):null;
   return {clip,duration:Math.max(.000001,clip?(clip.stopTime-clip.startTime):1)};
 }
 
@@ -31,7 +31,7 @@ export function transitionConditions(transition,parameters){
 function blendPose(from,to,weight,pack){
   const nodes=nodeMap(pack),result=new Map();
   for(const key of new Set([...from.keys(),...to.keys()])){
-    const a=from.get(key),b=to.get(key),op=b||a,n=op.nodeIndex!==undefined?pack.document.nodes[op.nodeIndex]:nodes.get(op.node),target=op.componentIndex===null?n:n?.components[op.componentIndex];
+    const a=from.get(key),b=to.get(key),op=b||a,n=op.nodeIndex!==undefined?pack.nodes[op.nodeIndex]:nodes.get(op.node),target=op.componentIndex===null?n:n?.components[op.componentIndex]?.fields;
     const base=field(target,op.field),av=a?a.value:base,bv=b?b.value:base;
     if(av===undefined&&bv===undefined)continue;
     const value=typeof av==='number'&&typeof bv==='number'?av+(bv-av)*weight:weight<.5?(av??bv):(bv??av);
@@ -50,7 +50,7 @@ function blendPose(from,to,weight,pack){
 // Animation events are collected as data; native callbacks are not executed.
 export class AnimatorRuntime {
   constructor(controller,rootPath){
-    this.controller=controller;this.rootPath=rootPath;this.machine=controller.stateMachines?.[controller.layers?.[0]?.stateMachine||0];
+    this.clipOf=controller.clip;this.controller=controller.document;controller=controller.document;this.rootPath=rootPath;this.machine=controller.stateMachines?.[controller.layers?.[0]?.stateMachine||0];
     this.defaults=controllerParameters(controller);this.parameterEvents=[];this.startState=this.machine?.defaultState||0;
     this.warnings=[];if((controller.layers||[]).length!==1)this.warnings.push('unsupported_layer_count');
     this.reset();
@@ -81,7 +81,7 @@ export class AnimatorRuntime {
     this.advance(Math.max(0,time));return this;
   }
   stateInfo(cursor=this.current){
-    const state=this.machine?.states[cursor?.index],motion=stateMotion(this.controller,state);
+    const state=this.machine?.states[cursor?.index],motion=stateMotion(this.controller,state,this.clipOf);
     const speed=(state?.speed??1)*(state?.speedParam?Number(this.parameters[state.speedParam]??1):1);
     return {state,...motion,speed};
   }
@@ -123,7 +123,7 @@ export class AnimatorRuntime {
       const normalized=((event.time||0)-(clip.startTime||0))/duration;
       const first=loop?Math.floor(before+offset)-1:0,last=loop?Math.ceil(after+offset):0;
       for(let cycle=first;cycle<=last;cycle++){
-        const at=normalized+cycle-offset;if(at>before+1e-8&&at<=after+1e-8)this.events.push({...event,clip:clip.clip,state:state.name,at:this.timelineTime});
+        const at=normalized+cycle-offset;if(at>before+1e-8&&at<=after+1e-8)this.events.push({...event,clip:clip.id,state:state.name,at:this.timelineTime});
       }
     }
     if(this.events.length>100)this.events.splice(0,this.events.length-100);

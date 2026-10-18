@@ -1,8 +1,23 @@
+import type {AssetStore, FromManifestOptions} from './index.js';
+
 /** Serialized prefab preview. Canvas 2D output does not claim Unity pixel parity. */
 export type UINodeSelector = number | string;
-export interface UIEntry { id: string; name: string; key?: string; kind: string; file?: string; status?: string; [key: string]: unknown }
-export interface UIPack { schema?: number; resourceBase?: string; document: { nodes?: Array<Record<string, any>>; [key: string]: any }; resources: { textures?: Record<string, string>; sprites?: Record<string, any>; fonts?: Record<string, string>; fontMetrics?: string; browserFontFamily?: string; [key: string]: any } }
-export interface UIController { document: Record<string, any>; resources?: UIPack['resources'] }
+export interface UIEntry { id: string; name: string; key?: string; kind?: string; manifest: string; roots?: string[]; [key: string]: unknown }
+export interface UINode { id: string; prefabId: string; path: string; name: string; pathId: string; components: Array<{type: string; pathId: string; script?: string; fields: Record<string, any>}>; [key: string]: any }
+export interface UIProduct { format: "nnnotes.ui-pack/1"; key: string; roots: string[]; prefabs: string[]; controllers: string[]; bindings: Record<string, any>; shaders: Record<string, string>; entries: Array<Record<string, any>> }
+export interface UIIndex { format: "nnnotes.ui-library/1"; assets: UIEntry[]; embedded: UIEntry[]; controllers: UIEntry[] }
+export const UI_PRODUCT: "ui.pack";
+export const UI_FORMAT: "nnnotes.ui-pack/1";
+export const UI_LIBRARY: "nnnotes.ui-library/1";
+export class UIPack {
+  static load(src: string | URL, options?: Pick<FromManifestOptions, "fetch" | "signal" | "decode"> & {roots?: string[]}): Promise<UIPack>;
+  constructor(store: AssetStore, ui: UIProduct, roots?: string[]);
+  readonly store: AssetStore; readonly ui: UIProduct; readonly roots: string[]; readonly nodes: UINode[];
+  browserFontFamily?: string;
+  clone(): UIPack; clip(ref: string | Record<string, unknown>): Record<string, any>; controller(nodeIndex: number): UIController;
+  image(ref: string | Record<string, unknown>, role?: string): Promise<ImageBitmap>;
+}
+export interface UIController { id: string; document: Record<string, any>; clip(index: number): Record<string, any> }
 export interface UIReport { applied: number; numericApplied: number; objectApplied: number; missing: unknown[]; diagnostics: unknown[]; state?: string; events?: unknown[]; [key: string]: unknown }
 export interface UIProjection { fieldOfView: number; referenceViewport: [number, number]; canvasPlaneDistance: number; nearClipPlane?: number }
 export interface UIOptions { src?: string; entry?: UIEntry | string; library?: UILibrary; assetBase?: string; viewport?: [number, number]; showHidden?: boolean; bounds?: boolean; bindings?: boolean; projection?: UIProjection; framing?: 'root' | 'content' }
@@ -11,11 +26,11 @@ export interface UIRenderResult { canvas: HTMLCanvasElement; width: number; heig
 export function cameraProjection(camera: Record<string, unknown>, canvas: Record<string, unknown>, referenceViewport: [number, number]): UIProjection;
 export class UILibrary {
   static load(src: string, options?: { fetch?: typeof fetch; signal?: AbortSignal }): Promise<UILibrary>;
-  constructor(index: { assets: UIEntry[]; embedded?: UIEntry[]; [key: string]: any }, baseURL: string, fetcher?: typeof fetch);
+  constructor(index: UIIndex, baseURL: string, fetcher?: typeof fetch);
   readonly entries: UIEntry[]; readonly controllers: UIEntry[]; readonly baseURL: string;
   find(key: string | UIEntry): UIEntry;
   loadPack(entry: string | UIEntry, options?: { signal?: AbortSignal }): Promise<{ pack: UIPack; entry: UIEntry; assetBase: string }>;
-  loadController(pack: UIPack, nodeIndex: number, entry?: UIEntry, options?: { signal?: AbortSignal }): Promise<UIController>;
+  loadController(pack: UIPack, nodeIndex: number): Promise<UIController>;
 }
 export class UISession {
   constructor(pack: UIPack, options?: { bindings?: boolean });

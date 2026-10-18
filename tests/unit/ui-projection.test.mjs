@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {cameraProjection,validateProjection,nodeMatrix4,multiply4,identity4,projectedQuad,quadPoint,outOfPlane} from '../../src/ui/projection.js';
 import {Renderer} from '../../src/ui/renderer.js';
+import {node as nativeNode,pack as uiPack,id,component} from './ui-fixture.mjs';
 
 const near=(a,b)=>assert.ok(Math.abs(a-b)<1e-8,`${a} != ${b}`);
 const camera=()=>cameraProjection({orthographic:false,'field of view':90,'near clip plane':.1,m_NormalizedViewPortRect:{x:0,y:0,width:1,height:1}}, {m_RenderMode:1,m_PlaneDistance:10},[100,100]);
@@ -34,23 +35,23 @@ test('homogeneous interpolation matches projection of an interior source point',
 
 function context(){return {globalAlpha:1,save(){},restore(){},scale(){},translate(){},rotate(){},setTransform(){},getTransform(){return {};},transform(){},drawImage(){},fillRect(){},beginPath(){},rect(){},clip(){},moveTo(){},lineTo(){},closePath(){},getImageData(_x,_y,w,h){return {data:new Uint8ClampedArray(w*h*4)};},createImageData(w,h){return {data:new Uint8ClampedArray(w*h*4)};},putImageData(){}};}
 globalThis.document={baseURI:'https://example.invalid/',createElement:()=>({width:1,height:1,getContext:()=>context()})};
-const node=(path,id,w,h,components=[],pos={x:0,y:0})=>({path,nodeId:id,active:true,components,rect:{m_SizeDelta:{x:w,y:h},m_AnchorMin:{x:0,y:1},m_AnchorMax:{x:0,y:1},m_AnchoredPosition:pos,m_Pivot:{x:0,y:1}}});
+const node=(path,id,w,h,components=[],pos={x:0,y:0})=>({...nativeNode(path,id,components),rect:{m_SizeDelta:{x:w,y:h},m_AnchorMin:{x:0,y:1},m_AnchorMax:{x:0,y:1},m_AnchoredPosition:pos,m_Pivot:{x:0,y:1}}});
 const image={class:'Image',m_Color:{r:1,g:1,b:1,a:1}};
 test('content framing crops transparent root space while projected container regions retain source order',async()=>{
   const root=node('Root','root',100,100),slot=node('Root/Slot','slot',20,40,[],{x:20,y:-30});slot.euler={x:0,y:30,z:0};
   const front=node('Root/Slot/Foreground','fg',24,44,[image],{x:-2,y:2}),hidden=node('Root/Slot/Hidden','hidden',50,50,[image]);hidden.active=false;
-  const pack={document:{nodes:[root,slot,front,hidden]},resources:{}},before=JSON.stringify(pack);
+  const pack=uiPack([root,slot,front,hidden]),before=JSON.stringify(pack);
   const result=await new Renderer(pack,{projection:camera(),framing:'content'}).render();
   assert.equal(result.metrics.drawn,1);assert.equal(result.padding,24);assert.equal(result.width,100);
   assert.ok(result.bounds.minX>0&&result.bounds.minY>0&&result.bounds.maxX<100&&result.bounds.maxY<100);
-  assert.equal(result.regions.slot.length,4);assert.ok(result.regions.slot[0].y!==result.regions.slot[1].y);assert.equal(result.regions.hidden,undefined);
-  assert.ok(result.bounds.minX<Math.min(...result.regions.slot.map(p=>p.x)),'foreground extends beyond slot box');
+  assert.equal(result.regions[id('slot')].length,4);assert.ok(result.regions[id('slot')][0].y!==result.regions[id('slot')][1].y);assert.equal(result.regions[id('hidden')],undefined);
+  assert.ok(result.bounds.minX<Math.min(...result.regions[id('slot')].map(p=>p.x)),'foreground extends beyond slot box');
   assert.equal(JSON.stringify(pack),before);
 });
 test('nested tilted surfaces and cross-mask projective composition report limits instead of silently flattening',async()=>{
   const root=node('Root','root',100,100),slot=node('Root/Slot','slot',20,40);slot.euler={x:0,y:30,z:0};
   const child=node('Root/Slot/Child','child',10,10,[image]);child.euler={x:0,y:20,z:0};
-  await assert.rejects(new Renderer({document:{nodes:[root,slot,child]},resources:{}},{projection:camera()}).render(),/nested nonplanar/);
-  root.components=[{class:'RectMask2D',m_Enabled:1}];child.euler={x:0,y:0,z:0};
-  await assert.rejects(new Renderer({document:{nodes:[root,slot,child]},resources:{}},{projection:camera()}).render(),/inside a mask/);
+  await assert.rejects(new Renderer(uiPack([root,slot,child]),{projection:camera()}).render(),/nested nonplanar/);
+  root.components=[component('RectMask2D',{m_Enabled:1})];child.euler={x:0,y:0,z:0};
+  await assert.rejects(new Renderer(uiPack([root,slot,child]),{projection:camera()}).render(),/inside a mask/);
 });
