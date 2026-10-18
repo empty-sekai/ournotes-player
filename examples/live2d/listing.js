@@ -6,3 +6,7 @@ export const modelText = (m, lang = null) => {
   const size = Number.isFinite(m.bytes) ? ` (${(m.bytes / 1048576).toFixed(1)} MB)` : "";
   return `${name ? `${name} · ${m.id}` : m.id}${size}`;
 };
+
+// A model id may have distinct listing metadata in different regions.
+export const pickModel = (models, id, region = null) => models.find((m) => m.id === id
+  && (!region || !m.regions || m.regions.includes(region))) || models.find((m) => m.id === id) || models[0];

@@ -51,8 +51,8 @@
         "durationMs": { "type": "integer", "minimum": 0 },
         "sortOrder": { "type": "integer" },
         "audio": { "type": "boolean" },
-        "audioFormat": { "enum": ["aac", "flac"] },
-        "flows": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "audioFormat": { "enum": ["aac", "flac", null] },
+        "flows": { "type": "array", "items": { "enum": ["direct"] }, "minItems": 1 },
         "bytes": { "type": "integer", "minimum": 0 }
       }
     }

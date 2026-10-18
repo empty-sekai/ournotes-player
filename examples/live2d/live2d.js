@@ -4,7 +4,7 @@
 // picks the language of the character names where models.json has them (listing.js).
 // Served from the repository. On a site, import dist/ournotes-player.live2d.element.min.js instead.
 import "../../src/live2d/define.js";
-import { modelText } from "./listing.js";
+import { modelText, pickModel } from "./listing.js";
 
 const CORE = "https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js";
 const q = new URLSearchParams(location.search);
@@ -40,6 +40,8 @@ const open = (entry) => {
   motion.replaceChildren(); expression.replaceChildren();
   const url = new URL(location.href);
   url.searchParams.set("model", entry.id);
+  if (entry.regions?.length) url.searchParams.set("region", entry.regions[0]);
+  else url.searchParams.delete("region");
   history.replaceState(null, "", url);
   viewer.setAttribute("src", new URL(entry.manifest, site).href);
 };
@@ -83,12 +85,15 @@ setInterval(status, 250);
     }
     for (const [g, list] of groups) {
       const parent = g ? Object.assign(document.createElement("optgroup"), { label: g }) : pick;
-      for (const m of list) parent.append(new Option(modelText(m, q.get("lang")), m.id));
+      for (const m of list) {
+        const region = models.filter((entry) => entry.id === m.id).length > 1 ? ` (${(m.regions || []).join(", ")})` : "";
+        parent.append(new Option(modelText(m, q.get("lang")) + region, m.manifest));
+      }
       if (parent !== pick) pick.append(parent);
     }
-    const first = models.find((m) => m.id === q.get("model")) || models[0];
-    pick.value = first.id;
-    pick.addEventListener("change", () => open(models.find((m) => m.id === pick.value)));
+    const first = pickModel(models, q.get("model"), q.get("region"));
+    pick.value = first.manifest;
+    pick.addEventListener("change", () => open(models.find((m) => m.manifest === pick.value)));
     open(first);
   } catch (e) {
     console.error(e);

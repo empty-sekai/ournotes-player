@@ -141,6 +141,41 @@ test("the same chart as a product layout validates", () => {
   assert.deepEqual(r.lines, ["1/1 lives valid"]);
 });
 
+const indexedProduct = (dir) => {
+  const docs = productDocs(dir, chart(), { manifests: { "lives/7_expert": "charts/7_expert" } });
+  const manifest = "charts/7_expert.json", root = docs[manifest];
+  const unique = new Map();
+  for (const doc of Object.values(docs))
+    for (const files of [doc.files, ...Object.values(doc.objects).map((o) => o.files)])
+      for (const f of Object.values(files)) unique.set(f.asset, f.size);
+  const facts = { title: "Example", level: 1, notes: 4, durationMs: 100 };
+  const metadata = { musicId: 7, difficulty: "expert", audio: true, audioFormat: "aac", quality: 1,
+    flows: ["direct"], regions: ["one"] };
+  Object.assign(root, metadata, { chart: facts });
+  docs["charts.json"] = { format: 2, language: "en", regions: [{ id: "one" }], charts: [
+    { id: "7_expert", manifest, ...facts, ...metadata, bytes: [...unique.values()].reduce((a, b) => a + b, 0) },
+  ] };
+  return docs;
+};
+
+test("product charts agree with their index and the complete asset closure", () => {
+  const result = run(indexedProduct);
+  assert.equal(result.status, 0, result.lines.join("\n"));
+});
+
+for (const [field, value] of [["regions", ["two"]], ["audio", false], ["audioFormat", "flac"],
+  ["quality", 2], ["bytes", 1], ["title", "Changed"]]) {
+  test(`product chart index rejects mismatched ${field}`, () => {
+    const result = run((dir) => {
+      const docs = indexedProduct(dir);
+      docs["charts.json"].charts[0][field] = value;
+      return docs;
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.lines.join("\n"), new RegExp(field));
+  });
+}
+
 test("a live.noteskin naming a noteeffect manifest is reported", () => {
   const r = run((dir) => productDocs(dir, chart(), { parts: { noteskin: "noteeffects/effect001.json" } }));
   assert.equal(r.status, 1);

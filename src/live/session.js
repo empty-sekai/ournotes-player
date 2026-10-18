@@ -401,8 +401,8 @@ export class ChartSession {
   get seOn() { return this.audio.seOn; }
   get audioAvailable() { return this.audio.available; }
   get audioContext() { return this.audio.sm.ctx; }
-  // chart metadata of the manifest (title, bands, level, notes, durationMs, ...) or null
-  get chart() { return (this.assets.info && this.assets.info.chart) || null; }
+  // chart metadata of the manifest or the standalone live product
+  get chart() { return this.data.chart; }
   // the Live options in effect (frozen, by name; settings.js)
   get settings() { return this._settings; }
   // every Live option with its default, value, range and the values this chart offers (settings.js liveOptionItems)

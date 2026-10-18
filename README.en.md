@@ -194,7 +194,7 @@ The player reads a static site:
 nnnotes builds such a site from the user's own game files, for example:
 
 ```sh
-nnnotes web out/site --all --all-live2d --all-stories --player <ournotes-player dir>
+nnnotes site build -o out/site --all --all-live2d --all-stories --player <ournotes-player dir>
 ```
 
 - The player also reads assets stored as they are (not encoded), and the model viewer model manifests of format 2

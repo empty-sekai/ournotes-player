@@ -518,6 +518,10 @@ paths of a manifest against `models/..`, the root, as for the other products.
 | `models[].bytes`, `files` | Optional: the sum of `size` over the files of the manifest and of its objects, and their count. |
 | `models[].textures`, `canvas` | Optional: the atlas page count and the moc3 canvas (as `model.json` has them). |
 
+When regions provide different listing metadata for the same model content, an id can appear once per region.
+Each entry names its `regions` and may use `models/<region>/<id>.json`; entries sharing an id have disjoint region
+sets. The model picker selects entries by manifest path, and a `region` query parameter selects a regional alias.
+
 ### Model manifest
 
 `models/<id>.json` is a product manifest ([schema](../schema/product.schema.json)) of the product `live2d.model`:

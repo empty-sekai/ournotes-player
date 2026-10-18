@@ -14,7 +14,8 @@
         "required": ["id", "manifest"],
         "properties": {
           "id": { "$ref": "#/$defs/id" },
-          "manifest": { "type": "string", "pattern": "^models/[a-z0-9_]+\\.json$" },
+          "manifest": { "type": "string", "pattern": "^models/(?:[a-z0-9_-]+/)?[a-z0-9_]+\\.json$" },
+          "regions": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[a-z0-9_-]+$" } },
           "key": { "type": "string" },
           "group": { "type": "string" },
           "label": { "type": "string" },

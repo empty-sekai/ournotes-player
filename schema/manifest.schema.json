@@ -12,7 +12,7 @@
     "chart": { "$ref": "#/$defs/chart" },
     "regions": { "type": "array", "items": { "$ref": "#/$defs/regionId" }, "minItems": 1 },
     "audio": { "type": "boolean" },
-    "audioFormat": { "enum": ["aac", "flac"] },
+    "audioFormat": { "enum": ["aac", "flac", null] },
     "flows": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
     "quality": { "enum": [0, 1, 2] },
     "options": {

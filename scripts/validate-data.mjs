@@ -1027,7 +1027,7 @@ class UI extends Product {
 
 // A live manifest with the products its live.json parts name, each checked once (Site.part).
 class Live extends Product {
-  run() {
+  run(entry) {
     const m = this.man;
     for (const e of S.product(m)) this.err("manifest", e);
     if (this.errs.length) return this.errs;
@@ -1037,6 +1037,9 @@ class Live extends Product {
     if (this.errs.length) return this.errs;
     const live = this.json("livejson", "live.json", (v) => ({ errs: S.live(v), v: S.live(v).length ? null : v }));
     if (!live || !live.v) return this.errs;
+    for (const key of ["musicId", "difficulty"])
+      if (has(m, key) && m[key] !== live.v[key]) this.err("manifest", `${key} differs from live.json`);
+    if (entry) this.crossCheck(entry, live.v);
     const loaded = [[productDir(this.where), m]];
     for (const [part, product] of Object.entries(LIVE_PARTS)) {
       const p = live.v.parts[part], r = this.site.part(p, product);
@@ -1061,6 +1064,53 @@ class Live extends Product {
     const { files, objects, ...info } = merged;
     new LiveChecks(this.site, new SiteStore(this.site, files, objects, info), (w, msg) => this.err(w, msg)).live();
     return this.errs;
+  }
+
+  crossCheck(entry, live) {
+    const m = this.man;
+    for (const key of ["musicId", "difficulty", "audio", "audioFormat", "flows", "regions", "quality"])
+      if (has(entry, key) && JSON.stringify(entry[key]) !== JSON.stringify(m[key]))
+        this.err("manifest", `${key} differs from charts.json`);
+    if (entry.id !== `${live.musicId}_${live.difficulty}`) this.err("charts.json", "id does not match live.json");
+    if (!isObj(m.chart)) this.err("manifest", "chart metadata missing");
+    else {
+      for (const [key, value] of Object.entries(m.chart))
+        if (has(entry, key) && JSON.stringify(entry[key]) !== JSON.stringify(value))
+          this.err("manifest", `chart.${key} differs from charts.json`);
+      for (const [key, source] of [["notes", "judgementNoteCount"], ["fullComboCount", "fullComboCount"]])
+        if (has(m.chart, key) && has(live, source) && m.chart[key] !== live[source])
+          this.err("manifest", `chart.${key} differs from live.json`);
+    }
+    if (!has(entry, "bytes")) return;
+    try {
+      const seen = new Set(), assets = new Map();
+      const strings = (value) => typeof value === "string" ? [value]
+        : isObj(value) ? Object.values(value).flatMap(strings) : [];
+      const visit = (path, manifest = null) => {
+        if (seen.has(path)) return;
+        seen.add(path);
+        const product = manifest || JSON.parse(fs.readFileSync(this.site.file(path), "utf8"));
+        const errors = S.product(product);
+        if (errors.length) throw new Error(`${path}: ${errors[0]}`);
+        for (const files of [product.files, ...Object.values(product.objects).map((o) => o.files)])
+          for (const f of Object.values(files)) {
+            if (f.parts) for (const [, asset, size] of f.parts) assets.set(asset, size);
+            else assets.set(f.asset, f.size);
+          }
+        let references = [];
+        if (product.product === LIVE_PRODUCT) {
+          const doc = JSON.parse(this.site.content(product.files["live.json"]));
+          references = [...strings(doc.parts), ...(product.variants || [])];
+        } else if (product.product === "live.ui") {
+          const doc = JSON.parse(this.site.content(product.files["ui.json"]));
+          if (doc.scene?.manifest) references.push(doc.scene.manifest);
+        }
+        for (const reference of references) visit(reference);
+      };
+      visit(this.where, m);
+      const total = [...assets.values()].reduce((sum, size) => sum + size, 0);
+      if (entry.bytes !== total) this.err("charts.json", `bytes ${entry.bytes}, product closure total ${total}`);
+    } catch (error) { this.err("charts.json", `product closure: ${error.message}`); }
   }
 }
 
@@ -1478,8 +1528,10 @@ function indexErrors(index, list = index.charts, name = "charts.json") {
   const byId = new Map();
   for (const e of list) byId.set(e.id, [...(byId.get(e.id) || []), e]);
   for (const [id, es] of byId) {
-    if (es.length < 2) continue;
-    if (es.some((e) => !Array.isArray(e.regions))) { out.push(`${name}: id ${id} twice`); continue; }
+    if (es.some((e) => !Array.isArray(e.regions))) {
+      if (es.length > 1) out.push(`${name}: id ${id} twice`);
+      continue;
+    }
     const seen = new Set();
     for (const r of es.flatMap((e) => e.regions)) {
       if (seen.has(r)) out.push(`${name}: id ${id} twice in region ${r}`);
@@ -1576,8 +1628,8 @@ function main(argv) {
     const index = JSON.parse(fs.readFileSync(modelsPath, "utf8"));
     const errs = S.models(index);
     if (errs.length) { console.log("FAIL models.json"); for (const e of errs) console.log(`  ${e}`); return 1; }
-    const ids = new Set();
-    for (const e of index.models) { if (ids.has(e.id)) out.push(`models.json: id ${e.id} twice`); ids.add(e.id); }
+    out.push(...indexErrors(index, index.models, "models.json"));
+    const ids = new Set(index.models.map((e) => e.id));
     models = index.models.map((e) => ({ id: e.id, manifest: e.manifest, entry: e }));
     site.modelIds = ids;
   } else if (fs.existsSync(site.file("models"))) {

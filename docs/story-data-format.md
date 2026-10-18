@@ -178,6 +178,8 @@ use `.flac`. Loop bounds are measured in source samples and must fit within the 
 The episode's sound row resolves its cue sheet through `_soundCueSheetID` and its cue through `_cueName`. CRI cue
 categories choose the volume bus; the sound row's category controls BGM crossfade and stop behavior.
 The first named `Bgm`, `Se` or `Voice` category selects the bus, with the sound row category as fallback.
+A cue name absent from an existing cue sheet is valid and completes as silence. Data validation checks the
+referenced cue sheet and its available waveforms; it does not report an absent cue name as an error.
 
 ## Live2D models
 

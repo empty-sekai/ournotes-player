@@ -62,7 +62,7 @@ export const validationFixture = () => {
     const f = font(lang);
     const raw = f.doc.texts["W/Talk"], binding = { font: raw.localized, localized: raw.localized, style: { class: raw.class } };
     fonts[lang] = { ...f.doc, format: "nnnotes.story-fonts/1", texts: { [textId]: binding }, shaders: { [TMP]: shader }, sprites: {} };
-    ui[lang] = { format: 1, language: language(lang), widget: prefab, chatWidget: prefab, uiManager: prefab,
+    ui[lang] = { format: 1, language: language(lang), widget: prefab, chatWidget: prefab, uiManager: prefab, chatStatusTexts: {},
       letterbox: sprite, talkWindows: { Window: prefab }, dialogs: {}, clips: {}, controllers: {},
       settings: { dotween, tmpSettings: tmp, localizeManager: localize, masterIdSettings: masterIds },
       graphics: { graphics }, texts: { [textId]: { localized: raw.localized, style: { class: raw.class } } },

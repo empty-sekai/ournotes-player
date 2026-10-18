@@ -44,6 +44,10 @@ test("valid story products validate in every language", () => {
   assert.match(passes(undefined, ["--lang=ja"]).text, /languages: ja/);
 });
 
+test("chat status text values have their declared string type", () => {
+  fails((f) => { f.ui.ja.chatStatusTexts = { call_status: 42 }; }, /chatStatusTexts/);
+});
+
 test("language selection is explicit and product subjects match each language", () => {
   fails(f => { f.manifest.language = "ko"; }, /default language ko/);
   fails(f => { delete f.story.parts.fonts.en; }, /languages differ/);
