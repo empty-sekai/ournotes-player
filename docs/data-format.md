@@ -119,6 +119,9 @@ Rules:
 
 ### Objects
 
+Prefab object documents have a [JSON Schema](../schema/prefab.schema.json) for hierarchy nodes, transforms,
+components and RectTransform fields. Data validation also checks that parents precede their children.
+
 Several products may retain different file roles of the same object. Loading their manifests combines these
 roles; overlapping roles and object metadata must agree. Product paths may include region directories, and are
 relative to the layout root.
@@ -988,3 +991,11 @@ The song catalog example reads `music-data.json` with format `nnnotes.music-data
 A chart entry under `charts/` can be an `nnnotes.product/1` live manifest. Its optional `variants` lists immutable note-skin, note-effect and sound products relative to its declared root; the loader combines them with the required parts. `options.LiveQuality` lists the offered qualities. `scripts/read-set.mjs --variants=<JSON array>` supplies extra manifest paths for either plan or full mode.
 
 The live's `parts.ui` maps languages to UI products. An `audio: false` entry omits sound streams while retaining cue metadata. Story sessions use silent timing for such entries. Story listings select a playback language for which the entry includes resources.
+
+### Scene and media document schemas
+
+- [room](../schema/room.schema.json)
+- [spot](../schema/spot.schema.json)
+- [story-video](../schema/story-video.schema.json)
+- [story-sound](../schema/story-sound.schema.json)
+- [crilips](../schema/crilips.schema.json)
