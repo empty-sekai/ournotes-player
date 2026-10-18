@@ -96,7 +96,7 @@ test("chart manifests: formats 2 and 3, file entries stored as they are or encod
   assert.ok(schema("manifest")(manifest({ files: { "live.json": { asset: `assets/${a}.json.gz`, size: 100 } } })).length > 0);
 });
 
-test("product manifests and model.json: object tables of whole or encoded files; model.json format 3", () => {
+test("product manifests and model.json: whole, encoded and split files; model.json format 3", () => {
   const a = "a".repeat(64), S = schema("product");
   const man = { schema: "nnnotes.product/1", product: "live2d.model", subject: KEY,
                 files: { "model.json": { asset: `assets/${a}.json.gz`, size: 100, stored: 60 } },
@@ -105,7 +105,9 @@ test("product manifests and model.json: object tables of whole or encoded files;
   assert.deepEqual(S(man), []);
   assert.ok(S({ ...man, schema: "nnnotes.product/2" }).some((e) => e.includes("/schema")));
   assert.ok(S({ ...man, objects: { "CAB-x": man.objects["CAB-x:-12"] } }).length > 0);              // not an object id
-  assert.ok(S({ ...man, files: { "n.json": { parts: [["k", `assets/${a}.json`, 5]], size: 7 } } }).length > 0);   // no parts
+  assert.deepEqual(S({ ...man, files: { "n.json": { parts: [["k", `assets/${a}.json`, 5]], size: 11 } } }), []);
+  assert.deepEqual(S({ ...man, files: { "n.json": { parts: [["k", `assets/${a}.json.gz`, 5, 3]], size: 11 } } }), []);
+  assert.ok(S({ ...man, files: { "n.json": { parts: [["k", `assets/${a}.json`]], size: 11 } } }).length > 0);
   const { model } = modelObjects("m1");
   assert.deepEqual(schema("model-json")(model), []);
   assert.ok(schema("model-json")({ ...model, format: 2 }).some((e) => e.includes("/format")));

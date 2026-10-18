@@ -285,7 +285,7 @@ class Chart {
   checkAssets() {
     for (const [p, f] of Object.entries(this.files)) {
       if (f.parts) {
-        if (!p.endsWith(".json")) this.err(p, "only JSON files may be split into parts");
+        if (this.extOfFile(p) !== "json") this.err(p, "only JSON files may be split into parts");
         const keys = new Set();
         let total = 2 + f.parts.length - 1;        // braces and commas
         for (const [k, a, size, stored] of f.parts) {
@@ -743,10 +743,16 @@ class Product extends Chart {
     for (const [oid, o] of Object.entries(this.objects))
       if (isObj(o) && isObj(o.files)) for (const [role, f] of Object.entries(o.files)) this.files[`${oid}#${role}`] = f;
     this.read = new Set();            // the files a reader of the product reads
+    this.immutable = /^products\/[0-9a-f]{64}\.json$/.test(this.where || "");
+    if (this.immutable) {
+      const actual = crypto.createHash("sha256").update(fs.readFileSync(site.file(this.where))).digest("hex");
+      if (path.posix.basename(this.where, ".json") !== actual) this.err("manifest", "content id differs from the immutable manifest path");
+    }
   }
 
   // the manifest's name (its path without the directory and .json) is its subject with "/" as "_"
   checkName() {
+    if (this.immutable) return;
     const name = path.posix.basename(this.where, ".json"), want = String(this.man.subject).replaceAll("/", "_");
     if (name !== want) this.err("manifest", `subject ${this.man.subject}: the manifest's name is ${name}, not ${want}`);
   }
@@ -756,7 +762,7 @@ class Product extends Chart {
     const cut = p.indexOf("#");
     if (cut < 0) return extOf(p);
     const role = p.slice(cut + 1);
-    return role === "json" || role === "index" ? "json" : role === "image" ? "png" : role.startsWith("program:") ? "glsl" : null;
+    return ["json", "index", "arrays"].includes(role) ? "json" : role === "image" ? "png" : role.startsWith("program:") ? "glsl" : null;
   }
 
   // the object `id` is in the manifest, of class `cls` (`where`: the reference's place, for errors)
@@ -815,7 +821,7 @@ class Model extends Product {
     const key = MODEL_KEY.exec(m.subject);
     if (!key) this.err("manifest", `subject ${m.subject} is not a model key (Character/Live2D/<group>/<name>/model/<name>)`);
     const name = this.where ? path.posix.basename(this.where, ".json") : null;
-    if (key && name !== null && key[2] !== name) this.err("manifest", `subject: model ${key[2]}, expected ${name} (the manifest's name)`);
+    if (key && name !== null && !this.immutable && key[2] !== name) this.err("manifest", `subject: model ${key[2]}, expected ${name} (the manifest's name)`);
     if (Object.keys(m.files).join("\n") !== "model.json") this.err("manifest", "files: model.json is the one file of a model");
     this.checkAssets();
     if (this.errs.length) return this.errs;

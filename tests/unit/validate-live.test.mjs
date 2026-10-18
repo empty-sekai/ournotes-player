@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { AssetStore } from "../../src/data/assets.js";
 import { legacyLive } from "../../src/live/legacy.js";
 import { AUDIO, NOTES, SCENE, chartFiles, node, sprite } from "./live-legacy-fixture.mjs";
-import { glsl, png, putAsset, putFiles } from "./site-fixture.mjs";
+import { glsl, png, putAsset, putFiles, sha256 } from "./site-fixture.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const script = path.join(here, "..", "..", "scripts", "validate-data.mjs");
@@ -172,6 +172,25 @@ test("a part manifest named other than its subject is reported", () => {
   const r = run((dir) => productDocs(dir, chart(), { manifests: { "noteskins/skin001": "noteskins/other" } }));
   assert.equal(r.status, 1);
   hasLine(r, "the manifest's name is other, not skin001");
+});
+
+test("immutable part manifests are checked by content identity", () => {
+  const build = damaged => dir => {
+    const docs = productDocs(dir, chart()), part = docs["noteskins/skin001.json"];
+    const target = `products/${sha256(JSON.stringify(part))}.json`;
+    delete docs["noteskins/skin001.json"];
+    docs[target] = damaged ? { ...part, root: "../" } : part;
+    const root = docs["lives/7_expert.json"];
+    const live = JSON.parse(fs.readFileSync(path.join(dir, root.files["live.json"].asset), "utf8"));
+    live.parts.noteskin = target;
+    root.files["live.json"] = putAsset(dir, "live.json", live);
+    return docs;
+  };
+  const valid = run(build(false));
+  assert.equal(valid.status, 0, valid.lines.join("\n"));
+  const invalid = run(build(true));
+  assert.equal(invalid.status, 1);
+  hasLine(invalid, "content id differs from the immutable manifest path");
 });
 
 test("two lives sharing one broken part report its errors once", () => {

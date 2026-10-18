@@ -66,6 +66,15 @@ const live = () => {
   return L;
 };
 
+test("a regional live manifest resolves products against its declared root", async () => {
+  const L = live(), man = L.files.get("lives/7_expert.json");
+  L.files.set("lives/region/7_expert.json", { ...man, root: "../../" });
+  const store = await loadLiveStore(`${ROOT}lives/region/7_expert.json`, { fetch: L.fetch });
+  assert.equal(store.info.dir, "lives/region/7_expert");
+  assert.deepEqual(new LiveData(store).score().notes, [1]);
+  assert.deepEqual(new LiveData(store).audio().sounds[10].layers[0].file, "sounds/default/audio/se1/a.flac");
+});
+
 test("productDir: a product manifest path without .json", () => {
   assert.equal(productDir("scenes/default.json"), "scenes/default");
   assert.equal(productDir("sounds/NoteSePatternId=1,3.json"), "sounds/NoteSePatternId=1,3");
