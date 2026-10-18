@@ -48,6 +48,11 @@ to its URL: `../` for `stories/7.json`, `../../` for `stories/tw/7.json`. Withou
 The loader's `base` option overrides that root. Content-addressed files may use gzip or brotli; their entries record
 both decoded `size` and compressed `stored` length.
 
+Part references may name immutable `products/<sha256>.json` manifests. The part's product and subject are checked
+before loading, and its files remain relative to the site root. A site snapshot's `parts.ui`, `parts.fonts` and
+optional `parts.simpleui` list the same set of available languages. Logical files and object JSON roles may use
+the [split file-entry form](data-format.md#file-entries).
+
 ## stories.json
 
 The optional listing index has `format: "ournotes.stories/1"` and a `stories` array. The player loads the manifest

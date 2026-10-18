@@ -90,7 +90,7 @@ A file entry has one of these forms:
   `.br`). `size` is the byte count of the file, `stored` that of the asset as stored (the encoded bytes). An asset is
   encoded only when that makes it smaller, so `stored` is less than `size`; `stored` is present exactly when the
   asset name ends in `.gz` or `.br`.
-- **Split JSON object** (a chart manifest's files only): `{ "parts": [[key, asset, size], ...], "size": <bytes> }`; a
+- **Split JSON object** (logical files and object JSON roles): `{ "parts": [[key, asset, size], ...], "size": <bytes> }`; a
   part whose asset is encoded is `[key, asset, size, stored]`. A large JSON file whose top level is an object is
   stored per top-level key: each part's asset holds the raw JSON text of that key's value. The file's text is rebuilt
   as
@@ -122,6 +122,17 @@ Rules:
 Several products may retain different file roles of the same object. Loading their manifests combines these
 roles; overlapping roles and object metadata must agree. Product paths may include region directories, and are
 relative to the layout root.
+
+### Immutable product manifests
+
+A site can store a product manifest at `products/<sha256>.json`, with the SHA-256 of the manifest bytes as its
+name. Its parent product's `parts` fields name that exact path, so each public entry point selects a coherent
+set of dependencies. Public aliases may remain at `lives/<id>.json`, `models/<id>.json` or `stories/<id>.json`.
+An alias in a region directory sets `root: "../../"`; a two-level path uses `"../"`. The live and story loaders
+honor that root, and a supplied `base` overrides it.
+
+The data validator checks immutable manifest contents against their names, then applies the product, subject,
+object and file checks. Ordinary product-layout manifest names continue to identify their subjects.
 
 An object is one Unity object, converted. Its id is `<serialized file>:<path id>` (the path id as decimal digits,
 possibly negative), the same in every product that uses it. An object's JSON names another object by a reference
