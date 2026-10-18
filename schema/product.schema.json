@@ -86,6 +86,9 @@
         },
         {
           "$ref": "#/$defs/encoded"
+        },
+        {
+          "$ref": "#/$defs/parts"
         }
       ]
     },
@@ -141,6 +144,62 @@
         },
         "stored": {
           "$ref": "#/$defs/stored"
+        }
+      }
+    },
+    "parts": {
+      "type": "object",
+      "required": [
+        "parts",
+        "size"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "parts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "anyOf": [
+              {
+                "type": "array",
+                "prefixItems": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/asset"
+                  },
+                  {
+                    "$ref": "#/$defs/size"
+                  }
+                ],
+                "minItems": 3,
+                "maxItems": 3
+              },
+              {
+                "type": "array",
+                "prefixItems": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/encodedAsset"
+                  },
+                  {
+                    "$ref": "#/$defs/size"
+                  },
+                  {
+                    "$ref": "#/$defs/stored"
+                  }
+                ],
+                "minItems": 4,
+                "maxItems": 4
+              }
+            ]
+          }
+        },
+        "size": {
+          "$ref": "#/$defs/size"
         }
       }
     }

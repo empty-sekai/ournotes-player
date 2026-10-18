@@ -50,7 +50,7 @@ export const loadLiveStore = async (url, { variants = [], fetch = globalThis.fet
     return AssetStore.fromManifest(href, { ...opts, fetch: serve(man), base, onProgress });
   }
   if (!isProduct(man, LIVE_PRODUCT)) throw new Error(`${href}: not a live manifest (${PRODUCT_MANIFEST} of ${LIVE_PRODUCT})`);
-  const root = base ? new URL(String(base), here()) : new URL("../", href);
+  const root = base ? new URL(String(base), here()) : new URL(man.root || "../", href);
   if (!href.startsWith(root.href)) throw new Error(`${href}: not under the root ${root.href}`);
   const liveDir = productDir(href.slice(root.href.length));
   // live.json names the parts: read it first (through fromManifest, which decodes and checks it)
