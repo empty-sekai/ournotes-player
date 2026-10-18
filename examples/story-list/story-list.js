@@ -5,7 +5,7 @@
 // story's. ?kind=<kind> lists the stories of one group kind.
 // Served from the repository. On a site, import dist/ournotes-player.story.element.min.js instead.
 import "../../src/story/define.js";
-import { firstLoad, groupLabel, languagesFor, manifestFor, pickLanguage, pickRegion, queryString, storiesFor, storyKind,
+import { firstLoad, groupLabel, languagesFor, manifestFor, pickLanguage, pickRegion, playbackLanguage, queryString, storiesFor, storyKind,
   storyTitle } from "./listing.js";
 
 const CORE = "https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js";
@@ -84,7 +84,10 @@ const play = async (advId) => {
   await loadScript(q.get("core") || CORE, "Live2DCubismCore");
   if (q.get("motionsync")) await loadScript(q.get("motionsync"), "Live2DCubismMotionSyncCore");
   if (q.get("spine")) await loadScript(q.get("spine"), "spine");
-  for (const a of ["lang", "ui-lang", "line", "speed", "quality", "film-grain"]) if (q.get(a)) story.setAttribute(a, q.get(a));
+  const entry = index?.stories.find(s => s.manifest === manifest);
+  const language = playbackLanguage(entry, q.get("lang"));
+  if (language) story.lang = language;
+  for (const a of ["ui-lang", "line", "speed", "quality", "film-grain"]) if (q.get(a)) story.setAttribute(a, q.get(a));
   if (q.get("auto")) story.setAttribute("auto", q.get("auto"));
   story.src = new URL(manifest, site).href;
 };

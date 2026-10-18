@@ -67,6 +67,10 @@
       "type": "string",
       "minLength": 1
     },
+    "audio": {
+      "type": "boolean",
+      "description": "Whether audio streams are included."
+    },
     "language": {
       "enum": [
         "ja",

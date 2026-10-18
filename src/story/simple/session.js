@@ -178,7 +178,7 @@ export class SimpleStorySession {
     const resolve = Audio.episodeResolver(episode, data);
     // a story without its sound files (story.json `audio` empty) plays no sound, with the voices off as in the game
     // without voice data (as StorySession)
-    const hasSounds = Object.keys(data.parts.sounds || {}).length > 0;
+    const hasSounds = data.hasSounds;
     this.hasSounds = hasSounds;
     const webAudio = hasSounds && opts.sound !== false && typeof globalThis.AudioContext === "function";
     const audioOptions = { assets: store };

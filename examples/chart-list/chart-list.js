@@ -29,11 +29,10 @@ const loadIndex = async () => {
 
 const play = async (music, difficulty) => {
   if (!/^\d+$/.test(music) || !DIFFICULTIES.includes(difficulty)) throw new Error("unknown chart");
-  let manifest = `charts/${music}_${difficulty}.json`;
-  if (q.has("region")) {                                     // a region's own manifest, when it has one
-    const index = await loadIndex().catch(() => null);
-    if (index) manifest = manifestFor(index, music, difficulty, pickRegion(index, q.get("region")));
-  }
+  const index = await loadIndex().catch(() => null);
+  const region = index ? pickRegion(index, q.get("region")) : null;
+  const manifest = index ? manifestFor(index, music, difficulty, region) : `charts/${music}_${difficulty}.json`;
+  const entry = index && chartsFor(index, region).find(c => c.id === `${music}_${difficulty}`);
   document.body.className = "play";
   const el = document.createElement("ournotes-player");
   el.controls = true;
@@ -42,7 +41,7 @@ const play = async (music, difficulty) => {
   if (musicOff) el.music = false;
   if (off(q.get("se"))) el.se = false;
   el.addEventListener("ready", () => {
-    const c = el.chart;
+    const c = entry || el.chart;
     const title = c && chartText(c, q.get("lang")).title;
     if (title) document.title = `${title} ${difficulty.toUpperCase()}`;
     el.focus();                                              // keyboard controls without a first click

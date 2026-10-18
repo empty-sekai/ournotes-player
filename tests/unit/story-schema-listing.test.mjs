@@ -76,3 +76,12 @@ test("first download, region manifests, query strings", () => {
   assert.equal(queryString({ story: 2, region: "tw", lang: null, kind: "" }), "?story=2&region=tw");
   assert.equal(queryString({ a: undefined }), "");
 });
+
+
+test("playback language uses the entry's available resources", async () => {
+  const { playbackLanguage } = await import("../../examples/story-list/listing.js");
+  const entry = { language: "ja", languages: ["ja", "ko"], titles: { en: "Title" } };
+  assert.equal(playbackLanguage(entry, "ko"), "ko");
+  assert.equal(playbackLanguage(entry, "en"), "ja");
+  assert.equal(playbackLanguage(null, "en"), "en");
+});
