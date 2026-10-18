@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
+import {node,pack as uiPack} from './ui-fixture.mjs';
 
 class Element extends EventTarget {
   constructor(){super();this.attributes=new Map();this.isConnected=false;}
@@ -18,7 +19,7 @@ const {UIPlayer}=await import('../../src/ui/player.js');
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
 const fakePlayer=()=>({destroyed:false,destroy(){this.destroyed=true;},addEventListener(){}});
 const tick=()=>new Promise(r=>setTimeout(r,0));
-const pack=()=>({document:{nodes:[{path:'Root',name:'Root',nodeId:'root',active:true,components:[],rect:{m_SizeDelta:{x:100,y:50}}}]},resources:{}});
+const pack=()=>uiPack([{...node('Root','root'),rect:{m_SizeDelta:{x:100,y:50}}}]);
 
 test('ready captured before connecting settles on the first load',async t=>{
   const result=fakePlayer();t.mock.method(UIPlayer,'create',async()=>result);

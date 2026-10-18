@@ -1,6 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {previewSpriteGeometryPlan,previewSpriteAspect,spriteCropPlan} from '../../src/ui/sprite-geometry.js';
+import {Renderer} from '../../src/ui/renderer.js';
+
+test('packed and tight Sprite previews use the restored object image and share reference identity',async()=>{
+  for(const settingsRaw of [0,1,7,11,15,19]){
+    const image={width:24,height:40},reads=[],sprite={id:'example:1',settingsRaw,texture:{id:'example:2'},rect:{width:24,height:40}};
+    const renderer=Object.assign(Object.create(Renderer.prototype),{sprites:new Map(),pack:{
+      objects:{sprite:()=>sprite},image:async id=>{reads.push(id);return image;},
+    }});
+    const first=await renderer.sprite('example:1');
+    assert.equal(first.canvas,image);
+    assert.equal(await renderer.sprite({$ref:{file:'example',pathId:'1'}}),first);
+    assert.deepEqual(reads,['example:1']);
+  }
+});
 
 test('trimmed bitmap uses original Sprite aspect and restores upward trim offset',()=>{
   // Synthetic geometry: no extracted game records are bundled with the test.
