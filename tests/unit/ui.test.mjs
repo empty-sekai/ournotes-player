@@ -140,3 +140,22 @@ test('UI validation checks the product graph, binding names and library referenc
   const bindings=validateUI(n=>edit(n,d=>Object.values(Object.values(Object.values(d.bindings)[0])[0])[0].pop()));assert.equal(bindings.status,1);assert.match(bindings.text,/names, the clip has/);
   const missing=validateUI(n=>{n.index.controllers=[{id:'ui:99999',name:'Missing',manifest:'uipacks/one.json'}];n.files.set('index.json',new TextEncoder().encode(JSON.stringify(n.index)));});assert.equal(missing.status,1);assert.match(missing.text,/not in the store/);
 });
+
+const splitUI=n=>{
+  for(const entry of [...Object.values(n.manifest.files),...Object.values(n.manifest.objects).flatMap(o=>Object.values(o.files))]){
+    if(!entry.asset.endsWith('.json'))continue;
+    const doc=JSON.parse(new TextDecoder().decode(n.files.get(entry.asset))),text=JSON.stringify(doc);
+    const parts=Object.entries(doc).map(([key,value])=>{const p=n.asset(JSON.stringify(value));return [key,p.asset,p.size];});
+    delete entry.asset;entry.parts=parts;entry.size=new TextEncoder().encode(text).length;
+  }
+  n.files.set('uipacks/one.json',new TextEncoder().encode(JSON.stringify(n.manifest)));
+};
+test('product files and object JSON roles reconstruct split entries and validate their sizes',async()=>{
+  const n=network();splitUI(n);
+  const {pack:p}=await new UILibrary(n.index,'https://example.invalid/data/',n.fetch).loadPack('one');
+  assert.equal(p.nodes[0].name,'Root');assert.equal(p.controller(0).clip(0).name,'A');
+  const valid=validateUI(splitUI);assert.equal(valid.status,0,valid.text);
+  const bad=validateUI(n=>{splitUI(n);Object.values(n.manifest.objects)[0].files.json.size++;
+    n.files.set('uipacks/one.json',new TextEncoder().encode(JSON.stringify(n.manifest)));});
+  assert.equal(bad.status,1);assert.match(bad.text,/rebuilt text/);
+});
