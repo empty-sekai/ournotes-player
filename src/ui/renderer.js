@@ -1,3 +1,4 @@
+import { refId } from '../data/assets.js';
 import {component as comp} from './runtime.js';
 import {loadGameFont,hasGameGlyphs,gameTextWidth,drawGameText} from './game-font.js';
 import {rectBox,aspectBox,imageAspectBox,intersect,layoutProperty,linearGroupInput,linearGroupLayout} from './layout.js';
@@ -17,22 +18,30 @@ export function loadImage(url){
   }
   return imageCache.get(url);
 }
-const fonts=new Map();
-export async function loadFonts(pack,resolve){
-  const gameFonts=new Map();let fontFamily='sans-serif';
-  // A pack that names a CSS font family draws its text with it; no font or glyph metrics file is loaded.
-  if(typeof pack.resources?.browserFontFamily==='string'&&pack.resources.browserFontFamily.trim())return {gameFonts,fontFamily:pack.resources.browserFontFamily};
-  const names=new Set((pack.document.nodes||[]).map(n=>comp(n,'TextMeshProUGUI')?.m_fontAsset?.name).filter(n=>n?.includes('VibeMO')));
-  await Promise.all([...names].map(async name=>gameFonts.set(name,await loadGameFont(loadImage,resolve(pack.resources.fontMetricsByAsset?.[name]||pack.resources.fontMetrics||'fonts/vibemo.json'),resolve))));
-  for(const [name,file] of Object.entries(pack.resources?.fonts||{})){
-    if(!name.includes('FZLTH'))continue;
-    const url=resolve(file);if(!fonts.has(url)){const family='OurnotesUI'+fonts.size;fonts.set(url,new FontFace(family,`url(${JSON.stringify(url)})`).load().then(f=>{document.fonts.add(f);return family;}).catch(error=>{fonts.delete(url);throw error;}));}
-    fontFamily=await fonts.get(url);
+const fonts=new WeakMap();
+let fontSerial=0;
+export async function loadFonts(pack){
+  const gameFonts=new Map(),fontFamilies=new Map();let fontFamily='sans-serif';
+  if(pack.browserFontFamily?.trim())return {gameFonts,fontFamilies,fontFamily:pack.browserFontFamily};
+  if(!fonts.has(pack.store))fonts.set(pack.store,new Map());
+  const cache=fonts.get(pack.store),ids=new Set(pack.nodes.map(n=>refId(comp(n,'TextMeshProUGUI')?.m_fontAsset)).filter(Boolean));
+  for(const id of ids){
+    const asset=pack.objects.mono(id);
+    if(asset.m_Name.includes('VibeMO'))gameFonts.set(id,await loadGameFont(pack,id));
+    else{
+      const source=refId(asset.m_SourceFontFile);
+      if(!source||!pack.store.hasObject(source)||!pack.store.roles(source).includes('font'))continue;
+      if(!cache.has(source)){
+        const family='OurnotesUI'+fontSerial++;
+        cache.set(source,new FontFace(family,pack.store.objectBytes(source,'font')).load().then(face=>{document.fonts.add(face);return family;}).catch(error=>{cache.delete(source);throw error;}));
+      }
+      fontFamilies.set(id,await cache.get(source));
+    }
   }
-  return {gameFonts,fontFamily};
+  return {gameFonts,fontFamilies,fontFamily};
 }
 export function buildNodes(pack){
-  const stack=[],nodes=(pack.document.nodes||[]).map((n,i)=>{
+  const stack=[],nodes=(pack.nodes||[]).map((n,i)=>{
     const depth=n.path.split('/').length;
     while(stack.length&&stack.at(-1).depth>=depth)stack.pop();
     const row={...n,i,depth,parent:stack.at(-1)?.i??-1,children:[]};stack.push(row);return row;
@@ -93,7 +102,7 @@ function fillPath(ctx,w,h,im){
 
 export class Renderer {
   constructor(pack,options={}){
-    this.pack=pack;this.options=options;this.nodes=buildNodes(pack);this.sprites=new Map();this.spriteCrops=new Map();this.preferredCache=new Map();this.images=new Map();this.fontFamily='sans-serif';this.gameFonts=new Map();
+    this.pack=pack;this.options=options;this.nodes=buildNodes(pack);this.sprites=new Map();this.spriteCrops=new Map();this.preferredCache=new Map();this.images=new Map();this.fontFamily='sans-serif';this.gameFonts=new Map();this.fontFamilies=new Map();
     this.projection=options.projection?validateProjection(options.projection):null;this.regions=Object.create(null);
     this.metrics={drawn:0,hidden:0,transparent:0,unboundImages:0,particles:0};
     this.measure=makeCanvas(1,1).getContext('2d');
@@ -116,12 +125,15 @@ export class Renderer {
     return {canvas:this.spriteCrops.get(key),...plan.source};
   }
   async sprite(ref){
-    if(this.sprites.has(ref))return this.sprites.get(ref);
-    const s=this.pack.resources.sprites[ref];if(!s)throw Error(`缺失 Sprite: ${ref}`);
-    const file=this.pack.resources.textures[s.textureRef];if(!file)throw Error(`缺失贴图: ${s.textureRef}`);
-    const im=await loadImage(this.url(file)),c=makeCanvas(s.rect.width,s.rect.height),ctx=c.getContext('2d'),r=s.textureRect,o=s.textureRectOffset;
-    if(r.width>0&&r.height>0){const source=this.spriteCrop(im,s.textureRef,r);ctx.drawImage(source.canvas,source.x,source.y,r.width,r.height,o.x,c.height-o.y-r.height,r.width,r.height);}
-    const result={canvas:c,meta:s};this.sprites.set(ref,result);return result;
+    const s=this.pack.objects.sprite(ref);
+    if(this.sprites.has(s.id))return this.sprites.get(s.id);
+    const packed=!!(s.settingsRaw&1),rotation=(s.settingsRaw>>2)&15,tight=!(s.settingsRaw&2);
+    if(tight||packed&&rotation||(s.downscaleMultiplier??1)!==1){
+      const result={canvas:await this.pack.image(s.id),meta:s};this.sprites.set(s.id,result);return result;
+    }
+    const im=await this.pack.image(s.texture.id),c=makeCanvas(s.rect.width,s.rect.height),ctx=c.getContext('2d'),r=s.textureRect,o=s.textureRectOffset;
+    if(r.width>0&&r.height>0){const source=this.spriteCrop(im,s.texture.id,r);ctx.drawImage(source.canvas,source.x,source.y,r.width,r.height,o.x,c.height-o.y-r.height,r.width,r.height);}
+    const result={canvas:c,meta:s};this.sprites.set(s.id,result);return result;
   }
   children(n){return n.children.map(i=>this.nodes[i]).filter(c=>c.active&&!comp(c,'LayoutElement')?.m_IgnoreLayout);}
   layoutInput(n){
@@ -129,16 +141,16 @@ export class Renderer {
     const elements=[[],[]],el=comp(n,'LayoutElement'),text=comp(n,'TextMeshProUGUI'),image=comp(n,'Image');
     const add=(min,preferred,flexible,priority=0)=>[0,1].forEach(axis=>elements[axis].push({priority,min:min[axis],preferred:preferred[axis],flexible:flexible[axis]}));
     if(text&&text.m_Enabled!==0){
-      const fs=text.m_fontSize||24;this.measure.font=`${text.m_fontStyle&1?'bold ':''}${fs}px ${this.fontFamily},sans-serif`;
-      const lines=visibleLines(plainText(text.m_text).split('\n')),margin=text.m_margin||zeroBorder,gameFont=this.gameFonts.get(text.m_fontAsset?.name);
-      add([0,0],[Math.max(...lines.map(s=>hasGameGlyphs(s,text.m_fontAsset,gameFont)?gameTextWidth(s,fs,gameFont):this.measure.measureText(s).width),0)+Math.max(0,margin.x)+Math.max(0,margin.z),textHeight(lines,fs*1.16)+Math.max(0,margin.y)+Math.max(0,margin.w)],[-1,-1]);
+      const fs=text.m_fontSize||24;this.measure.font=`${text.m_fontStyle&1?'bold ':''}${fs}px ${this.fontFamilies.get(refId(text.m_fontAsset))||this.fontFamily},sans-serif`;
+      const lines=visibleLines(plainText(text.m_text).split('\n')),margin=text.m_margin||zeroBorder,gameFont=this.gameFonts.get(refId(text.m_fontAsset));
+      add([0,0],[Math.max(...lines.map(s=>hasGameGlyphs(s,gameFont)?gameTextWidth(s,fs,gameFont):this.measure.measureText(s).width),0)+Math.max(0,margin.x)+Math.max(0,margin.z),textHeight(lines,fs*1.16)+Math.max(0,margin.y)+Math.max(0,margin.w)],[-1,-1]);
     }
     if(image&&image.m_Enabled!==0){
-      const sprite=image._previewSource&&image._previewSpriteGeometry||this.pack.resources?.sprites?.[image.m_Sprite?.spriteRef],border=sprite?.border||zeroBorder,ppu=(sprite?.pixelsPerUnit||100)/100*(image.m_PixelsPerUnitMultiplier||1),sliced=[1,2].includes(image.m_Type);
+      const sprite=image._previewSource&&image._previewSpriteGeometry||(image.m_Sprite?this.pack.objects.sprite(image.m_Sprite):null),border=sprite?.border||zeroBorder,ppu=(sprite?.pixelsToUnits||sprite?.pixelsPerUnit||100)/100*(image.m_PixelsPerUnitMultiplier||1),sliced=[1,2].includes(image.m_Type);
       add([0,0],sprite?[(sliced?border.x+border.z:sprite.rect.width)/ppu,(sliced?border.y+border.w:sprite.rect.height)/ppu]:[0,0],[-1,-1]);
     }
     const g=comp(n,'HorizontalLayoutGroup')||comp(n,'VerticalLayoutGroup')||comp(n,'RectFitVerticalLayoutGroup');
-    if(g&&g.m_Enabled!==0){const value=linearGroupInput(g,this.layoutChildren(n));add(value.min,value.preferred,value.flexible);}
+    if(g&&g.m_Enabled!==0){const value=linearGroupInput(g,this.layoutChildren(n),!!comp(n,'HorizontalLayoutGroup'));add(value.min,value.preferred,value.flexible);}
     if(el&&el.m_Enabled!==0)add([el.m_MinWidth,el.m_MinHeight],[el.m_PreferredWidth,el.m_PreferredHeight],[el.m_FlexibleWidth,el.m_FlexibleHeight],el.m_LayoutPriority??1);
     const min=elements.map(e=>layoutProperty(e,'min')),result={min,preferred:elements.map((e,axis)=>Math.max(min[axis],layoutProperty(e,'preferred'))),flexible:elements.map(e=>layoutProperty(e,'flexible'))};
     this.preferredCache.set(n.i,result);return result;
@@ -173,7 +185,7 @@ export class Renderer {
       const usedCols=Math.min(cols,children.length),usedRows=Math.min(rows,children.length),tw=usedCols*cell.x+Math.max(0,usedCols-1)*space.x,th=usedRows*cell.y+Math.max(0,usedRows-1)*space.y;
       children.forEach((c,i)=>{let x=vertical?Math.floor(i/rows):i%cols,y=vertical?i%rows:Math.floor(i/cols);if(grid.m_StartCorner%2)x=usedCols-1-x;if(grid.m_StartCorner>=2)y=usedRows-1-y;result.set(c.i,{x:left+(aw-tw)*ax+x*(cell.x+space.x),y:top+(ah-th)*ay+y*(cell.y+space.y),w:cell.x,h:cell.y,pivot:c.rect?.m_Pivot});});return result;
     }
-    return linearGroupLayout(g,this.layoutChildren(n),w,h);
+    return linearGroupLayout(g,this.layoutChildren(n),w,h,!!row);
   }
   async imageLayer(n,im,w,h){
     if(w<=0||h<=0)return null;
@@ -186,16 +198,16 @@ export class Renderer {
         sp={canvas,meta:im._previewSpriteGeometry};
       }else sp={canvas:source,meta:{border:zeroBorder,pixelsPerUnit:100}};
     }
-    else if(im.m_Sprite?.spriteRef)sp=await this.sprite(im.m_Sprite.spriteRef);
+    else if(im.m_Sprite)sp=await this.sprite(refId(im.m_Sprite));
     const scale=Math.min(1,4096/w,4096/h,Math.sqrt(8388608/(w*h))),layer=makeCanvas(w*scale,h*scale),ctx=layer.getContext('2d');
     ctx.scale(scale,scale);ctx.save();const flip=comp(n,'UIFlipImage');
     if(flip?.m_Enabled!==0&&flip){ctx.translate(flip._isFlipX?w:0,flip._isFlipY?h:0);ctx.scale(flip._isFlipX?-1:1,flip._isFlipY?-1:1);}
     if(!sp){ctx.fillStyle='white';ctx.fillRect(0,0,w,h);this.metrics.unboundImages++;}
-    else if(im.m_Type===1)sliced(ctx,sp.canvas,w,h,sp.meta.border,(sp.meta.pixelsPerUnit||100)/100*(im.m_PixelsPerUnitMultiplier||1),im.m_FillCenter!==0);
+    else if(im.m_Type===1)sliced(ctx,sp.canvas,w,h,sp.meta.border,(sp.meta.pixelsToUnits||sp.meta.pixelsPerUnit||100)/100*(im.m_PixelsPerUnitMultiplier||1),im.m_FillCenter!==0);
     else {
       const drawing=im.m_PreserveAspect?imageAspectBox(w,h,sp.canvas.width,sp.canvas.height,n.rect?.m_Pivot):{x:0,y:0,w,h};
       fillPath(ctx,w,h,im);ctx.clip();
-      if(im.m_Type===2){const ppu=(sp.meta.pixelsPerUnit||100)/100*(im.m_PixelsPerUnitMultiplier||1);ctx.scale(1/ppu,1/ppu);ctx.fillStyle=ctx.createPattern(sp.canvas,'repeat');ctx.fillRect(0,0,w*ppu,h*ppu);}
+      if(im.m_Type===2){const ppu=(sp.meta.pixelsToUnits||sp.meta.pixelsPerUnit||100)/100*(im.m_PixelsPerUnitMultiplier||1);ctx.scale(1/ppu,1/ppu);ctx.fillStyle=ctx.createPattern(sp.canvas,'repeat');ctx.fillRect(0,0,w*ppu,h*ppu);}
       else ctx.drawImage(sp.canvas,drawing.x,drawing.y,drawing.w,drawing.h);
     }
     ctx.restore();ctx.setTransform(1,0,0,1,0,0);tint(ctx,layer.width,layer.height,im.m_Color,comp(n,'UIGradientImage'));return layer;
@@ -204,8 +216,8 @@ export class Renderer {
     const t=comp(n,'TextMeshProUGUI');if(!t||t.m_Enabled===0)return;
     const plain=plainText(t.m_text),margin=t.m_margin||zeroBorder,available=Math.max(1,w-margin.x-margin.z);
     let fs=t.m_fontSize||24;
-    const font=()=>`${t.m_fontStyle&1?'bold ':''}${t.m_fontStyle&2?'italic ':''}${fs}px ${this.fontFamily},sans-serif`;
-    const gameFont=this.gameFonts.get(t.m_fontAsset?.name),native=hasGameGlyphs(plain,t.m_fontAsset,gameFont),width=s=>native?gameTextWidth(s,fs,gameFont):ctx.measureText(s).width;
+    const font=()=>`${t.m_fontStyle&1?'bold ':''}${t.m_fontStyle&2?'italic ':''}${fs}px ${this.fontFamilies.get(refId(t.m_fontAsset))||this.fontFamily},sans-serif`;
+    const gameFont=this.gameFonts.get(refId(t.m_fontAsset)),native=hasGameGlyphs(plain,gameFont),width=s=>native?gameTextWidth(s,fs,gameFont):ctx.measureText(s).width;
     const wrap=()=>{ctx.font=font();const result=[];for(const line of plain.split('\n')){if(!wrappingEnabled(t)){result.push(line);continue;}let current='';for(const ch of line){if(current&&width(current+ch)>available){result.push(current);current=ch;}else current+=ch;}result.push(current);}return visibleLines(result);};
     let lines=wrap();if(t.m_enableAutoSizing){const min=t.m_fontSizeMin||fs;fs=Math.min(t.m_fontSizeMax||fs,fs);lines=wrap();while(fs>min&&(textHeight(lines,fs*1.16)>h-margin.y-margin.w||lines.some(l=>width(l)>available))){fs=Math.max(min,fs-1);lines=wrap();}}
     const align=t.m_HorizontalAlignment||1,vertical=t.m_VerticalAlignment||512,lineHeight=fs*1.16+(t.m_lineSpacing||0),th=lines.length*lineHeight;
@@ -251,7 +263,7 @@ export class Renderer {
       const layer=im&&im.m_Enabled!==0?await this.imageLayer(n,im,w,h):null;
       if(layer&&(!hasMask||mask.m_ShowMaskGraphic)){ctx.drawImage(layer,0,0,w,h);this.metrics.drawn++;}
       const raw=comp(n,'RawImage');if(raw?.m_Enabled!==0&&raw&&w>0&&h>0){
-        const file=this.pack.resources.textures[raw.m_Texture?.textureRef];if(file){const image=await loadImage(this.url(file)),uv=raw.m_UVRect||{x:0,y:0,width:1,height:1};ctx.save();ctx.globalAlpha*=raw.m_Color?.a??1;ctx.drawImage(image,uv.x*image.width,(1-uv.y-uv.height)*image.height,uv.width*image.width,uv.height*image.height,0,0,w,h);ctx.restore();this.metrics.drawn++;}else this.metrics.unboundImages++;
+        const texture=refId(raw.m_Texture);if(texture){const image=await this.pack.image(texture),uv=raw.m_UVRect||{x:0,y:0,width:1,height:1};ctx.save();ctx.globalAlpha*=raw.m_Color?.a??1;ctx.drawImage(image,uv.x*image.width,(1-uv.y-uv.height)*image.height,uv.width*image.width,uv.height*image.height,0,0,w,h);ctx.restore();this.metrics.drawn++;}else this.metrics.unboundImages++;
       }
       this.drawText(n,ctx,w,h);if(comp(n,'ParticleSystem'))this.metrics.particles++;
       if(this.options.bounds){ctx.strokeStyle='#cf4d90';ctx.lineWidth=.6;ctx.strokeRect(0,0,w,h);}
@@ -277,7 +289,7 @@ export class Renderer {
       const im=comp(n,'Image'),raw=comp(n,'RawImage'),text=comp(n,'TextMeshProUGUI'),mask=comp(n,'Mask'),masking=mask&&mask.m_Enabled!==0;
       const graphic=this.options.bounds||im&&im.m_Enabled!==0&&(!masking||mask.m_ShowMaskGraphic)&&number(im.m_Color?.a,1)>0||raw&&raw.m_Enabled!==0&&raw.m_Texture||text&&text.m_Enabled!==0&&text.m_text;
       const quad=this.projection?projectedQuad(m,{x:0,y:0,w:box.w,h:box.h},this.projection):flatQuad(m,{x:0,y:0,w:box.w,h:box.h}),world=quadBounds(quad);
-      this.regions[n.nodeId||n.path]=quad.map(({x,y})=>({x,y}));
+      this.regions[n.id||n.path]=quad.map(({x,y})=>({x,y}));
       if(graphic&&box.w>0&&box.h>0){const extent=intersect(world,clip);if(extent)bounds=bounds?{minX:Math.min(bounds.minX,extent.minX),minY:Math.min(bounds.minY,extent.minY),maxX:Math.max(bounds.maxX,extent.maxX),maxY:Math.max(bounds.maxY,extent.maxY)}:extent;}
       if(masking||comp(n,'RectMask2D')||comp(n,'SoftMask')){clip=intersect(world,clip);if(!clip)return;}
       const layouts=this.childLayout(n,box.w,box.h);for(const i of n.children)visit(this.nodes[i],box.w,box.h,m,layouts.get(i),clip,alpha);
@@ -286,18 +298,24 @@ export class Renderer {
     return comp(root,'Canvas')&&this.options.framing!=='content'?rootBounds:bounds||rootBounds;
   }
   async render(rootIndex=0,rootSize=null,resourcesReady=false){
-    if(!resourcesReady){Object.assign(this,await loadFonts(this.pack,file=>this.url(file)));await Promise.all(this.nodes.flatMap(n=>n.components.filter(c=>c._previewSource).map(async c=>this.images.set(c._previewSource,await loadImage(this.url(c._previewSource))))));}
+    if(!resourcesReady){Object.assign(this,await loadFonts(this.pack));await Promise.all(this.nodes.flatMap(n=>n.components.map(c=>c.fields).filter(c=>c._previewSource).map(async c=>this.images.set(c._previewSource,await loadImage(this.url(c._previewSource))))));}
     const root=this.nodes[rootIndex];if(!root)throw Error('预制体没有根节点');
     const vp=this.options.viewport||[1920,1080],natural=this.layout(root,...vp),w=rootSize?.[0]??(natural.w>0?natural.w:vp[0]),h=rootSize?.[1]??(natural.h>0?natural.h:vp[1]);
     const bounds=this.visibleBounds(root,w,h),width=Math.ceil(bounds.maxX-bounds.minX)+48,height=Math.ceil(bounds.maxY-bounds.minY)+48,scale=Math.min(1,4096/width,4096/height),canvas=makeCanvas(width*scale,height*scale),ctx=canvas.getContext('2d');ctx.scale(scale,scale);ctx.translate(24-bounds.minX,24-bounds.minY);
     this.baseTransform=this.projection?ctx.getTransform():null;await this.drawNode(root,ctx,w,h,null,true);return {canvas,width:w,height:h,bounds,metrics:this.metrics,regions:this.regions,scale,padding:24};
   }
   async renderAsset(){
-    const doc=this.pack.document,refs=doc.sprites?(Array.isArray(doc.sprites)?doc.sprites:Object.values(doc.sprites)):doc.spriteRef?[doc]:[];
-    const sprites=await Promise.all(refs.filter(x=>x?.spriteRef).map(x=>this.sprite(x.spriteRef)));
+    const spriteIds=this.pack.roots.flatMap(id=>{
+      const kind=this.pack.store.object(id).class;
+      if(kind==='Sprite')return [id];
+      if(kind==='SpriteAtlas')return this.pack.store.objectJson(id).m_PackedSprites.map(refId);
+      return [];
+    });
+    const sprites=await Promise.all(spriteIds.map(id=>this.sprite(id)));
     const canvas=makeCanvas(1200,Math.max(250,Math.ceil(sprites.length/8)*150)),ctx=canvas.getContext('2d');
     sprites.forEach((s,i)=>{const f=Math.min(125/s.canvas.width,115/s.canvas.height,1);ctx.drawImage(s.canvas,i%8*150+12,Math.floor(i/8)*150+8,s.canvas.width*f,s.canvas.height*f);ctx.fillStyle='#463c56';ctx.font='10px sans-serif';ctx.fillText(s.meta.name.slice(0,23),i%8*150+8,Math.floor(i/8)*150+140);});
-    if(!sprites.length&&doc.textureRef){const im=await loadImage(this.url(this.pack.resources.textures[doc.textureRef]));canvas.width=im.width;canvas.height=im.height;ctx.drawImage(im,0,0);}
+    const texture=this.pack.roots.find(id=>this.pack.store.object(id).class==='Texture2D');
+    if(!sprites.length&&texture){const im=await this.pack.image(texture);canvas.width=im.width;canvas.height=im.height;ctx.drawImage(im,0,0);}
     return {canvas,sprites:sprites.length};
   }
 }

@@ -34,9 +34,9 @@ export function layoutProperty(elements,property,fallback=0){
   }
   return value;
 }
-function groupSettings(group){
+function groupSettings(group,horizontal){
   const p=group.m_Padding||{},align=group.m_ChildAlignment||0;
-  return {vertical:group.class!=='HorizontalLayoutGroup',spacing:group.m_Spacing||0,
+  return {vertical:!horizontal,spacing:group.m_Spacing||0,
     padding:[(p.m_Left||0)+(p.m_Right||0),(p.m_Top||0)+(p.m_Bottom||0)],start:[p.m_Left||0,p.m_Top||0],
     align:[align%3/2,Math.floor(align/3)/2],control:[!!group.m_ChildControlWidth,!!group.m_ChildControlHeight],
     expand:[!!group.m_ChildForceExpandWidth,!!group.m_ChildForceExpandHeight],scale:[!!group.m_ChildScaleWidth,!!group.m_ChildScaleHeight]};
@@ -44,8 +44,7 @@ function groupSettings(group){
 function childSizes(child,axis,g){
   const controlled=g.control[axis],size=child.size[axis],scale=g.scale[axis]?child.scale?.[axis]??1:1;
   const min=controlled?child.min[axis]:size,preferred=controlled?child.preferred[axis]:size;
-  // The Ghidra C omits this fmaxnm/fcsel branch; it is present at
-  // 0xbd29fec..0xbd2a004 in the hash-checked native instructions.
+  // Force expansion gives uncontrolled children a flexible cell while retaining their serialized size.
   const flexible=Math.max(controlled?child.flexible[axis]:0,g.expand[axis]?1:0);
   return {min,preferred,flexible,scale};
 }
@@ -60,14 +59,14 @@ function groupAxis(g,children,axis){
   if(!other&&children.length){min-=g.spacing;preferred-=g.spacing;}
   return {min,preferred:Math.max(min,preferred),flexible};
 }
-export function linearGroupInput(group,children){
-  const g=groupSettings(group),axes=[0,1].map(axis=>groupAxis(g,children,axis));
+export function linearGroupInput(group,children,horizontal=false){
+  const g=groupSettings(group,horizontal),axes=[0,1].map(axis=>groupAxis(g,children,axis));
   return {min:axes.map(a=>a.min),preferred:axes.map(a=>a.preferred),flexible:axes.map(a=>a.flexible)};
 }
 // SetChildrenAlongAxis: cells may expand while an uncontrolled child keeps its
 // serialized size. Positions include SetChildAlongAxisWithScale's pivot term.
-export function linearGroupLayout(group,input,w,h){
-  const g=groupSettings(group),children=group.m_ReverseArrangement?[...input].reverse():input,size=[w,h],result=new Map();
+export function linearGroupLayout(group,input,w,h,horizontal=false){
+  const g=groupSettings(group,horizontal),children=group.m_ReverseArrangement?[...input].reverse():input,size=[w,h],result=new Map();
   for(const child of children)result.set(child.i,{x:0,y:0,w:child.size[0],h:child.size[1],pivot:child.pivot});
   for(const axis of [0,1]){
     const total=groupAxis(g,children,axis),other=g.vertical!==(axis===1),align=g.align[axis],start=required=>g.start[axis]+(size[axis]-g.padding[axis]-required)*align;

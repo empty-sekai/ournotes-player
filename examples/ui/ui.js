@@ -24,7 +24,7 @@ function list(){
 
 async function select(id){
   const revision=++generation,entry=library.find(id);player?.destroy();player=null;canvas.hidden=true;$('#empty').hidden=false;$('#empty').textContent='Loading prefab…';
-  $('#name').textContent=entry.name;$('#key').textContent=entry.key||entry.file;$('#parameters').replaceChildren();
+  $('#name').textContent=entry.name;$('#key').textContent=entry.key||entry.manifest;$('#parameters').replaceChildren();
   fill($('#state'),'State',[]);fill($('#clip'),'Clip',[]);$('#play').disabled=$('#time').disabled=$('#reset').disabled=true;
   const loaded=await UIPlayer.create(canvas,{library,entry,showHidden:$('#hidden').checked,bounds:$('#bounds').checked});
   if(revision!==generation){loaded.destroy();return;}player=loaded;canvas.hidden=false;$('#empty').hidden=true;$('#reset').disabled=false;
@@ -35,13 +35,13 @@ async function select(id){
 
 $('#open').onsubmit=async e=>{
   e.preventDefault();const button=e.currentTarget.querySelector('button');button.disabled=true;
-  try{library=await UILibrary.load($('#source').value);entries=library.entries.filter(e=>['prefab','embedded'].includes(e.kind)&&e.file&&e.status!=='failed');list();if(!entries.length)throw Error('No exported prefabs in this library');$('#assets').value=entries[0].id;await select(entries[0].id);}catch(e){error(e);}finally{button.disabled=false;}
+  try{library=await UILibrary.load($('#source').value);entries=library.entries.filter(e=>e.kind==='prefab'&&e.manifest);list();if(!entries.length)throw Error('No exported prefabs in this library');$('#assets').value=entries[0].id;await select(entries[0].id);}catch(e){error(e);}finally{button.disabled=false;}
 };
 $('#search').oninput=list;$('#assets').onchange=run(()=>select($('#assets').value));
 $('#animator').onchange=run(async()=>{
   $('#parameters').replaceChildren();fill($('#state'),'State',[]);fill($('#clip'),'Clip',[]);await player.reset();$('#sequence').value='';if(!$('#animator').value)return;
   const exported=await player.controller(Number($('#animator').value)),controller=exported.document,machine=controller.stateMachines?.[controller.layers?.[0]?.stateMachine||0];
-  fill($('#state'),'State',(machine?.states||[]).map((s,i)=>({name:s.name,value:i})));fill($('#clip'),'Clip',(controller.clips||[]).map((c,i)=>({name:c.clip,value:i})));
+  fill($('#state'),'State',(machine?.states||[]).map((s,i)=>({name:s.name,value:i})));fill($('#clip'),'Clip',(controller.clips||[]).map((_,i)=>({name:exported.clip(i).name,value:i})));
   for(const parameter of controller.parameters||[]){
     if(parameter.type===9){const button=document.createElement('button');button.textContent=parameter.name;button.onclick=run(()=>player.setParameter(parameter.name,true));$('#parameters').append(button);}
     else{const label=document.createElement('label');label.textContent=parameter.name;const input=document.createElement('input');input.type=parameter.type===4?'checkbox':'number';input.step=parameter.type===3?'1':'any';input.value='0';input.onchange=run(()=>player.setParameter(parameter.name,input.type==='checkbox'?input.checked:Number(input.value)));label.append(input);$('#parameters').append(label);}
