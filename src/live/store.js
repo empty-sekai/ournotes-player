@@ -63,7 +63,7 @@ export const loadLiveStore = async (url, { variants = [], fetch = globalThis.fet
     if (typeof live.parts[part] !== "string") throw new Error(`${href}: live.json names no ${part} part`);
     wanted.push([live.parts[part], [product]]);
   }
-  for (const p of variants) wanted.push([String(p), LIVE_VARIANTS]);
+  for (const p of new Set([...(man.variants || []), ...variants])) wanted.push([String(p), LIVE_VARIANTS]);
   const loaded = await Promise.all(wanted.map(async ([p, products]) => {
     const u = new URL(p, root).href, m = await getJson(u);
     if (!products.some((x) => isProduct(m, x)))

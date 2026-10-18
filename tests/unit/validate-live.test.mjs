@@ -203,3 +203,21 @@ test("two lives sharing one broken part report its errors once", () => {
   assert.equal(r.lines.filter((l) => l.includes("noteskins/skin001/noteskin.json: not valid JSON")).length, 1, r.lines.join("\n"));
   hasLine(r, "noteskins/skin001.json: not valid (reported above)");
 });
+
+
+test("a product chart alias and its offered variant products validate", () => {
+  const build = missing => dir => {
+    const docs = productDocs(dir, chart());
+    const live = docs["lives/7_expert.json"];
+    delete docs["lives/7_expert.json"];
+    live.variants = [missing ? "noteskins/missing.json" : "noteskins/skin001.json"];
+    docs["charts/7_expert.json"] = live;
+    return docs;
+  };
+  const valid = run(build(false));
+  assert.equal(valid.status, 0, valid.lines.join("\n"));
+  assert.deepEqual(valid.lines, ["1/1 charts valid"]);
+  const invalid = run(build(true));
+  assert.equal(invalid.status, 1);
+  hasLine(invalid, "noteskins/missing.json: missing");
+});

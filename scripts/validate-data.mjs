@@ -39,7 +39,7 @@ import { AssetStore, TEXT_ASSET, TEXT_FILE } from "../src/data/assets.js";
 import { LiveData } from "../src/live/data.js";
 import { legacyLive } from "../src/live/legacy.js";
 import { LiveOptionContext } from "../src/live/settings.js";
-import { LIVE_PARTS, LIVE_PRODUCT, liveManifest, productDir } from "../src/live/store.js";
+import { LIVE_PARTS, LIVE_PRODUCT, LIVE_VARIANTS, liveManifest, productDir } from "../src/live/store.js";
 import { storyPartRequests } from "../src/story/store.js";
 import { StoryData } from "../src/story/data.js";
 import { StoryPlayerCore } from "../src/story/player-core.js";
@@ -753,7 +753,10 @@ class Product extends Chart {
   // the manifest's name (its path without the directory and .json) is its subject with "/" as "_"
   checkName() {
     if (this.immutable) return;
-    const name = path.posix.basename(this.where, ".json"), want = String(this.man.subject).replaceAll("/", "_");
+    const name = path.posix.basename(this.where, ".json");
+    const subject = this.man.product === LIVE_PRODUCT && this.where.startsWith("charts/")
+      ? String(this.man.subject).split("/").slice(0, 2).join("/") : String(this.man.subject);
+    const want = subject.replaceAll("/", "_");
     if (name !== want) this.err("manifest", `subject ${this.man.subject}: the manifest's name is ${name}, not ${want}`);
   }
 
@@ -979,7 +982,7 @@ class Part extends Product {
     if (this.errs.length) return this.errs;
     const dir = productDir(this.where);
     const files = Object.fromEntries(Object.entries(m.files).map(([p, f]) => [`${dir}/${p}`, f]));
-    const C = new LiveChecks(this.site, new SiteStore(this.site, files, m.objects), (w, msg) => this.err(w, msg));
+    const C = new LiveChecks(this.site, new SiteStore(this.site, files, m.objects, { audio: m.audio }), (w, msg) => this.err(w, msg));
     C.part(product, dir);
     C.objects();
     return this.errs;
@@ -1039,6 +1042,15 @@ class Live extends Product {
         else for (const e of r.errs) this.err(p, e);
         r.shown = true;
       } else loaded.push([productDir(p), r.man]);
+    }
+    for (const p of m.variants || []) {
+      try {
+        const variant = JSON.parse(fs.readFileSync(this.site.file(p), "utf8"));
+        if (!LIVE_VARIANTS.includes(variant.product)) { this.err(p, "not a live variant product"); continue; }
+        const r = this.site.part(p, variant.product);
+        for (const e of r.errs) this.err(p, e);
+        if (!r.errs.length) loaded.push([productDir(p), r.man]);
+      } catch (e) { this.err(p, e.code === "ENOENT" ? "missing" : e.message); }
     }
     if (this.errs.length) return this.errs;
     let merged;
@@ -1269,6 +1281,7 @@ class Story extends Product {
       if (!Array.isArray(cue.categories) || cue.categories.some((c) => typeof c !== "string")) this.err(where, "categories must be an array of names");
       if ((cue.loopStart == null) !== (cue.loopEnd == null) || (cue.loopStart != null && !(cue.loopStart >= 0 && cue.loopStart < cue.loopEnd && cue.loopEnd <= cue.samples))) this.err(where, "loop points outside the waveform");
       if (cue.encoderDelay !== undefined && (extOf(cue.file) !== "m4a" || !Number.isInteger(cue.encoderDelay) || cue.encoderDelay < 0)) this.err(where, "invalid encoderDelay");
+      if (!d.hasSounds) continue;
       if (!this.store.has(cue.file)) this.err(where, `${cue.file} missing`);
       else { const error = C.ofFile(`story-wave|${cue.sampleRate}|${cue.samples}|${cue.channels}`, cue.file, (b) => waveCheck(b, cue)); if (error) this.err(where, error); }
     }
@@ -1501,7 +1514,8 @@ function runAll(site, list, Kind) {
     } else {
       try {
         const man = JSON.parse(fs.readFileSync(site.file(manifest), "utf8"));
-        errs = new Kind(site, id, man, manifest).run(entry);
+        const Reader = Kind === Chart && man.schema === "nnnotes.product/1" ? Live : Kind;
+        errs = new Reader(site, id, man, manifest).run(entry);
       } catch (e) { errs = [`${manifest}: ${e.message}`]; }
     }
     if (errs.length) {

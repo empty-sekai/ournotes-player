@@ -4,6 +4,12 @@ All notable changes to this package. Versions follow [Semantic Versioning](https
 
 ## Unreleased
 
+### Site products
+
+- Load live variants from entry manifests and accept variant paths in read-set requests.
+- Validate product chart aliases, language-indexed UI references and offered variants.
+- Honor audio-disabled story products and select an available playback language from story listings.
+
 ### Story products
 
 - Story loading, playback and authoring use `nnnotes.product/1` manifests with shared object resources and language-specific UI and fonts.
