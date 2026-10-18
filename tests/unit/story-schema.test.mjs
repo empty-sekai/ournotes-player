@@ -81,6 +81,16 @@ test("cue sheets and waveforms agree with episode sound rows", () => {
   fails(f => { f.cues.bgm_a.categories = "Bgm"; }, /categories must be an array/);
 });
 
+test("audio-disabled products retain valid cue metadata without waveform files", () => {
+  const silent = f => {
+    f.manifest.audio = false;
+    delete f.products.get(f.story.parts.sounds.sheet_a).files["a.flac"];
+  };
+  passes(silent);
+  fails(f => { silent(f); f.cues.bgm_a.categories = "Bgm"; }, /categories must be an array/);
+  fails(f => { f.manifest.audio = "false"; }, /audio/);
+});
+
 test("fonts bind TMP component ids to the selected font and material", () => {
   fails(f => { delete f.fonts.ja.texts[f.textId]; }, /has no font binding/);
   fails(f => { f.fonts.ja.texts["missing:1"] = f.fonts.ja.texts[f.textId]; }, /not a TMP component/);

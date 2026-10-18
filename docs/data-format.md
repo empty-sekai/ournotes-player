@@ -982,3 +982,9 @@ further and run lives and charts through the player in Node (see [CONTRIBUTING.m
 The song catalog example reads `music-data.json` with format `nnnotes.music-data/1`. Replay presets read
 `nnnotes.deck-data/1` for the caller-provided deck capabilities, and the replay worker accepts
 `nnnotes.replay-manifest/1` references. These are separate inputs from the live, model and story product manifests.
+
+## Site entry products
+
+A chart entry under `charts/` can be an `nnnotes.product/1` live manifest. Its optional `variants` lists immutable note-skin, note-effect and sound products relative to its declared root; the loader combines them with the required parts. `options.LiveQuality` lists the offered qualities. `scripts/read-set.mjs --variants=<JSON array>` supplies extra manifest paths for either plan or full mode.
+
+The live's `parts.ui` maps languages to UI products. An `audio: false` entry omits sound streams while retaining cue metadata. Story sessions use silent timing for such entries. Story listings select a playback language for which the entry includes resources.
