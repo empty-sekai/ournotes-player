@@ -55,6 +55,8 @@ import { compile } from "./lib/json-schema.mjs";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const schema = (name) => compile(JSON.parse(fs.readFileSync(path.join(here, "..", "schema", `${name}.schema.json`), "utf8")));
 const S = {
+  prefab: schema("prefab"),
+  room: schema("room"), spot: schema("spot"), video: schema("story-video"), sound: schema("story-sound"), crilips: schema("crilips"),
   charts: schema("charts"), manifest: schema("manifest"), live: schema("live"), score: schema("score"),
   scene: schema("live-scene"), notes: schema("live-notes"), noteskin: schema("live-noteskin"),
   noteeffect: schema("live-noteeffect"), sounds: schema("live-sounds"), music: schema("live-music"), models: schema("models"), product: schema("product"), modelJson: schema("model-json"),
@@ -662,6 +664,7 @@ function nodeList(pf, where, errs) {
     for (const k of ["localPosition", "localRotation", "localScale"]) if (!isObj(n[k])) { errs.push(`${where}: ${n.path} has no ${k}`); return; }
     paths.add(n.path);
   }
+  errs.push(...S.prefab(pf).map((error) => `${where}: ${error}`));
 }
 
 // ------------------------------------------------------------------------------------------------ one Live2D model
@@ -1275,6 +1278,7 @@ class Story extends Product {
       if (!sheet || !d.parts.sounds[sheet]) this.err("episode.json", `sound ${id}: cue sheet not in parts.sounds`);
       else if (!d.cues(sheet)[row._cueName]) this.err("episode.json", `sound ${id}: cue ${row._cueName} not in ${sheet}`);
     }
+    for (const sheet of Object.keys(d.parts.sounds)) for (const error of S.sound(d.cues(sheet))) this.err(`cues.json ${sheet}`, error);
     for (const [sheet, path] of Object.entries(d.parts.sounds)) for (const [name, cue] of Object.entries(d.cues(sheet))) {
       const where = `${productDir(path)}/cues.json ${name}`;
       if (!Number.isInteger(cue.sampleRate) || !Number.isInteger(cue.samples) || !(cue.sampleRate > 0) || cue.samples < 0) { this.err(where, "invalid sampleRate/samples"); continue; }
@@ -1287,6 +1291,7 @@ class Story extends Product {
     }
     if (d.parts.crilips) {
       const { descriptor: desc, data } = d.crilips, floats = data.byteLength / 4;
+      for (const error of S.crilips(desc)) this.err("crilips.json", error);
       if (desc.dtype !== "float32" || desc.order !== "LE") this.err("crilips.json", "expected float32 LE");
       if (floats !== desc.total_floats) this.err("crilips.bin", `length ${floats} differs from total_floats ${desc.total_floats}`);
       for (const block of desc.blocks || []) if (!Number.isInteger(block.offset) || !Number.isInteger(block.count) || block.offset < 0 || block.count < 0 || block.offset + block.count > floats)
@@ -1294,7 +1299,11 @@ class Story extends Product {
       if (!Array.isArray(desc.blocks) || !isObj(desc.constants) || !isObj(desc.frontend)) this.err("crilips.json", "blocks/constants/frontend missing");
     }
     for (const [id, row] of Object.entries(e.videos)) if (row._assetName?.trim()) {
-      try { const v = d.videoFor(id); if (!this.store.has(v.file)) this.err("video.json", `${v.file} missing`); } catch (error) { this.err("episode.json", error.message); }
+      try {
+        const v = d.videoFor(id);
+        for (const error of S.video(v)) this.err("video.json", error);
+        if (!this.store.has(v.file)) this.err("video.json", `${v.file} missing`);
+      } catch (error) { this.err("episode.json", error.message); }
     }
   }
 
@@ -1302,6 +1311,10 @@ class Story extends Product {
   materialKeywords() {
     const data = this.data, objects = this.objectsView, result = new Map();
     if (data.host?.kind !== "home") return result;
+    for (const name of ["room", "spot"]) {
+      const doc = data.document(data.host.home.parts[name], `${name}.json`);
+      for (const error of S[name](doc)) this.err(`${name}.json`, error);
+    }
     const scene = new HomeScene(data, objects), home = data.host.home, graphics = data.scene.graphics;
     const hostManifest = this.partCache.get(Object.values(data.parts.host)[0]);
     // The host retains the prefab dependency graph. Only room renderers and selected UI subtrees are drawn.

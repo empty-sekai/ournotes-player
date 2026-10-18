@@ -97,6 +97,7 @@ test("fonts bind TMP component ids to the selected font and material", () => {
   fails(fontEdit((d, f) => { d.texts[f.textId].font.fontAsset = "Absent"; }), /font asset Absent not in fonts/);
   fails(fontEdit((d, f) => { d.texts[f.textId].font.material = "Absent"; }), /material Absent not in materials/);
   passes(fontEdit((d, f) => { d.texts[f.textId].localized = { fontAsset: "Source", material: "Source", lineSpacing: 0 }; }));
+  passes(fontEdit((d, f) => { d.texts[f.textId].localized = null; }));
 });
 
 test("font glyphs fit their declared PNG pages", () => {

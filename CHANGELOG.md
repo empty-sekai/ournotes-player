@@ -4,6 +4,11 @@ All notable changes to this package. Versions follow [Semantic Versioning](https
 
 ## Unreleased
 
+### Data validation
+
+- Validate prefab hierarchy documents against their published transform and component schema.
+- Describe room, spot, sound, video and CRI Lips documents, and accept null localization on native text records.
+
 ### Site products
 
 - Load live variants from entry manifests and accept variant paths in read-set requests.
@@ -179,4 +184,3 @@ All notable changes to this package. Versions follow [Semantic Versioning](https
 - install from GitHub until the package is on npm
 - add performance.md: the CPU cost of a frame
 - a file holds each controller and clip once; the validator checks every reference _(story)_
-

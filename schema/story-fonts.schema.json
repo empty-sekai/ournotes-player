@@ -995,7 +995,10 @@
           }
         },
         "localized": {
-          "type": "object",
+          "type": [
+            "object",
+            "null"
+          ],
           "required": [
             "fontAsset",
             "material",
