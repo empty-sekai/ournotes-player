@@ -1,28 +1,29 @@
 # UI prefab preview (experimental)
 
-The optional `ournotes-player/ui` module previews serialized UI assets exported by `nnnotes ui`. It uses Canvas 2D
+The optional `ournotes-player/ui` module previews serialized UI assets exported by `nnnotes export ui`. It uses Canvas 2D
 and is an inspector, not the game's GPU renderer or an implementation of every page Presenter. It does not change
 the chart, story or Live2D entry points. The repository, example and npm package include no game assets.
 
 ## Load a library
 
-Export data outside this repository with [nnnotes ui](https://github.com/MetaSekaiLab/nnnotes), then serve that data
+Export data outside this repository with [nnnotes export ui](https://github.com/MetaSekaiLab/nnnotes), then serve that data
 over HTTP. Cross-origin resources need CORS. The index and packs use the
-`ournotes-ui-library` / `ournotes-ui-pack` format (schema 1). Legacy library indexes with
-`dependency-controllers.json` are also accepted.
+`nnnotes.ui-library/1` index and `nnnotes.product/1` manifests for `ui.pack`. Each product contains `ui.json`
+(`nnnotes.ui-pack/1`) and the shared object files of its prefabs, controllers, clips, images and fonts.
+See [ui-library schema](../schema/ui-library.schema.json) and [ui-pack schema](../schema/ui-pack.schema.json).
 
 ```js
 import { UILibrary, UIPlayer } from 'ournotes-player/ui';
 
 const library = await UILibrary.load('/ui-data/index.json');
-const entry = library.entries.find(e => e.kind === 'prefab' && e.file);
+const entry = library.entries.find(e => e.kind === 'prefab' && e.manifest);
 const player = await UIPlayer.create(document.querySelector('#stage'), { library, entry });
 await player.playState('Open', { animator: player.animators[0].index });
 player.play();
 ```
 
-`UIPlayer.create(host, {src: '/ui-data/packs/ID.json'})` loads a standalone pack. A standalone pack can use an
-inline controller; separately exported controllers require a `UILibrary`. Importing `ournotes-player/ui` does not
+`UIPlayer.create(host, {src: '/ui-data/uipacks/ID.json'})` loads one product, including its controllers and clips.
+`UIPack.load(url)` loads the same native object data for a DOM-independent `UISession`. Importing `ournotes-player/ui` does not
 register elements or require a DOM at import time. Constructing the player requires a browser Canvas 2D context.
 The [example viewer](../examples/ui/index.html) takes a user-supplied library URL and provides selection and motion
 controls; it has no bundled sample data.
@@ -48,9 +49,9 @@ an entry record. Ambiguous names throw; same-named controllers resolve by their 
 
 `UISession(pack, {bindings: true})` is DOM-independent. It clones the input and provides:
 
-- `edit(node, component, field, value)` for a node index, stable nodeId or unique path/name. `component: null`
+- `edit(node, component, field, value)` for a node index, stable object ID or unique path/name. `component: null`
   edits a node field; dotted field paths are supported and prototype-related paths are rejected.
-- `setController(node, {document, resources})`, `playState(nameOrIndex)`, `selectClip(nameOrIndex)` and
+- `setController(node, pack.controller(nodeIndex))`, `playState(nameOrIndex)`, `selectClip(nameOrIndex)` and
   `selectSequence(node)`.
 - `setParameter(name, value)`, `seek(seconds)`, `update(deltaSeconds)`, `reset()` and `prepare()`.
 
@@ -128,7 +129,7 @@ fail explicitly. Runtime camera composition and Presenter-driven scene sizing re
 `framing: 'content'` uses visible graphic bounds, including labels and graphics outside the root, and crops
 only the output canvas's transparent margins; source geometry is unchanged. Its bounds are conservative
 RectTransform/mask bounds, not an alpha-pixel scan. Default `framing: 'root'` retains the previous viewport.
-Render results expose `regions[nodeId || path]`, four projected corners in top-left, top-right, bottom-right,
+Render results expose `regions[id || path]`, four projected corners in top-left, top-right, bottom-right,
 bottom-left order for visible nodes. Coordinates are logical root coordinates before canvas padding/scale;
 convert a point to bitmap coordinates as `(point - bounds.min + padding) * scale`. Stable IDs avoid ambiguity
 for duplicate instance paths. Regions describe the node rectangle; caller input handling and mask-aware hit
@@ -141,18 +142,15 @@ crossfade are preview approximations; long Animator advances are limited to 1,00
 unbound images or active flags may be placeholders, not evidence that a component is obsolete. Use bindings,
 edits or your own fixtures for its real use case.
 
-The rendering review was based on international Android 1.0.1 (versionCode 25), not a full JP UI comparison.
-The data reader accepts a separately exported JP library; differing schemas/fonts can remain unsupported.
-Neither region is advertised as pixel-identical or runtime-complete.
+## Data and verification
 
-## Evidence and verification
+Prefab nodes retain `pathId`, transforms and native `components[{type, script, fields}]`. A `UIPack` owns mutable
+node copies while sharing immutable `AssetStore` data; `clone()` copies only the preview state. `UIController.document`
+is the native controller, whose `clips` are references; `UIController.clip(index)` reads a clip by object ID.
+Animation binding names come from the product's per-prefab table. Texture/font reads follow object references.
 
-Game-specific state-binding rules were studied in the international binary's methods such as UIToggle.SwitchObjects
-(`0x6ac4e74`), UIToggleButtonFrame (`0x647fcb8` / `0x64888e0`), DOTweenSequence.CreateSequence (`0x6aded88`) and
-SimpleAnimationTrigger.PlayAnimation (`0x6b1f2f8`). Unity geometry/layout semantics are marked ENGINE in the helpers.
-GetChildSizes' force-expand operation was checked in native instructions at `0xbd29fec..0xbd2a004`; its C dump
-omitted that branch. These addresses are version-specific evidence, not runtime offsets or JP method identities.
+`UIPack.browserFontFamily` optionally supplies a CSS font family for preview text. Otherwise embedded font files
+are loaded per referenced font face, and numeric font glyphs use their native atlas pages and metrics.
 
-Unit tests use only synthetic records/fonts and cover loading, cancellation, lifecycle, duplicate instances,
-curves, state seek, sequence timing and layout invariants. Separate local visual review uses user-supplied data
-outside the repository. A successful static render/curve audit is not pixel-fidelity verification.
+Synthetic tests cover product loading, cancellation, lifecycle, duplicate instances, curves, state seek, sequence
+timing and layout invariants.

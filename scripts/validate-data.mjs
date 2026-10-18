@@ -61,7 +61,7 @@ const S = {
   stories: schema("stories"), storyManifest: schema("story-manifest"), story: schema("story"), episode: schema("episode"),
   storyFonts: schema("story-fonts"), storyLanguage: schema("story-language"),
   storyScene: schema("story-scene"), storyUI: schema("story-ui"), storySimpleUI: schema("story-simple-ui"),
-  storyHost: schema("story-host"), storyAsset: schema("story-asset"),
+  storyHost: schema("story-host"), storyAsset: schema("story-asset"), uiPack: schema("ui-pack"), uiLibrary: schema("ui-library"),
 };
 
 const SCHEMA_STORY_FONTS = S.storyFonts;
@@ -431,7 +431,7 @@ class LiveChecks {
   object(id, cls, where) {
     if (typeof id !== "string" || !this.S.hasObject(id)) { this.err(where, `object ${id} not in the store`); return false; }
     const c = this.S.object(id).class;
-    if (c !== cls) { this.err(where, `${id}: a ${c}, not a ${cls}`); return false; }
+    if (cls !== null && c !== cls) { this.err(where, `${id}: a ${c}, not a ${cls}`); return false; }
     return true;
   }
 
@@ -980,8 +980,40 @@ class Part extends Product {
   }
 }
 
-// A live's product manifest (lives/<id>.json, the product `live`) with the products its live.json `parts` names, each
-// checked once (Site.part).
+// A UI product and the library entries that select its prefabs and controllers.
+class UI extends Product {
+  run(entry) {
+    for (const e of S.product(this.man)) this.err("manifest", e);
+    if (this.man.product !== "ui.pack") this.err("manifest", "expected ui.pack");
+    if (this.errs.length) return this.errs;
+    this.checkAssets();
+    if (this.errs.length) return this.errs;
+    const store = new SiteStore(this.site, this.man.files, this.man.objects);
+    const C = new LiveChecks(this.site, store, (where, message) => this.err(where, message));
+    const ui = C.doc("ui.json", S.uiPack);
+    if (!ui) return this.errs;
+    if (ui.key !== this.man.subject) this.err("ui.json", "key differs from product subject");
+    for (const [field, cls] of [["roots", null], ["prefabs", "GameObject"], ["controllers", "AnimatorController"]]) {
+      if (new Set(ui[field]).size !== ui[field].length) this.err("ui.json", `${field}: duplicate object id`);
+      for (const id of ui[field]) C.object(id, cls, `ui.json ${field}`);
+    }
+    for (const id of ui.prefabs) C.prefab(id, "ui.json prefabs");
+    C.tables("ui.json", ui);
+    // Canvas 2D preview reads object data and images; it selects no GPU material variants.
+    C.objects({ selectedPrograms: true, materialKeywords: new Map(Object.entries(this.man.objects)
+      .filter(([, o]) => o.class === "Material").map(([id]) => [id, []])) });
+    if (entry && (entry.key !== ui.key || !sameJson(entry.roots, ui.roots))) this.err("index.json", "entry differs from UI product roots");
+    for (const [group, cls, ids] of [["embedded", "GameObject", ui.prefabs], ["controllers", "AnimatorController", ui.controllers]])
+      for (const row of this.site.uiIndex?.[group] || []) if (row.manifest === this.where) {
+        C.object(row.id, cls, `index.json ${group}`);
+        if (!ids.includes(row.id)) this.err("index.json", `${group}: ${row.id} not listed in the UI product`);
+        if (group === "embedded" && !sameJson(row.roots, [row.id])) this.err("index.json", `embedded: ${row.id} roots differ from its object id`);
+      }
+    return this.errs;
+  }
+}
+
+// A live manifest with the products its live.json parts name, each checked once (Site.part).
 class Live extends Product {
   run() {
     const m = this.man;
@@ -1536,26 +1568,49 @@ function main(argv) {
     stories = [...files("stories"), ...list("stories").filter((e) => e.isDirectory()).map((e) => e.name).sort()
       .flatMap((r) => files(`stories/${r}`))];
   }
+  let uiPacks = !fs.existsSync(site.file("uipacks")) ? [] : fs.readdirSync(site.file("uipacks")).filter(f => f.endsWith(".json")).sort()
+    .map(f => ({ id: f.slice(0, -5), manifest: `uipacks/${f}`, entry: null }));
+  if (fs.existsSync(site.file("index.json"))) {
+    const index = JSON.parse(fs.readFileSync(site.file("index.json"), "utf8"));
+    if (index.format === "nnnotes.ui-library/1") {
+      site.uiIndex = index;
+      out.push(...S.uiLibrary(index).map(e => `index.json: ${e}`));
+      if (!out.length) {
+        for (const group of [index.assets, index.embedded, index.controllers]) {
+          const ids = new Set();
+          for (const entry of group) {
+            if (ids.has(entry.id)) out.push(`index.json: duplicate id ${entry.id}`);
+            ids.add(entry.id);
+            if (!uiPacks.some(p => p.manifest === entry.manifest)) out.push(`index.json: missing product ${entry.manifest}`);
+          }
+        }
+        uiPacks = uiPacks.map(p => ({ ...p, entry: index.assets.find(e => e.manifest === p.manifest) || null }));
+      }
+    }
+  }
   let liveList = lives;
   if (only.length) {
     const want = new Set(only), kinds = `${lives.length ? "live, " : ""}chart, model${stories.length ? " or story" : ""}`;
+    uiPacks = uiPacks.filter(e => want.has(e.id));
     liveList = lives.filter((e) => want.has(e.id));
     entries = entries.filter((e) => want.has(e.id));
     models = models.filter((e) => want.has(e.id));
     stories = stories.filter((e) => want.has(e.id));
     for (const id of want)
-      if (![liveList, entries, models, stories].some((l) => l.some((e) => e.id === id))) { console.error(`${kinds} ${id} not found`); return 2; }
+      if (![liveList, entries, models, stories, uiPacks].some((l) => l.some((e) => e.id === id))) { console.error(`${kinds} ${id} not found`); return 2; }
   }
+  const okUI = runAll(site, uiPacks, UI);
   const okLives = runAll(site, liveList, Live);
   const ok = runAll(site, entries, Chart);
   const okModels = runAll(site, models, Model);
   const okStories = runAll(site, stories, Story);
   for (const e of out) console.log(e);
+  if (uiPacks.length) console.log(`${okUI}/${uiPacks.length} UI products valid`);
   if (liveList.length) console.log(`${okLives}/${liveList.length} lives valid`);
-  if (entries.length || (!liveList.length && !models.length && !stories.length)) console.log(`${ok}/${entries.length} charts valid`);
+  if (entries.length || (!liveList.length && !models.length && !stories.length && !uiPacks.length)) console.log(`${ok}/${entries.length} charts valid`);
   if (models.length) console.log(`${okModels}/${models.length} models valid`);
   if (stories.length) console.log(`${okStories}/${stories.length} stories valid${site.storyLanguages ? ` (languages: ${site.storyLanguages.join(", ")})` : ""}`);
-  return okLives === liveList.length && ok === entries.length && okModels === models.length && okStories === stories.length
+  return okUI === uiPacks.length && okLives === liveList.length && ok === entries.length && okModels === models.length && okStories === stories.length
     && !out.length ? 0 : 1;
 }
 
