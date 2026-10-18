@@ -6,6 +6,7 @@ import { AssetStore, PRODUCT_MANIFEST } from "../../src/data/assets.js";
 import { LiveData } from "../../src/live/data.js";
 import { isLegacyLive, legacyLive } from "../../src/live/legacy.js";
 import { LIVE_PARTS, loadLiveStore, productDir } from "../../src/live/store.js";
+import { chartText } from "../../examples/chart-list/listing.js";
 import { chartFiles } from "./live-legacy-fixture.mjs";
 
 const ROOT = "https://example.org/out/";
@@ -65,6 +66,28 @@ const live = () => {
     "audio/bgm_7/bgm_7.m4a": new Uint8Array([7]) });
   return L;
 };
+
+test("standalone live products expose chart metadata without a site alias", async () => {
+  const L = live();
+  const manifest = L.files.get("lives/7_expert.json"), path = manifest.files["live.json"].asset;
+  const doc = JSON.parse(new TextDecoder().decode(L.files.get(path)));
+  doc.master = { title: { ja: "Song JA", en: "Song EN" }, bands: [
+    { name: { ja: "Band JA", en: "Band EN", ko: "Band KO" } },
+    { name: { ja: "Guest JA", en: "Guest EN" } },
+  ] };
+  const bytes = new TextEncoder().encode(JSON.stringify(doc));
+  L.files.set(path, bytes);
+  manifest.files["live.json"].size = bytes.byteLength;
+  const store = await loadLiveStore(`${ROOT}lives/7_expert.json`, { fetch: L.fetch });
+  const data = new LiveData(store);
+  assert.equal(data.chart.musicId, 7);
+  assert.equal(data.chart.difficulty, "expert");
+  assert.deepEqual(data.chart.bandNames, { ja: ["Band JA", "Guest JA"], en: ["Band EN", "Guest EN"] });
+  assert.deepEqual(chartText(data.chart, "en"), { title: "Song EN", bands: ["Band EN", "Guest EN"] });
+  assert.deepEqual(chartText(data.chart, "ko"), { title: "Song JA", bands: ["Band JA", "Guest JA"] });
+  store.info.chart = { title: "Alias title", level: 12 };
+  assert.deepEqual(data.chart, store.info.chart);
+});
 
 test("a regional live manifest resolves products against its declared root", async () => {
   const L = live(), man = L.files.get("lives/7_expert.json");

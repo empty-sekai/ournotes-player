@@ -13,12 +13,12 @@ const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..
 const entry = (id, manifest, extra = {}) => ({ id, musicId: Number(id.split("_")[0]), difficulty: id.split("_")[1],
   manifest, title: "t", level: 1, notes: 1, durationMs: 1, audio: false, flows: ["direct"], bytes: 0, ...extra });
 
-const validate = (index) => {
+const validate = (index, name = "charts.json") => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ournotes-site-"));
   try {
-    fs.writeFileSync(path.join(dir, "charts.json"), JSON.stringify(index));
+    fs.writeFileSync(path.join(dir, name), JSON.stringify(index));
     const r = spawnSync(process.execPath, [script, dir], { encoding: "utf8" });
-    return { status: r.status, lines: r.stdout.split("\n").filter((l) => l.startsWith("charts.json") || l.startsWith("FAIL charts.json")) };
+    return { status: r.status, lines: r.stdout.split("\n").filter((l) => l.startsWith(name) || l.startsWith(`FAIL ${name}`)) };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -46,4 +46,14 @@ test("schema: region manifests and the new keys", () => {
   const bad = validate({ format: 2, regions: [{ id: "T W" }], charts: [entry("1_easy", "charts/a/b/1_easy.json")] });
   assert.equal(bad.status, 1);
   assert.ok(bad.lines.includes("FAIL charts.json"));
+});
+
+test("model ids may occur once in each region with regional aliases", () => {
+  const index = { format: 2, regions: [{ id: "one" }, { id: "two" }], models: [
+    { id: "sample", manifest: "models/sample.json", regions: ["one"] },
+    { id: "sample", manifest: "models/two/sample.json", regions: ["two"] },
+  ] };
+  assert.deepEqual(validate(index, "models.json").lines, []);
+  index.models[1].regions = ["one"];
+  assert.ok(validate(index, "models.json").lines.includes("models.json: id sample twice in region one"));
 });

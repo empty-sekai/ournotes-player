@@ -149,7 +149,7 @@ button.onclick = () => player.play();   // 浏览器要求在用户操作中开�
 nnnotes 从使用者自己的游戏文件生成这样的站点，例如：
 
 ```sh
-nnnotes web out/site --all --all-live2d --all-stories --player <ournotes-player 目录>
+nnnotes site build -o out/site --all --all-live2d --all-stories --player <ournotes-player 目录>
 ```
 
 - 播放器也读取未编码存放的资源；模型查看器也读取格式 2 的模型清单（[说明](docs/data-format.md#model-manifests-of-format-2)）。

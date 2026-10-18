@@ -45,6 +45,26 @@ export class LiveData {
   get scene() { return this._doc(this.parts.scene, "scene.json", SCENE_FORMAT); }
   get notes() { return this._doc(this.parts.notes, "notes.json", NOTES_FORMAT); }
 
+  // Chart metadata is also available from a standalone live product without a site alias.
+  get chart() {
+    if (this.assets.info.chart) return this.assets.info.chart;
+    const live = this.live, rows = live.master || {}, language = this.assets.info.language || "ja";
+    const music = rows.MasterLiveMusic || {}, score = rows.MasterLiveMusicScore?.[live.difficulty] || {};
+    const titles = rows.title || {}, bands = (rows.bands || []).map((b) => b.name || {});
+    const audio = this._doc(this.parts.music, "music.json", MUSIC_FORMAT);
+    const layer = audio.sounds?.[audio.music?.soundId]?.layers?.[0];
+    const bandNames = Object.fromEntries(["ja", "en", "zh-Hans", "zh-Hant", "ko"]
+      .filter((code) => bands.every((band) => typeof band[code] === "string"))
+      .map((code) => [code, bands.map((band) => band[code])]));
+    return { musicId: live.musicId, difficulty: live.difficulty, language,
+      title: titles[language] ?? null, titles, bands: bands.map((b) => b[language] ?? null), bandNames,
+      bandIds: music._bandIDs || [], stageBand: live.band?.band ?? null,
+      level: score._musicScoreLevel ?? null, displayLevel: score._musicScoreDisplayLevel ?? null,
+      notes: live.judgementNoteCount ?? null, fullComboCount: live.fullComboCount ?? null,
+      durationMs: layer ? Math.floor(layer.samples * 1000 / layer.sampleRate) : null,
+      sortOrder: music._sortOrder ?? null };
+  }
+
   // the subject of the loaded product of `product` in directory `dir`
   _subject(product, dir) {
     const hit = Object.entries(this.products[product] || {}).find(([, d]) => d === dir);

@@ -14,11 +14,15 @@ All notable changes to this package. Versions follow [Semantic Versioning](https
 
 ### Data validation
 
+- Check product chart listings against manifest metadata and the complete unique asset closure.
+- Validate chat status text values in story UI documents.
 - Validate prefab hierarchy documents against their published transform and component schema.
 - Describe room, spot, sound, video and CRI Lips documents, and accept null localization on native text records.
 
 ### Site products
 
+- Select regional model aliases by region and localize standalone chart band names.
+- Expose chart metadata for standalone live products and site aliases.
 - Load live variants from entry manifests and accept variant paths in read-set requests.
 - Validate product chart aliases, language-indexed UI references and offered variants.
 - Honor audio-disabled story products and select an available playback language from story listings.
