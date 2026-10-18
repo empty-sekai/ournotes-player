@@ -43,6 +43,13 @@ export const nameIn = (names, lang, fallback) => {
 // The title of an entry in `lang` (else its manifest's default language, else any), or "#<advId>".
 export const storyTitle = (s, lang) => nameIn(s.titles, lang, s.language) || `#${s.advId}`;
 
+// A language with playback resources for this entry, including when its listing has more title languages.
+export const playbackLanguage = (entry, wanted) => {
+  if (!Array.isArray(entry?.languages)) return wanted;
+  if (entry.languages.includes(wanted)) return wanted;
+  return entry.languages.includes(entry.language) ? entry.language : entry.languages[0];
+};
+
 // The kind of the entry's first group ("chapter", "friendship", "spotTalk", "liveResult", "spot"), or "other".
 export const storyKind = (s) => (Array.isArray(s.groups) && s.groups.length ? s.groups[0].kind : "other");
 

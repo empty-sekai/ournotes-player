@@ -55,3 +55,15 @@ test("an already fetched index is reused and cancellation is observed", async ()
   controller.abort(new Error("cancelled"));
   await assert.rejects(loadStoryProducts(head.url, { head, lang: "ja", signal: controller.signal }), /cancelled/);
 });
+
+
+test("a story product can keep cue metadata with sound streams disabled", async () => {
+  const f = fixture();
+  const manifest = JSON.parse(new TextDecoder().decode(f.files.get("stories/7.json")));
+  manifest.audio = false;
+  f.files.set("stories/7.json", new TextEncoder().encode(JSON.stringify(manifest)));
+  const store = await loadStoryProducts(ROOT + "stories/7.json", { fetch: f.fetch, lang: "ja" });
+  const data = new StoryData(store);
+  assert.equal(data.hasSounds, false);
+  assert.ok(data.parts.sounds.sheet);
+});

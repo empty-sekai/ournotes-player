@@ -181,7 +181,7 @@ export class StorySession {
     // empty) plays no sound, with the voices off as in the game without voice data (Session.WithVoice false: the
     // lines advance by their length, the speakers get the timed pseudo lip sync)
     const resolve = Audio.episodeResolver(episode, data);
-    const hasSounds = Object.keys(data.parts.sounds || {}).length > 0;
+    const hasSounds = data.hasSounds;
     const webAudio = hasSounds && opts.sound !== false && typeof globalThis.AudioContext === "function";
     audio = this.audio = opts.audio ? opts.audio(resolve, loop, { assets: store })
       : webAudio ? new Audio(resolve, loop, { context: opts.audioContext || null, assets: store })

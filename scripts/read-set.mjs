@@ -26,7 +26,7 @@
 // loads.
 //
 //   node scripts/read-set.mjs <chart> [--plan] [--files=<json list of paths>] [--keys] [--frames=<n>] [--quality=<0..2>]
-//                             [--settings=<json object>]
+//                             [--settings=<json object>] [--variants=<json manifest paths>]
 //   node scripts/read-set.mjs --serve
 //   node scripts/read-set.mjs --features
 //     <chart>     a live manifest (lives/<musicId>_<difficulty>.json of a product layout), a chart manifest
@@ -38,12 +38,13 @@
 //                 ("<path>#<key>", "<path>#<key>.<subkey>"); in plan mode the keys read by the load and the plan
 //     --frames    full mode: stop after n frames instead of at the end of the chart (not with --plan)
 //     --settings  the Live options of the session, a JSON object ({"MirrorChart": true, "NoteSpeed": 9})
+//     --variants  additional product manifest paths for note skins, effects or sounds, relative to the site root
 //     --serve     requests on stdin, one JSON object per line: {"chart": <chart>, "plan"?, "files"?, "keys"?,
-//                 "frames"?, "quality"?, "settings"?} (the options above; "settings" as an object); one answer per
+//                 "frames"?, "quality"?, "settings"?, "variants"?} (the options above; "settings" as an object); one answer per
 //                 request on stdout, one JSON object per line: {"ok": true, "result": <the object below>, "cpuSeconds"}
 //                 or {"ok": false, "error", "cpuSeconds"} (cpuSeconds: CPU time of the process for the request); exits at
 //                 the end of stdin
-//     --features  prints {"features": [...]}: the modes beyond the full simulation ("plan", "serve", "settings")
+//     --features  prints {"features": [...]}: the modes beyond the full simulation ("plan", "serve", "settings", "variants")
 // Prints one JSON object: {chart, mode, frames, state, readAfterLoad, read, seconds, settings?, files | listed +
 // missing + extra, keys?}; mode "full" (state "ended" at the end of the chart) or "plan" (state "planned", frames 0);
 // settings: the options asked for, when given. Exit 2 for a usage error or settings the chart does not accept.
@@ -53,9 +54,9 @@ import { ChartSession } from "../src/live/session.js";
 import { LiveSettingsError } from "../src/live/settings.js";
 import { HeadlessAudioContext, headlessGL, openChart } from "./lib/headless.mjs";
 
-const FEATURES = ["plan", "serve", "settings"];
+const FEATURES = ["plan", "serve", "settings", "variants"];
 const USAGE = "usage: node scripts/read-set.mjs <live manifest | chart manifest | live dir> [--plan] [--files=<json>] [--keys] [--frames=<n>] " +
-              "[--quality=<n>] [--settings=<json object>] | --serve | --features";
+              "[--quality=<n>] [--settings=<json object>] [--variants=<json manifest paths>] | --serve | --features";
 
 class UsageError extends Error {}
 class NoPlan extends Error {}
@@ -71,12 +72,25 @@ const settingsOf = (v) => {
   return o;
 };
 
+const variantsOf = (value) => {
+  if (value === undefined || value === null) return [];
+  let paths = value;
+  if (typeof paths === "string") {
+    try { paths = JSON.parse(paths); } catch (e) { throw new UsageError(`--variants: ${e.message}`); }
+  }
+  if (!Array.isArray(paths) || paths.some(p => typeof p !== "string" || !p.endsWith(".json") || /[:?#\\]/.test(p)
+    || p.split("/").length < 2 || p.split("/").some(s => !s || s === "." || s === "..")))
+    throw new UsageError("--variants must be an array of relative product manifest paths");
+  return paths;
+};
+
 // the read set of one chart: {out, bad}; bad: a --files comparison found a difference
 const readSet = async (where, opt) => {
   if (opt.plan && opt.frames !== undefined) throw new UsageError("--frames has no meaning with --plan");
   const settings = settingsOf(opt.settings);
+  const variants = variantsOf(opt.variants);
   const t0 = Date.now();
-  const assets = await openChart(where);
+  const assets = await openChart(where, { variants });
   if (!assets.info) assets.info = { options: { LiveQuality: [0, 1, 2] } };   // a live directory (see the header)
   const reads = new Set(), keyReads = new Set();
   const recorded = (name) => { const f = assets[name].bind(assets); assets[name] = (p, ...a) => { reads.add(p); return f(p, ...a); }; };

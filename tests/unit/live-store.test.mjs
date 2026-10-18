@@ -75,6 +75,13 @@ test("a regional live manifest resolves products against its declared root", asy
   assert.deepEqual(new LiveData(store).audio().sounds[10].layers[0].file, "sounds/default/audio/se1/a.flac");
 });
 
+test("a live manifest loads its offered variant products", async () => {
+  const L = live();
+  L.files.get("lives/7_expert.json").variants = ["noteskins/skin002.json"];
+  const store = await loadLiveStore(`${ROOT}lives/7_expert.json`, { fetch: L.fetch });
+  assert.ok(store.info.products["live.noteskin"].skin002);
+});
+
 test("productDir: a product manifest path without .json", () => {
   assert.equal(productDir("scenes/default.json"), "scenes/default");
   assert.equal(productDir("sounds/NoteSePatternId=1,3.json"), "sounds/NoteSePatternId=1,3");

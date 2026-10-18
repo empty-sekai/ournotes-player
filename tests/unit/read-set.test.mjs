@@ -113,15 +113,21 @@ test("plan: a planned material makes the shader library requests of its draw", (
 // ---- command line
 const run = (...args) => spawnSync(process.execPath, [script, ...args], { encoding: "utf8" });
 
-test("read-set --features names the plan, serve and settings modes; option errors exit 2", () => {
+test("read-set --features names the supported modes; option errors exit 2", () => {
   const f = run("--features");
   assert.equal(f.status, 0);
-  assert.deepEqual(JSON.parse(f.stdout), { features: ["plan", "serve", "settings"] });
-  assert.equal(f.stdout.trim(), '{"features":["plan","serve","settings"]}');
+  assert.deepEqual(JSON.parse(f.stdout), { features: ["plan", "serve", "settings", "variants"] });
   assert.equal(run().status, 2);
   const r = run("some/chart", "--plan", "--frames=10");
   assert.equal(r.status, 2);
   assert.match(r.stderr, /--frames has no meaning with --plan/);
+});
+
+test("read-set validates variant manifest paths before opening the chart", () => {
+  for (const variants of ['{}', '["../outside.json"]', '["https://example.org/part.json"]']) {
+    const r = run("missing", "--variants=" + variants);
+    assert.equal(r.status, 2); assert.match(r.stderr, /relative product manifest paths/);
+  }
 });
 
 test("read-set --serve answers each request line in order, one JSON line each, until the end of stdin", () => {

@@ -18,6 +18,8 @@ export class StoryData {
     this._docs = new Map();
   }
 
+  get hasSounds() { return this.assets.info.audio !== false && Object.keys(this.parts.sounds || {}).length > 0; }
+
   document(manifest, file, format = null) {
     const path = `${productDir(manifest)}/${file}`;
     if (!this._docs.has(path)) {

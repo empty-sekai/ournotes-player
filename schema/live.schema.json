@@ -61,6 +61,24 @@
       "additionalProperties": {
         "type": "string",
         "pattern": "^[^/\\\\]+/[^/\\\\]+\\.json$"
+      },
+      "properties": {
+        "ui": {
+          "type": "object",
+          "propertyNames": {
+            "enum": [
+              "ja",
+              "en",
+              "zh-Hant",
+              "zh-Hans",
+              "ko"
+            ]
+          },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[^/\\\\]+/[^/\\\\]+\\.json$"
+          }
+        }
       }
     }
   },
