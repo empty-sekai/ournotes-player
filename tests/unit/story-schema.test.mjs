@@ -72,7 +72,7 @@ test("episode subjects, row counts and executed commands are checked", () => {
 
 test("cue sheets and waveforms agree with episode sound rows", () => {
   fails(f => { f.episode.sounds[1]._soundCueSheetID = 9; }, /cue sheet not in parts.sounds/);
-  fails(f => { f.episode.sounds[1]._cueName = "missing"; }, /cue missing not in sheet_a/);
+  passes(f => { f.episode.sounds[1]._cueName = "missing"; });
   fails(f => { delete f.products.get(f.story.parts.sounds.sheet_a).files["a.flac"]; }, /a.flac missing/);
   fails(f => { f.cues.bgm_a.samples = 49; }, /FLAC total samples 48/);
   fails(f => { f.cues.bgm_a.sampleRate = 44100; }, /FLAC sample rate 48000/);

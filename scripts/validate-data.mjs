@@ -1273,7 +1273,6 @@ class Story extends Product {
     for (const [id, row] of Object.entries(e.sounds)) {
       const sheet = e.cuesheets[row._soundCueSheetID]?._cueSheetName;
       if (!sheet || !d.parts.sounds[sheet]) this.err("episode.json", `sound ${id}: cue sheet not in parts.sounds`);
-      else if (!d.cues(sheet)[row._cueName]) this.warn("episode.json", `sound ${id}: cue ${row._cueName} not in ${sheet}; it plays as silence`);
     }
     for (const [sheet, path] of Object.entries(d.parts.sounds)) for (const [name, cue] of Object.entries(d.cues(sheet))) {
       const where = `${productDir(path)}/cues.json ${name}`;

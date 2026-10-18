@@ -2,8 +2,40 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { StoryData } from "../../src/story/data.js";
 import { fetchStoryProduct, loadStoryProducts } from "../../src/story/store.js";
+import { Audio } from "../../src/engine/audio.js";
+import { SilentAudio } from "../../src/story/silent-audio.js";
 
 import { STORY_ROOT as ROOT, storyFixture as fixture } from "./story-product-fixture.mjs";
+
+test("a missing product cue completes silently while the next sound keeps its timing", async () => {
+  const f = fixture();
+  f.product(f.parts.sounds.sheet, "story.sound", "sheet", {
+    "cues.json": { voice: { file: "voice.m4a", categories: ["Voice"], sampleRate: 48000, samples: 48000 } },
+    "voice.m4a": new Uint8Array([0]),
+  });
+  const data = new StoryData(await loadStoryProducts(`${ROOT}stories/7.json`, { fetch: f.fetch, lang: "ja" }));
+  const episode = {
+    sounds: { 1: { _soundCueSheetID: 1, _cueName: "absent", _category: 2 },
+              2: { _soundCueSheetID: 1, _cueName: "voice", _category: 2 } },
+    cuesheets: { 1: { _cueSheetName: "sheet" } },
+  };
+  const loop = { time: 0 };
+  const audio = new SilentAudio(Audio.episodeResolver(episode, data), loop, { assets: data.store });
+  await audio.preload([1, 2]);
+  let started;
+  const missing = audio.play(1, { onPlayStart: (info) => { started = info; } });
+  assert.equal(started.meta.missing, true);
+  const finished = audio.whenFinished(started);
+  audio.update();
+  await finished;
+  assert.equal(audio.isPlaying(missing), false);
+  const voice = audio.play(2);
+  audio.update();
+  assert.equal(audio.isPlaying(voice), true);
+  loop.time = 1;
+  audio.update();
+  assert.equal(audio.isPlaying(voice), false);
+});
 
 test("story products load one language and resolve model, asset, cue and video files", async () => {
   const f = fixture();
