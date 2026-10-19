@@ -49,7 +49,27 @@ Live2D 需要 Cubism Core；剧情口型可能需要 MotionSync Core；据点对
 - **UI 预览**：通过 Canvas 2D 查看 `nnnotes export ui` 产物的布局和部分动画。
 
 支持范围见[还原程度](docs/fidelity.md)、[剧情功能](docs/story-features.md)和[简易剧情](docs/story-simple.md)。
-[剧情编写工具](docs/story-author.md)提供实验性的自定义对话功能。
+
+## 剧情编写工具（实验性）
+
+`scripts/story-author.mjs` 是随仓库提供的命令行工具，用 JSON 脚本制作自定义对话剧情：脚本指定一集已有剧情作为场景底本（背景、音乐、对话框与播放设置）、站点里的 Live2D 模型和每一句台词；工具检查脚本，用剧情播放器把每句台词画成 PNG，再把剧情写入站点，由播放器播放。每条命令向标准输出打印一个 JSON 对象，进度写到标准错误，方便程序和智能体调用。脚本格式和命令在版本之间可能变化。
+
+直接克隆仓库即可使用，不需要先构建：
+
+```sh
+git clone https://github.com/empty-sekai/ournotes-player.git
+cd ournotes-player
+S=--site=path/to/site                                         # 含 stories.json 与 models.json 的站点目录，也可设 OURNOTES_SITE
+node scripts/story-author.mjs bases $S                         # 列出可作底本的剧情
+node scripts/story-author.mjs new stories/10002.json $S > story.json   # 生成起始脚本，然后编辑 story.json
+node scripts/story-author.mjs check story.json $S              # 检查，错误与警告带 JSON 指针
+node scripts/story-author.mjs render story.json $S --out shots # 每句台词一张图，加一张总览 shots/sheet.png
+node scripts/story-author.mjs build story.json $S --name my-story   # 写入站点的 custom-stories/
+node scripts/story-author.mjs serve $S                         # 打印可在 examples/story 播放的地址
+```
+
+需要 Node.js 22+。出图的命令（`render`，以及带 `--out` 的 `base`、`model`）需要本机装有 Chrome、Chromium 或 Edge（用 `--chrome <路径>` 或 `CHROME_PATH` 指定），并默认从 Live2D 官方分发地址加载 Cubism Core（需要网络，`--core` 可改用其他副本）。站点中的剧情需为剧情产物格式（`nnnotes.product/1`），见[剧情数据](docs/story-data-format.md)。
+全部命令、脚本格式、错误码与自动修复见[剧情编写工具](docs/story-author.md)。
 
 ## 生成与校验数据
 
@@ -72,6 +92,7 @@ node node_modules/ournotes-player/scripts/validate-data.mjs out/site
 | 嵌入、运行时、CORS、缓存与压缩 | [嵌入](docs/embedding.md) |
 | Live API 与设置 | [API](docs/api.md) |
 | 剧情、语言、媒体与控制 | [剧情 API](docs/story.md) |
+| 命令行制作自定义对话（实验性） | [剧情编写工具](docs/story-author.md) |
 | Live2D API | [Live2D](docs/live2d.md) |
 | 产物与站点契约 | [数据格式](docs/data-format.md)、[剧情数据](docs/story-data-format.md) |
 | UI 与口型 | [UI 预览](docs/ui-preview.md)、[CRI Lips](docs/crilips.md) |

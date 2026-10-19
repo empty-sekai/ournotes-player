@@ -53,7 +53,35 @@ The [runtime setup](docs/getting-started.md#browser-runtimes) describes each dep
 - **UI preview:** Canvas 2D layout and a subset of UI animation from `nnnotes export ui` products.
 
 See [fidelity](docs/fidelity.md), [story features](docs/story-features.md) and [simple stories](docs/story-simple.md)
-for supported behavior. [Story authoring](docs/story-author.md) provides experimental tools for custom dialogue.
+for supported behavior.
+
+## Story author (experimental)
+
+`scripts/story-author.mjs` is a command-line tool in this repository that makes custom dialogue stories from a JSON
+script. The script names a base story (its backgrounds, music, talk window and player settings), Live2D models of the
+site and the lines of the story. The tool checks the script, draws every line with the story player into PNG pictures,
+and builds the story into the site, where the player plays it. Each command prints one JSON object on stdout and
+progress on stderr, so programs and agents can drive it. The script format and the commands may change between versions.
+
+It runs straight from a clone; no build step is needed:
+
+```sh
+git clone https://github.com/empty-sekai/ournotes-player.git
+cd ournotes-player
+S=--site=path/to/site                                         # a site with stories.json and models.json; or set OURNOTES_SITE
+node scripts/story-author.mjs bases $S                         # stories a script can take its scene from
+node scripts/story-author.mjs new stories/10002.json $S > story.json   # a starter script; edit story.json
+node scripts/story-author.mjs check story.json $S              # errors and warnings with JSON pointers
+node scripts/story-author.mjs render story.json $S --out shots # one picture per line and a contact sheet, shots/sheet.png
+node scripts/story-author.mjs build story.json $S --name my-story   # into the site's custom-stories/
+node scripts/story-author.mjs serve $S                         # URLs that play each built story in examples/story
+```
+
+It needs Node.js 22+. The commands that draw pictures (`render`, and `base` and `model` with `--out`) need Chrome,
+Chromium or Edge on the machine (`--chrome <path>` or `CHROME_PATH` names it), and by default load Cubism Core from
+Live2D's distribution (network access; `--core` names another copy). The site's stories must be in the story product
+format (`nnnotes.product/1`, see [story data](docs/story-data-format.md)).
+All commands, the script format, error codes and automatic fixes are in [Story author](docs/story-author.md).
 
 ## Generate and validate data
 
@@ -77,6 +105,7 @@ browser playback checks rendering and the chosen hosting setup.
 | Embedding, runtimes, CORS, caching and compression | [Embedding](docs/embedding.md) |
 | Live API and settings | [API](docs/api.md) |
 | Stories, language, media and controls | [Story API](docs/story.md) |
+| Custom dialogue from the command line (experimental) | [Story author](docs/story-author.md) |
 | Live2D API | [Live2D](docs/live2d.md) |
 | Product and site contracts | [Data format](docs/data-format.md), [story data](docs/story-data-format.md) |
 | UI and lip sync | [UI preview](docs/ui-preview.md), [CRI Lips](docs/crilips.md) |
