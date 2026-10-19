@@ -182,7 +182,8 @@ const commands = {
     const site = openSite(opts), limit = int(opts, "limit", 50, 1);
     const found = site.stories().filter((s) => matches(opts.search, s.id, s.manifest, s.asset, s.sheetName, s.titles, s.groups));
     const lang = opts.lang;
-    return { count: found.length, bases: found.slice(0, limit).map((s) => ({
+    const note = site.has("stories.json") ? {} : { note: "the site has no stories.json to list; name a story manifest (stories/<id>.json) to base and new directly" };
+    return { count: found.length, ...note, bases: found.slice(0, limit).map((s) => ({
       manifest: s.manifest, title: (s.titles && (s.titles[lang] || s.titles[s.language])) || "", languages: s.languages,
       groups: (s.groups || []).map((g) => (g.chapter && g.chapter.names && (g.chapter.names[lang] || g.chapter.names[s.language])) || g.kind),
     })), ...(found.length > limit ? { more: found.length - limit } : {}) };

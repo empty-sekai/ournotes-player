@@ -459,6 +459,20 @@ test("a site: base stories, the stories a script can use, models and their actio
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("a site without stories.json says so, and a manifest in the earlier format is named as one", () => {
+  const dir = makeSite();
+  try {
+    fs.rmSync(path.join(dir, "stories.json"));
+    let r = run(["bases", "--site", dir]);
+    assert.equal(r.out.count, 0);
+    assert.match(r.out.note, /no stories\.json/);
+    fs.writeFileSync(path.join(dir, "stories", "old.json"), JSON.stringify({ advId: 1, files: {} }));
+    r = run(["base", "stories/old.json", "--site", dir]);
+    assert.equal(r.status, 1);
+    assert.match(r.out.error, /earlier format/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("the commands without a browser: new, check, build; the built story loads", async () => {
   const dir = makeSite();
   try {

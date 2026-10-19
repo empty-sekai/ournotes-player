@@ -13,6 +13,12 @@ import { modelActions, musicChoices, stageBackground, stageChoices, withBrowserF
 
 export class SiteError extends Error {}
 
+// Why a manifest cannot be a base story: the earlier manifest format has no `schema`, and so cannot be built on.
+const notStoryProduct = (manifestPath, manifest) => manifest.schema === STORY_MANIFEST_FORMAT
+  ? `${manifestPath}: a base story needs a story product, and this is a ${manifest.product} product`
+  : `${manifestPath}: a base story needs a story product (${STORY_MANIFEST_FORMAT}); this manifest is in the earlier ` +
+    "format, so generate the site again with nnnotes 0.3 or later";
+
 const sha256 = (b) => crypto.createHash("sha256").update(b).digest("hex");
 const sortKeys = (o) => Object.fromEntries(Object.keys(o).sort().map((k) => [k, o[k]]));
 
@@ -69,14 +75,14 @@ export class Site {
   languages(manifestPath) {
     const manifest = this.json(manifestPath);
     if (manifest.schema !== STORY_MANIFEST_FORMAT || manifest.product !== "story")
-      throw new SiteError(`${manifestPath}: a base story needs a story product`);
+      throw new SiteError(notStoryProduct(manifestPath, manifest));
     return Object.keys(this.json(manifest.files["story.json"].asset).parts.ui);
   }
 
   async _loadBase(manifestPath, lang) {
     const manifest = this.json(manifestPath);
     if (manifest.schema !== STORY_MANIFEST_FORMAT || manifest.product !== "story")
-      throw new SiteError(`${manifestPath}: a base story needs a story product`);
+      throw new SiteError(notStoryProduct(manifestPath, manifest));
     const language = lang || manifest.language || "ja";
     const store = await loadStoryStore(pathToFileURL(this.file(manifestPath)).href,
       { lang: language, fetch: fileFetch, decode: nodeDecode });
