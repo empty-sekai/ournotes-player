@@ -2,7 +2,7 @@
 
 All notable changes to this package. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [0.2.0](https://github.com/empty-sekai/ournotes-player/compare/v0.1.8...v0.2.0) - 2026-10-18
+## [0.2.0](https://github.com/empty-sekai/ournotes-player/compare/v0.1.8...v0.2.0) - 2026-10-19
 
 ### Product loading and compatibility
 
