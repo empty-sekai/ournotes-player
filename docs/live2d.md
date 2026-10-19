@@ -35,7 +35,7 @@ model viewer.
 
 ```html
 <script src="https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js"></script>
-<script type="module" src="https://cdn.jsdelivr.net/npm/ournotes-player@0.1/dist/ournotes-player.live2d.element.min.js"></script>
+<script type="module" src="https://cdn.jsdelivr.net/npm/ournotes-player@0.2.0/dist/ournotes-player.live2d.element.min.js"></script>
 
 <ournotes-live2d src="https://example.org/site/models/adv_live2d_rana_003_casual_spring_01.json"
                  style="width: 360px"></ournotes-live2d>
