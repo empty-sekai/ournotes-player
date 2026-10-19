@@ -69,7 +69,7 @@ node scripts/story-author.mjs serve $S                         # 打印可在 ex
 ```
 
 需要 Node.js 22+。出图的命令（`render`，以及带 `--out` 的 `base`、`model`）需要本机装有 Chrome、Chromium 或 Edge（用 `--chrome <路径>` 或 `CHROME_PATH` 指定），并默认从 Live2D 官方分发地址加载 Cubism Core（需要网络，`--core` 可改用其他副本）。站点中的剧情需为剧情产物格式（`nnnotes.product/1`），见[剧情数据](docs/story-data-format.md)。
-全部命令、脚本格式、错误码与自动修复见[剧情编写工具](docs/story-author.md)。
+全部命令、脚本格式、错误码与自动修复见[剧情编写工具](docs/story-author.md)。让智能体使用这个工具时，可以把[操作流程](skills/story-author/SKILL.md)（Agent Skills 格式的 `SKILL.md`，英文）交给它。
 
 ## 生成与校验数据
 

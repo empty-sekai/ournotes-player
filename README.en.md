@@ -82,6 +82,7 @@ Chromium or Edge on the machine (`--chrome <path>` or `CHROME_PATH` names it), a
 Live2D's distribution (network access; `--core` names another copy). The site's stories must be in the story product
 format (`nnnotes.product/1`, see [story data](docs/story-data-format.md)).
 All commands, the script format, error codes and automatic fixes are in [Story author](docs/story-author.md).
+To have an agent use the tool, give it the [working procedure](skills/story-author/SKILL.md), a `SKILL.md` in the Agent Skills format.
 
 ## Generate and validate data
 

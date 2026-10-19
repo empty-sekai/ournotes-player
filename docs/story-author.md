@@ -8,6 +8,9 @@ stdout, progress goes to stderr, and the pictures are files whose paths the JSON
 
 The tool is experimental: the script format and the commands may change between versions.
 
+For an agent, [skills/story-author/SKILL.md](../skills/story-author/SKILL.md) is the same loop as a short working
+procedure (an Agent Skills `SKILL.md`; copy or link the folder to where your agent reads skills).
+
 ## Requirements
 
 - Node.js 22 or later.
